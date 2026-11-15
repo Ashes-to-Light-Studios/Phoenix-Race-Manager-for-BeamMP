@@ -66,6 +66,7 @@ local D = dofile('lua/ge/extensions/raceManager/drag.lua')
 local track = { startPositions = {}, route = {} }
 local car = { x = 0, y = 0, z = 0 }
 local placementBusy = false
+local practiceStops, practicePasses = {}, {}
 
 D.init({
   inMultiplayer = function () return true end,
@@ -94,6 +95,8 @@ D.init({
   end,
   startPositions = function () return track.startPositions end,
   placementActive = function () return placementBusy end,
+  practiceStop = function (why) practiceStops[#practiceStops + 1] = why end,
+  practicePass = function (r) practicePasses[#practicePasses + 1] = r end,
 })
 
 local checks, fails = 0, 0
@@ -282,6 +285,74 @@ makeAPass()
 D.onDragAborted(jsonEncode({ reason = 'waved off' }))
 check(ui['RaceManagerDragRun'].clear == true, 'a waved-off pass clears it')
 check(ui['RaceManagerDragTree'].stage == 'off', 'and takes the tree down')
+
+-- ---------------------------------------------------------------------------
+print('--- solo practice: the pass runs here and reports nothing ---')
+-- ---------------------------------------------------------------------------
+-- Free practice on a drag strip. No server pass exists, so this client places,
+-- stages, drops the tree and times the run itself.
+track.startPositions = { { x = 100, y = 0, z = 0, hx = 1, hy = 0 } }
+track.route = { { x = 300 } }
+-- The night's rules arrive on a full broadcast: a held start, a pro tree.
+D.onDragUpdate(jsonEncode({ rmProtocol = 2, dragPhase = 'idle',
+                            tree = 'pro', stageMode = 'hold', timeout = 30 }))
+clearCaptures()
+practiceStops, practicePasses = {}, {}
+placementBusy = true
+check(D.soloStage() == true, 'a strip with a lane stages a solo pass')
+check(#placements == 1 and placements[1].hold == true and placements[1].slots[1].x == 100,
+  'held on lane 1, as the night runs it')
+-- NOT WHILE LANDING: the tree waits for the car to be down.
+seconds(3)
+check(D.dragState.running ~= true, 'no tree while the car is still being placed')
+placementBusy = false
+car.x = 100
+seconds(1)
+check(D.dragState.running ~= true, 'nor before the settle has passed')
+seconds(0.5)
+check(D.dragState.running == true, 'then the tree drops by itself')
+check(D.dragState.pattern == 'pro', 'on the night\'s tree')
+-- An idle broadcast (an admin changing a rule) must not kill it.
+D.onDragUpdate(jsonEncode({ rmProtocol = 2, dragPhase = 'idle' }))
+check(D.dragState.running == true, 'an idle broadcast leaves a solo pass alone')
+D.onDragAborted(jsonEncode({ reason = 'ladder cleared' }))
+check(D.dragState.running == true, 'and so does a ladder being waved off')
+seconds(3)                     -- past the longest pre-roll and the pro tree
+car.x = 101
+frames(2)
+car.x = 320
+frames(2)
+check(lastSent('RM_DragResult') == nil and lastSent('RM_DragStaged') == nil,
+  'the server hears nothing of a solo pass')
+local solo = ui['RaceManagerDragRun']
+check(solo and solo.practice == true and solo.pass == 1 and solo.et ~= nil,
+  'the slip says practice pass 1, with a time')
+check(#practicePasses == 1 and practicePasses[1].et ~= nil,
+  'and practice is handed the pass')
+check(D.dragState.running ~= true, 'the run is over')
+
+-- Next pass: staged again, numbered on.
+clearCaptures()
+check(D.soloStage() == true and #placements == 1, 'the next pass places again')
+seconds(1.5)
+seconds(3)
+car.x = 101
+frames(2)
+car.x = 320
+frames(2)
+check(ui['RaceManagerDragRun'].pass == 2, 'and is pass 2')
+
+-- A ladder lane arriving ends practice first.
+clearCaptures()
+D.soloStage()
+D.onDragLane(jsonEncode({ lane = 1, slot = 1, count = 2, hold = true }))
+check(practiceStops[#practiceStops] == 'drag', 'a ladder lane ends free practice')
+check(D.dragState.solo ~= true, 'and the pass is the server\'s again')
+D.onDragAborted(jsonEncode({ reason = 'waved off' }))
+
+-- No lane on the strip: nothing to stage.
+track.startPositions = {}
+check(D.soloStage() == false, 'a strip without a start position stages nothing')
 
 print()
 print(string.format('drag_client_test: %d checks, %d failures', checks, fails))

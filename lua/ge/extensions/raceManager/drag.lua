@@ -35,6 +35,9 @@ local MPS_TO_MPH = 2.236936
 -- other tabs for twenty minutes). clearSlip handles the known paths; this is
 -- the backstop.
 local DRAG_SLIP_SECONDS = 25
+-- SOLO PRACTICE: the server's numbers (server drag.lua), copied because no
+-- server is asked. Pre-roll range, the settle before the tree, the roll-up gap.
+local SOLO = { prerollMin = 1.5, prerollMax = 2.5, settle = 1.2, back = 5.0 }
 
 -- One table, for the locals ceiling.
 D.dragState = {
@@ -70,6 +73,12 @@ D.dragState = {
   slipLeft = 0,
   -- A spectator's copy of the tree.
   watching = false,
+  -- SOLO PRACTICE: this client stages, trees and times its own pass and sends
+  -- nothing. soloWait is true until the tree drops; soloArm counts the settle.
+  solo = false, soloWait = false, soloArm = 0, soloPass = 0,
+  -- The ladder's rules from the last full broadcast, so practice runs what the
+  -- night will. The pass-only broadcast carries none of them.
+  cfg = { tree = 'sportsman', stageMode = 'rollup', timeout = 60 },
 }
 
 local S = D.dragState
@@ -147,7 +156,8 @@ local function reportResult(et, speed)
   local rt = nil
   if S.launchAt and S.greenAt then rt = S.launchAt - S.greenAt end
   S.lastRT, S.lastET, S.lastSpeed = rt, et, speed
-  if host.inMultiplayer() then
+  -- A solo pass is never reported: practice scores nothing.
+  if host.inMultiplayer() and not S.solo then
     local parts = {}
     if rt    then parts[#parts + 1] = string.format('"rt":%.4f', rt) end
     if et    then parts[#parts + 1] = string.format('"et":%.4f', et) end
@@ -155,18 +165,26 @@ local function reportResult(et, speed)
     if S.foul then parts[#parts + 1] = '"foul":true' end
     TriggerServerEvent('RM_DragResult', '{' .. table.concat(parts, ',') .. '}')
   end
+  if S.solo then S.soloPass = S.soloPass + 1 end
   -- The driver's own numbers, on their own screen, at once.
   if et then
     host.pushNotice('drag', string.format('%s  RT %.3f  ET %.3f  %.1f mph',
-      S.foul and 'RED LIGHT' or 'PASS COMPLETE', rt or 0, et, speed or 0))
+      S.foul and 'RED LIGHT' or (S.solo and 'PRACTICE PASS' or 'PASS COMPLETE'),
+      rt or 0, et, speed or 0))
   else
     host.pushNotice('drag', 'No time: the pass ran out of road.')
   end
   S.slipLeft = DRAG_SLIP_SECONDS
   guihooks.trigger('RaceManagerDragRun', {
     rt = rt, et = et, speed = speed, foul = S.foul, lane = S.lane,
+    practice = S.solo or nil, pass = S.solo and S.soloPass or nil,
   })
+  local solo = S.solo
   endRun(S.foul and 'red' or 'off')
+  -- Last: reaching the pass target stops practice, which ends the solo run.
+  if solo and host.practicePass then
+    host.practicePass({ rt = rt, et = et, speed = speed, foul = S.foul })
+  end
 end
 
 -- Signed distance from the beams along the line's heading (negative short,
@@ -202,13 +220,55 @@ local function stagingUpdate()
   else
     stageHint('ROLL UP: creep forward slowly until the PRE-STAGE light comes on.')
   end
-  -- On change only.
-  if host.inMultiplayer() then
+  -- On change only, and never for a solo pass: no server pass to stage into.
+  if host.inMultiplayer() and not S.solo then
     TriggerServerEvent('RM_DragStaged', string.format(
       '{"prestaged":%s,"staged":%s}',
       pre and 'true' or 'false', inb and 'true' or 'false'))
   end
   pushTree('staged', true)
+end
+
+-- Start this driver's tree on the local clock. The hold comes off at the first
+-- light, not the green, so leaving early is a foul the game does not prevent.
+local function startTree(data)
+  local preroll = tonumber(data.preroll) or 1.5
+  S.pattern  = data.pattern == 'pro' and 'pro' or 'sportsman'
+  S.delay    = tonumber(data.delay) or 0
+  S.dial     = tonumber(data.dial)
+  S.lane     = tonumber(data.lane) or S.lane
+  S.t        = 0
+  S.treeAt   = preroll + S.delay
+  S.greenAt  = S.treeAt + lightsFor(S.pattern)
+  S.timeoutAt = S.greenAt + (tonumber(data.timeout) or 60)
+  S.launchAt, S.foul, S.reported = nil, false, false
+  -- Under roll-up there is no hold, but releaseForLaunch still anchors.
+  S.released = false
+  S.running  = true
+  S.watching = false
+  -- Under 'hold', anchor and release wait for this driver's first light. Under
+  -- roll-up the anchor (the stage beam) is kept.
+  if not S.rollup then S.anchor = nil end
+  S.prevPos = nil
+  pushTree('staged')
+end
+
+-- A solo pass drops its own tree once the car has sat staged for the settle,
+-- as the ladder's auto-start does. Not while it is still landing.
+local function soloArmUpdate(dt)
+  if not S.soloWait then return end
+  local landing = host.placementActive and host.placementActive()
+  if landing or not S.inBeams then
+    S.soloArm = 0
+    return
+  end
+  S.soloArm = S.soloArm + dt
+  if S.soloArm < SOLO.settle then return end
+  S.soloWait = false
+  startTree({
+    pattern = S.cfg.tree, delay = 0, lane = S.lane, timeout = S.cfg.timeout,
+    preroll = SOLO.prerollMin + math.random() * (SOLO.prerollMax - SOLO.prerollMin),
+  })
 end
 
 -- ===========================================================================
@@ -236,7 +296,11 @@ function D.dragUpdate(dt)
     return
   end
   -- Creeping up to the line, before any of the timing exists.
-  if not S.running then stagingUpdate(); return end
+  if not S.running then
+    stagingUpdate()
+    if S.solo then soloArmUpdate(dt) end
+    return
+  end
   S.t = S.t + dt
   if not S.released and S.t >= (S.treeAt or 0) then releaseForLaunch() end
 
@@ -299,13 +363,33 @@ end
 -- ===========================================================================
 -- Server -> client
 -- ===========================================================================
+-- The ladder wants this car: free practice ends first. soloStop is repeated in
+-- case the practice side never called it.
+local function yieldSolo()
+  if not S.solo then return end
+  if host.practiceStop then host.practiceStop('drag') end
+  D.soloStop()
+end
+
 D.onDragUpdate = function (rawData)
   local ok, data = pcall(jsonDecode, rawData)
   if not ok or type(data) ~= 'table' then return end
   if not host.fromCurrentServer(data) then return end
   local newPhase = data.dragPhase or 'idle'
+  if data.tree == 'pro' or data.tree == 'sportsman' then S.cfg.tree = data.tree end
+  if data.stageMode == 'hold' or data.stageMode == 'rollup' then
+    S.cfg.stageMode = data.stageMode
+  end
+  if tonumber(data.timeout) then S.cfg.timeout = tonumber(data.timeout) end
+  -- A pass on the strip ends free practice, as a derby forming does.
+  if (newPhase == 'staging' or newPhase == 'tree' or newPhase == 'running')
+     and host.practiceStop then
+    host.practiceStop('drag')
+    D.soloStop()
+  end
   -- A pass no longer running releases every car it held, broadcast order aside.
-  if newPhase ~= 'staging' and newPhase ~= 'tree' and newPhase ~= 'running' then
+  -- NOT A SOLO PASS: any config change broadcasts 'idle' and would kill it.
+  if not S.solo and newPhase ~= 'staging' and newPhase ~= 'tree' and newPhase ~= 'running' then
     -- Not gated on S.running: a red light ends the run when reported, and the
     -- bulb has to come off when the pass settles.
     if S.running or S.watching or S.stage ~= 'off' then
@@ -345,11 +429,9 @@ D.onDragUpdate = function (rawData)
   guihooks.trigger('RaceManagerDrag', data)
 end
 
--- This driver has a lane: placed through the shared queue, ghosted and
--- staggered by lane number.
-D.onDragLane = function (rawData)
-  local ok, data = pcall(jsonDecode, rawData)
-  if not ok or type(data) ~= 'table' then return end
+-- Put this car on its lane: placed through the shared queue, ghosted and
+-- staggered by lane number. From the server's RM_DragLane, or a solo pass.
+local function placeLane(data)
   -- Not ready any more: off the strip, hold released.
   if data.release == true then
     host.releaseGridHold('drag')
@@ -412,35 +494,25 @@ D.onDragLane = function (rawData)
   pushTree('staged', true)
 end
 
--- The tree. The hold comes off at the first light, not the green, so leaving
--- early is a foul rather than something the game prevents.
+D.onDragLane = function (rawData)
+  local ok, data = pcall(jsonDecode, rawData)
+  if not ok or type(data) ~= 'table' then return end
+  yieldSolo()
+  placeLane(data)
+end
+
+-- The tree, timed here (startTree).
 D.onDragTree = function (rawData)
   local ok, data = pcall(jsonDecode, rawData)
   if not ok or type(data) ~= 'table' then return end
-  local preroll = tonumber(data.preroll) or 1.5
-  S.pattern  = data.pattern == 'pro' and 'pro' or 'sportsman'
-  S.delay    = tonumber(data.delay) or 0
-  S.dial     = tonumber(data.dial)
-  S.lane     = tonumber(data.lane) or S.lane
-  S.t        = 0
-  S.treeAt   = preroll + S.delay
-  S.greenAt  = S.treeAt + lightsFor(S.pattern)
-  S.timeoutAt = S.greenAt + (tonumber(data.timeout) or 60)
-  S.launchAt, S.foul, S.reported = nil, false, false
-  -- Under roll-up there is no hold, but releaseForLaunch still anchors.
-  S.released = false
-  S.running  = true
-  S.watching = false
-  -- Under 'hold', anchor and release wait for this driver's first light. Under
-  -- roll-up the anchor (the stage beam) is kept.
-  if not S.rollup then S.anchor = nil end
-  S.prevPos = nil
-  pushTree('staged')
+  yieldSolo()
+  startTree(data)
 end
 
 -- The same lights for everybody who is not in the pass.
 D.onDragTreeWatch = function (rawData)
-  if S.running then return end     -- a driver in the pass has their own tree
+  -- A driver in the pass, or on a solo pass, has their own tree.
+  if S.running or S.solo then return end
   local ok, data = pcall(jsonDecode, rawData)
   if not ok or type(data) ~= 'table' then return end
   local preroll = tonumber(data.preroll) or 1.5
@@ -453,12 +525,45 @@ D.onDragTreeWatch = function (rawData)
 end
 
 D.onDragAborted = function (rawData)
+  -- Not ours: a solo pass was never the server's to wave off.
+  if S.solo then return end
   host.releaseGridHold('drag')
   S.watching = false
   S.reported = true          -- nothing to report: the pass never counted
   S.lane, S.delay = nil, 0
   endRun('off')
   clearSlip()
+end
+
+-- ===========================================================================
+-- Solo practice
+-- ===========================================================================
+-- FREE PRACTICE ON A DRAG STRIP: the ladder's pass on lane 1, run entirely on
+-- this client. Placed, staged and treed on the ladder's rules; timed by the
+-- frame above; reported to practice (host.practicePass), never to the server.
+
+-- Back to the line for a pass; again for every pass. False with no lane to
+-- stand on. A pass still on the strip is dropped, not scored.
+function D.soloStage()
+  local slots = host.startPositions()
+  if not slots[1] then return false end
+  if S.running then endRun('off') end
+  host.releaseGridHold('drag')
+  S.solo, S.soloWait, S.soloArm = true, true, 0
+  S.watching = false
+  local rollup = S.cfg.stageMode == 'rollup'
+  placeLane({ lane = 1, slot = 1, count = 1, order = 1,
+              hold = not rollup, rollup = rollup, back = SOLO.back })
+  return true
+end
+
+-- Practice is over: off the strip, hold released. The slip runs out by itself.
+function D.soloStop()
+  if not S.solo then return end
+  S.solo, S.soloWait, S.soloArm, S.soloPass = false, false, 0, 0
+  host.releaseGridHold('drag')
+  S.lane, S.delay = nil, 0
+  endRun('off')
 end
 
 -- ===========================================================================

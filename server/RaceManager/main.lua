@@ -5834,9 +5834,11 @@ function RM_onLoadLayout(pid, rawData)
           rec.practicing    = l.name
           rec.practiceGhost = data.ghost == true
         end
+        -- A drag strip practises as solo passes (client drag.lua), not laps.
         MP.SendChatMessage(pid, string.format(
-          '[RaceManager] Practising on "%s". Your laps are timed for you only, '
-          .. 'and count for nothing.', l.name))
+          '[RaceManager] Practising on "%s". Your %s timed for you only, '
+          .. 'and count for nothing.', l.name,
+          (l.pointToPoint == true and l.drag == true) and 'passes are' or 'laps are'))
         print(string.format('[RaceManager] Practice layout "%s" loaded by %s (%s)',
           l.name, MP.GetPlayerName(pid) or pid,
           (rec and rec.practiceGhost) and 'ghosted' or 'solid'))

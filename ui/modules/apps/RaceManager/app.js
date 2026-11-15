@@ -2062,8 +2062,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           // Who holds the session's fastest lap. One id, compared per row when
           // the table renders - no scan, and no second sorted copy of the field.
           $scope.bestLapPid = (data.bestLapPid === undefined) ? null : data.bestLapPid;
-          if (typeof data.pointToPoint === 'boolean') { $scope.pointToPoint = data.pointToPoint; }
-          if (typeof data.dragStrip === 'boolean') { $scope.dragStrip = data.dragStrip; }
+          // The PUBLIC track's type. A practice track keeps its own (the route
+          // push carries it).
+          if (!$scope.practice) {
+            if (typeof data.pointToPoint === 'boolean') { $scope.pointToPoint = data.pointToPoint; }
+            if (typeof data.dragStrip === 'boolean') { $scope.dragStrip = data.dragStrip; }
+          }
           if (typeof data.layoutName === 'string') { $scope.loadedLayout = data.layoutName; }
           $scope.drivers = data.drivers || [];
           // The broadcast board's buckets, cut once per broadcast.
@@ -2290,6 +2294,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.practice       = data.practice === true;
           $scope.practiceLayout = data.practiceLayout || null;
           $scope.practiceComplete = data.practiceComplete === true;
+          // A drag strip: passes, not laps.
+          $scope.practiceDrag   = data.practiceDrag === true;
           var freshRun = $scope.practice && (!wasPractice || $scope.practiceLayout !== wasLayout);
           var leftRun  = !$scope.practice && !$scope.practiceComplete;
           if ((freshRun || leftRun) && ($scope.practiceLaps.length || $scope.practiceBest !== null)) {
@@ -3232,6 +3238,25 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           }
           $scope.dragLast = { rt: data.rt, et: data.et, speed: data.speed,
                               foul: data.foul === true };
+          // A solo practice pass goes on the practice list, as a lap does. A
+          // pass with no time still gets a row: the driver ran it.
+          if (data.practice === true) {
+            var et = (typeof data.et === 'number') ? data.et : null;
+            if (et !== null && ($scope.practiceBest === null || et < $scope.practiceBest)) {
+              $scope.practiceBest = et;
+            }
+            var prev = $scope.practiceLaps[0];
+            $scope.practiceLaps.unshift({
+              lap: data.pass || ($scope.practiceLaps.length + 1),
+              time: et,
+              delta: (et !== null && prev && typeof prev.time === 'number')
+                ? et - prev.time : null,
+              rt: (typeof data.rt === 'number') ? data.rt : null,
+              speed: (typeof data.speed === 'number') ? data.speed : null,
+              foul: data.foul === true
+            });
+            if ($scope.practiceLaps.length > 10) { $scope.practiceLaps.pop(); }
+          }
         });
       });
 
@@ -5126,6 +5151,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.practiceDone   = 0;
       $scope.practiceLeft   = null;
       $scope.practiceComplete = false;
+      $scope.practiceDrag   = false;
       $scope.practiceUi = { selected: '', laps: 0 };
       // The laps run in THIS practice session, newest first, and the best of
       // them. Cleared whenever practice starts or stops: a time set on one track
@@ -5155,6 +5181,20 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.selectPracticeLayout = function (l) {
         $scope.practiceUi.selected = l && l.name || '';
         $scope.practiceDropdownOpen = false;
+      };
+      // Filed as a drag strip: practised as solo passes, not laps.
+      $scope.isDragLayout = function (l) {
+        return !!l && l.pointToPoint === true && l.drag === true;
+      };
+      $scope.practicePickedDrag = function () {
+        var list = $scope.practiceLayouts();
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].name === $scope.practiceUi.selected) { return $scope.isDragLayout(list[i]); }
+        }
+        return false;
+      };
+      $scope.practiceNextPass = function () {
+        bngApi.engineLua('raceManager.practiceNextPass()');
       };
       $scope.startPractice = function () {
         if (!$scope.practiceUi.selected) { return; }

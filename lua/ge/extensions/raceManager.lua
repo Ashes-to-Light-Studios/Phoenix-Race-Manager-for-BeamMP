@@ -621,8 +621,10 @@ local localTime    = 0
 --   lapsDone  laps completed since practice started
 --   ghost     the driver's choice: a ghost to everybody while practising
 --   complete  the lap target was reached; the panel keeps the laps up
+--   drag      a drag strip: solo passes (drag.lua), not laps. Kept through
+--             `complete` so the panel still says passes
 local practice = { on = false, layout = nil, lapTarget = 0, lapsDone = 0,
-                   ghost = true, complete = false }
+                   ghost = true, complete = false, drag = false }
 
 -- SELF-TIMING: this driver's lap and sector deltas, entirely local: a delta to
 -- your own previous lap needs no server and no other car.
@@ -1091,6 +1093,7 @@ local function pushRouteState()
                      and math.max(0, practice.lapTarget - practice.lapsDone) or nil,
     practiceGhost    = practice.ghost,
     practiceComplete = practice.complete,
+    practiceDrag     = practice.drag and (practice.on or practice.complete),
     -- Starting grid
     startPositions = track.startPositions,
     pointToPoint   = track.pointToPoint,
@@ -1615,9 +1618,11 @@ end
 local function checkGates()
   if session.spectatorLock then return end     -- out of the session: no more timing
   if #track.route == 0 and #track.jokerRoute == 0 then return end
-  -- ...or while practising, which is what makes practice timed.
+  -- ...or while practising, which is what makes practice timed. Drag practice
+  -- is timed by drag.lua: its finish line is not a lap.
   if not practice.on
      and session.phase ~= 'qualifying' and session.phase ~= 'racing' then return end
+  if practice.on and practice.drag then return end
   local veh, pos = sampledVehicle()
   if not veh or not pos then return end
   if session.prevPos then
@@ -1692,7 +1697,7 @@ local lapTimerArmed  = false     -- was the clock running on the previous tick?
 local function lapTimerUpdate(dt)
   -- Runs in any session from GO and in free practice (the app draws sectors
   -- inside the lap-time block, so without a clock they only showed at the line).
-  local running = sessionRunning() or practice.on
+  local running = sessionRunning() or (practice.on and not practice.drag)
   if not running then
     -- Tell the UI once, so it drops the readout rather than freezing it.
     if lapTimerArmed then
@@ -5744,6 +5749,9 @@ drag.init({
   segmentCrossesGate = segmentCrossesGate,
   -- Is this car still landing? A getter: `field` is this file's alone.
   placementActive = function () return field.active end,
+  -- A ladder pass ends practice; a solo pass counts toward it. Assigned below.
+  practiceStop = function (why) practice.stop(why) end,
+  practicePass = function (r) practice.passDone(r) end,
   -- Getters, not references: track.route and track.startPositions are
   -- REASSIGNED when a layout loads (tests/wiring_test.lua checks this).
   finishGate = function ()
@@ -7695,15 +7703,19 @@ function practice.stop(why)
   practice.on = false
   practice.complete = why == 'complete'
   if not practice.complete then practice.lapsDone = 0 end
+  drag.soloStop()
   timingReset()
   ghost.practiceSync()
   if why ~= 'idle' and inMultiplayer() then
     TriggerServerEvent('RM_PracticeEnd', '')
   end
   if why == 'complete' then
-    pushNotice('session', 'PRACTICE COMPLETE: ' .. done .. (done == 1 and ' lap' or ' laps'))
-  elseif why == 'session' or why == 'derby' then
-    pushNotice('session', 'Practice ended: a ' .. why .. ' is starting')
+    local unit = practice.drag and 'pass' or 'lap'
+    pushNotice('session', 'PRACTICE COMPLETE: ' .. done .. ' '
+      .. unit .. (done == 1 and '' or (practice.drag and 'es' or 's')))
+  elseif why == 'session' or why == 'derby' or why == 'drag' then
+    pushNotice('session', 'Practice ended: a '
+      .. (why == 'drag' and 'drag pass' or why) .. ' is starting')
   elseif why ~= 'idle' then
     pushNotice('session', 'Practice ended')
   end
@@ -7715,22 +7727,51 @@ function M.endPractice()
   practice.stop('driver')
 end
 
+-- A solo drag pass is done (drag.lua): counted as a lap is, never reported.
+function practice.passDone(r)
+  if not (practice.on and practice.drag) then return end
+  practice.lapsDone = practice.lapsDone + 1
+  log('I', 'raceManager', string.format('Practice pass %d: RT %s, ET %s',
+    practice.lapsDone, tostring(r and r.rt), tostring(r and r.et)))
+  if practice.lapTarget > 0 and practice.lapsDone >= practice.lapTarget then
+    practice.stop('complete')
+    return
+  end
+  pushRouteState()
+end
+
+-- Drag practice: back to the line for the next pass.
+function M.practiceNextPass()
+  if practice.on and practice.drag then drag.soloStage() end
+end
+
 -- The server has put this client on a practice track.
 local function onPractice(rawData)
   -- rawData: every DISPATCH handler decodes the wire string itself (a table
   -- argument failed the type check and practice never switched on).
   local ok, data = pcall(jsonDecode, rawData)
   if not ok or type(data) ~= 'table' then return end
+  -- A new run, or the end of one: the last solo pass is not carried over.
+  drag.soloStop()
   practice.on     = data.on == true
   practice.layout = data.layout
   practice.lapsDone = 0
   practice.complete = false
+  -- RM_ApplyLayout landed first, so the track here is the one to practise.
+  -- A strip needs a lane and a finish line; without them it runs as laps.
+  practice.drag = practice.on and track.dragStrip == true
+    and #track.startPositions > 0 and #track.route > 0
   session.localLap  = 1
   session.lapStart  = localTime
   session.armedWp   = 1
   timingReset()
   ghost.practiceSync()
-  if practice.on then
+  if practice.on and practice.drag then
+    -- On the ladder's lane 1, on the ladder's rules; the tree drops itself.
+    drag.soloStage()
+    pushNotice('session', 'DRAG PRACTICE: ' .. tostring(data.layout or 'strip')
+      .. ' -- your passes are timed for you only')
+  elseif practice.on then
     -- Stand the car on start position 1 first, so lap one is a lap and not the
     -- drive out to the circuit. Through the field queue, ghosted, NOT held.
     -- A layout with no start positions leaves the driver where they are.
@@ -7937,9 +7978,12 @@ local function onServerUpdate(rawData)
   if session.lastLapNum and not wasLastLap then
     pushNotice('session', 'FINAL LAP: finish lap ' .. session.lastLapNum .. ' to take the flag.')
   end
-  -- Race entry + qualifying rules.
-  if type(data.pointToPoint) == 'boolean' then track.pointToPoint = data.pointToPoint end
-  if type(data.dragStrip) == 'boolean' then track.dragStrip = data.dragStrip end
+  -- Race entry + qualifying rules. The type is the PUBLIC track's: a practice
+  -- track came from a targeted load and keeps its own.
+  if not practice.on then
+    if type(data.pointToPoint) == 'boolean' then track.pointToPoint = data.pointToPoint end
+    if type(data.dragStrip) == 'boolean' then track.dragStrip = data.dragStrip end
+  end
   ghostQuali = data.ghostQuali == true
   qualiOutLap = data.qualiOutLap == true
   if type(data.qualiLapLimit)  == 'number' then qualiLapLimit  = data.qualiLapLimit  end

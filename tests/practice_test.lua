@@ -374,6 +374,88 @@ lap()
 check(sentCount('RM_Lap') == 1,
   'and the first race lap is reported (got ' .. sentCount('RM_Lap') .. ')')
 
+-- ---------------------------------------------------------------------------
+-- A drag strip practises as solo drag passes, not laps
+-- ---------------------------------------------------------------------------
+-- Lane 1 on y=0 heading +y, the finish 400 m up. The server's own track is a
+-- circuit, so its broadcast must not turn the practice strip back into one.
+serverState({ phase = 'waiting', totalLaps = 3, maxResets = -1, drivers = {} })
+handlers['RM_ReleaseSpectate']({ source = 'race' })
+local function practiseStrip()
+  handlers['RM_ApplyLayout']({
+    name = 'strip', width = 40, height = 10, depth = 2,
+    pointToPoint = true, drag = true,
+    checkpoints = { { x = 0, y = 400, z = 0, hx = 0, hy = 1 } },
+    startPositions = { { x = 0, y = 0, z = 0, hx = 0, hy = 1 } },
+  })
+  handlers['RM_Practice']({ on = true, layout = 'strip' })
+  serverState({ phase = 'waiting', totalLaps = 3, maxResets = -1, drivers = {},
+                pointToPoint = false, dragStrip = false })
+  veh.x, veh.y, veh.z = 300, 400, 0
+  frame(60)
+end
+-- Roll into the beams, wait out settle and tree, launch, cross the finish.
+local function dragPass()
+  moveTo(-0.2)
+  burn(1.5)
+  burn(4.5)
+  moveTo(1); moveTo(200); moveTo(399); moveTo(401)
+end
+
+sent, hooks = {}, {}
+practiseStrip()
+local stripRoute = lastHook('RaceManagerRoute')
+check(stripRoute ~= nil and stripRoute.practiceDrag == true,
+  'a drag strip practises as drag passes')
+check(stripRoute ~= nil and stripRoute.pointToPoint == true and stripRoute.dragStrip == true,
+  'and stays a drag strip after the server broadcasts its own circuit')
+check(math.abs(veh.y + 5) < 1,
+  'the car rolls up from five metres behind lane 1 (y=-5, got ' .. tostring(veh.y) .. ')')
+
+sent, hooks = {}, {}
+dragPass()
+local run = lastHook('RaceManagerDragRun')
+check(run ~= nil and run.practice == true and run.pass == 1,
+  'the pass is timed as practice pass 1')
+check(run ~= nil and type(run.et) == 'number' and type(run.rt) == 'number',
+  'with an ET and a reaction time')
+check(run ~= nil and run.foul ~= true, 'launched after the green: no red light')
+check(sentCount('RM_DragResult') == 0 and sentCount('RM_DragStaged') == 0,
+  'and the server hears nothing of it')
+check(sentCount('RM_Lap') == 0 and lastHook('RaceManagerLapDone') == nil,
+  'the finish line is not a lap')
+local passRoute = lastHook('RaceManagerRoute')
+check(passRoute ~= nil and passRoute.practiceDone == 1, 'the pass is counted')
+local dragClock = lastHook('RaceManagerLapTime')
+check(dragClock == nil or dragClock.running ~= true, 'and no lap clock runs')
+
+-- Next pass: back to the line.
+RM.setPracticeLaps(2)
+RM.practiceNextPass()
+frame(60)
+check(math.abs(veh.y + 5) < 1, 'Next pass puts the car back behind the line')
+sent, hooks = {}, {}
+dragPass()
+local fin2 = lastHook('RaceManagerRoute')
+check(fin2 ~= nil and fin2.practiceComplete == true and fin2.practiceDrag == true,
+  'the pass target ends the run, still as passes')
+check(lastHook('RaceManagerNotice') ~= nil
+  and lastHook('RaceManagerNotice').msg == 'PRACTICE COMPLETE: 2 passes',
+  'and the driver is told in passes')
+RM.endPractice()
+RM.setPracticeLaps(0)
+
+-- A ladder pass staging ends drag practice, as a derby forming does.
+practiseStrip()
+hooks = {}
+handlers['RM_DragUpdate']({ rmProtocol = 2, dragPhase = 'staging' })
+local yielded = lastHook('RaceManagerRoute')
+check(yielded ~= nil and yielded.practice ~= true, 'a drag pass staging ends practice')
+check(lastHook('RaceManagerNotice') ~= nil
+  and lastHook('RaceManagerNotice').msg == 'Practice ended: a drag pass is starting',
+  'and says why')
+handlers['RM_DragUpdate']({ rmProtocol = 2, dragPhase = 'idle' })
+
 if fails == 0 then
   print(('practice_test: %d checks, 0 failures'):format(checks))
 else
