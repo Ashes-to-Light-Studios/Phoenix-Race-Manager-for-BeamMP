@@ -44,7 +44,7 @@ M.paths = {
 -- Process calls, as a table so the tests can stand in for them.
 M.sys = { popen = io.popen, execute = os.execute }
 
--- idle | downloading | verifying | countdown | kicking | applying
+-- idle | downloading | verifying | countdown | kicking | applying | restarting
 M.state = { phase = 'idle' }
 M.lastError = nil   -- why the last attempt stopped
 M.last = nil        -- the previous update, read back after its restart
@@ -970,9 +970,13 @@ function M.start(pid, raw)
   end
   -- Decided before anything is downloaded: a server that cannot restart itself
   -- would be left running the old plugin beside the new files.
+  -- WATCH when the config can be respelt: the Management Tool then restarts
+  -- the server itself and still shows it running. One it did not start, it
+  -- shows as stopped.
   local info = restart.probe()
-  local method, _, note = restart.resolve(info, true)
-  if method ~= 'relaunch' and method ~= 'exit' then
+  local nudge = restart.canNudge ~= nil and restart.canNudge() == true
+  local method, grace, note = restart.resolve(info, not nudge)
+  if method ~= 'relaunch' and method ~= 'exit' and method ~= 'watch' then
     local why = cfg('mapRestart', 'auto') == 'manual'
       and 'Restarts are set to manual (mapRestart in config.json).'
       or (note or 'This server cannot restart itself.')
@@ -981,7 +985,7 @@ function M.start(pid, raw)
   local by = MP.GetPlayerName(pid) or ('player ' .. pid)
   M.lastError = nil
   M.state = { phase = 'downloading', target = rel, by = by, probe = info, method = method,
-    note = note }
+    grace = grace, note = note }
   local started, err = startJob({
     name = 'fetch', purpose = 'download Phoenix Race Manager v' .. rel.version,
     seconds = M.FETCH_SECONDS, out = rel.asset .. '.part', url = rel.download,
@@ -1076,6 +1080,18 @@ function M.apply(files, version)
   return true
 end
 
+-- Restart from here, as a relaunch would: the tool did not, or cannot be asked.
+-- The files are already in, so a server that cannot do this says so.
+local function restartFromHere(why)
+  local r, version = host.restart, M.state.target.version
+  print('[RaceManager] Update to v' .. version .. ': ' .. why .. '; restarting the server from here')
+  if r.canStop and r.canStop() and r.spawnRelauncher(M.state.probe) then
+    return r.stopServer('updating Phoenix Race Manager to v' .. version .. ', relaunch')
+  end
+  fail('v' .. version .. ' is installed, but the server could not restart itself. '
+    .. 'Restart it by hand to finish.')
+end
+
 -- At zero plus the settle: the restart helper first, so a server that could
 -- not get one is left exactly as it was, then the files, then the stop.
 function M.execute()
@@ -1089,6 +1105,18 @@ function M.execute()
   local ok, err = M.apply(s.files, version)
   s.files = nil
   if not ok then return fail(err) end
+  if s.method == 'watch' then
+    -- After the files: the tool may kill the server at its very next look.
+    -- BeamMP hot-reloads main.lua meanwhile; this module is require()d, so
+    -- the cached copy and this state survive it.
+    local nudged, why = host.restart.nudgeConfig()
+    if not nudged then return restartFromHere(tostring(why)) end
+    s.phase, s.left = 'restarting', s.grace or 90
+    print(string.format('[RaceManager] Update to v%s installed; ServerConfig.toml respelt '
+      .. 'for the config check. Waiting up to %d seconds for it to restart the server',
+      version, s.left))
+    return push()
+  end
   host.restart.stopServer('updating Phoenix Race Manager to v' .. version)
 end
 
@@ -1118,15 +1146,19 @@ function M.tick()
     s.left = s.left - 1
     if s.left > 0 then return end
     return M.execute()
+  elseif s.phase == 'restarting' then
+    s.left = s.left - 1
+    if s.left > 0 then return end
+    return restartFromHere('nothing restarted the server in ' .. tostring(s.grace) .. ' seconds')
   end
   settle()
 end
 
 -- Joining between the kick and the stop would download a client zip the
--- server is about to replace.
+-- server is about to replace, or one BeamMP has not hashed yet.
 function M.onPlayerAuth()
   local p = M.state.phase
-  if p == 'kicking' or p == 'applying' then
+  if p == 'kicking' or p == 'applying' or p == 'restarting' then
     return 'The server is updating Phoenix Race Manager. Try again in a minute.'
   end
 end
@@ -1172,6 +1204,8 @@ function M.warm()
       at = tonumber(rec.at), by = M.cleanText(rec.by, 40), attic = M.cleanText(rec.attic, 200),
     }
   end
+  -- A hot reload while the tool is about to restart this server: ask nothing.
+  if M.state.phase == 'restarting' then return end
   if cfg('updateCheck', true) ~= false then
     M.pendingCheck = true
     timerOn()

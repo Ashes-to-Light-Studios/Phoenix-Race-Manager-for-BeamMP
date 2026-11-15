@@ -354,14 +354,36 @@ function M.rewriteMap(text, value)
   return out:sub(2)
 end
 
+-- A CHANGE THE TOOL SEES AND BEAMMP KEEPS, for the updater, which has no Map
+-- line to change. BeamMP rebuilds the whole file at every start, so a comment
+-- would be dropped and the tool would restart the server a second time.
+-- UpdateReminderTime is a string BeamMP writes back verbatim, and its parser
+-- (stof over `\d+\.?\d*(min|[dhs])`) reads 30s and 30.0s alike: the value
+-- swaps between two spellings of the same time. nil when there is no such line
+-- in that form.
+function M.respellReminder(text)
+  local s = '\n' .. text
+  local a, b, lead, q, num, unit = s:find(
+    '(\n[ \t]*UpdateReminderTime[ \t]*=[ \t]*)(["\'])(%d+%.?%d*)(%a+)%2')
+  if not a then return nil end
+  if unit ~= 'min' and unit ~= 'd' and unit ~= 'h' and unit ~= 's' then return nil end
+  local alt
+  if not num:find('.', 1, true) then alt = num .. '.0'
+  elseif num:sub(-2) == '.0' then alt = num:sub(1, -3)
+  elseif num:sub(-1) == '0' or num:sub(-1) == '.' then alt = num:sub(1, -2)
+  else alt = num .. '0' end
+  return (s:sub(1, a - 1) .. lead .. q .. alt .. unit .. q .. s:sub(b + 1)):sub(2)
+end
+
 -- Written beside and renamed over, so the tool never reads half a file: a
--- truncated config restarts the server with its AuthKey missing.
-local function writeConfig(value)
+-- truncated config restarts the server with its AuthKey missing. `edit` turns
+-- the text into the new text, or returns nil and why not.
+local function writeConfigWith(edit)
   local path = at(M.paths.config)
   local text = readFile(path)
   if not text then return false, 'ServerConfig.toml is not in the server folder' end
-  local new = M.rewriteMap(text, value)
-  if not new then return false, 'ServerConfig.toml has no Map line' end
+  local new, why = edit(text)
+  if not new then return false, why end
   local tmp = path .. '.rm-tmp'
   local f = io.open(tmp, 'wb')
   if not f then return false, 'cannot write ' .. tmp end
@@ -379,6 +401,28 @@ local function writeConfig(value)
   end
   if readFile(path) ~= new then return false, 'ServerConfig.toml did not take the change' end
   return true
+end
+
+local function writeConfig(value)
+  return writeConfigWith(function (text)
+    local new = M.rewriteMap(text, value)
+    if not new then return nil, 'ServerConfig.toml has no Map line' end
+    return new
+  end)
+end
+
+-- For update.lua: can the tool's config check be made to fire, and fire it.
+function M.canNudge()
+  local text = readFile(at(M.paths.config))
+  return text ~= nil and M.respellReminder(text) ~= nil
+end
+
+function M.nudgeConfig()
+  return writeConfigWith(function (text)
+    local new = M.respellReminder(text)
+    if not new then return nil, 'ServerConfig.toml has no UpdateReminderTime to change' end
+    return new
+  end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -461,7 +505,8 @@ local function serverPort()
 end
 
 -- Picks the method and says, in one sentence, what will happen. `noWatch` is
--- the updater's: it changes no config line, so the tool's watch never fires.
+-- the updater's when it has no config line to change (canNudge), so the tool's
+-- watch would never fire.
 function M.resolveRestart(info, noWatch)
   local want = cfg('mapRestart', 'auto')
   local underTool = type(info.parent) == 'string' and info.parent:lower():find('management') ~= nil
