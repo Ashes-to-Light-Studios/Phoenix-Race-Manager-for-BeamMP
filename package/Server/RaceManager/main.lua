@@ -1126,7 +1126,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.23.2'
+local RM_BUILD = '0.23.3'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -6890,6 +6890,10 @@ end
       resolve         = function (info, noWatch) return mod.resolveRestart(info, noWatch) end,
       spawnRelauncher = function (info) return mod.spawnRelauncher(info) end,
       stopServer      = function (why) return mod.stopServer(why) end,
+      -- So the tool's config check restarts an update too (maps.lua).
+      canNudge        = function () return mod.canNudge() end,
+      nudgeConfig     = function () return mod.nudgeConfig() end,
+      canStop         = function () return mod.sys.exit ~= nil end,
     }
   else
     print('[RaceManager] maps.lua did not load, so map switching is off: ' .. tostring(mod))
