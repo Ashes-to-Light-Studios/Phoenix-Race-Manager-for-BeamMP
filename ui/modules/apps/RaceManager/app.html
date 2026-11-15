@@ -239,8 +239,10 @@
           title="Pace lap: hold position, no overtaking, 50 MPH or 80 KMH. It is not timed and is not one of the race laps. GET READY comes as the P1 starter nears the line, then the green at a random point before it.">PACE LAP &middot; HOLD &middot; 50 MPH OR 80 KMH &middot; NOT SCORED</span>
     <span class="rm-ready-badge" ng-if="greenReady &amp;&amp; (pacing || restartPending)"
           title="The run to the line has begun: the green flag falls at a random point before it. Hold position until it does.">GET READY &middot; HOLD UNTIL THE GREEN FLAG</span>
-    <span class="rm-p2p-badge" ng-if="pointToPoint"
+    <span class="rm-p2p-badge" ng-if="pointToPoint &amp;&amp; !dragStrip"
           title="This track is a point-to-point stage: driven once, first gate to last. Laps do not apply.">POINT TO POINT</span>
+    <span class="rm-p2p-badge" ng-if="pointToPoint &amp;&amp; dragStrip"
+          title="This track is a drag strip: one pass from the tree to the finish line.">DRAG STRIP</span>
     <span class="rm-derby-badge" ng-if="derby.phase === 'running'">DERBY LIVE {{ formatDerbyTime(derby.time) }}</span>
     <span class="rm-admin-tag" ng-if="isFullAdmin()" title="You are logged in as an admin: full rights, including passwords, results and deleting layouts">ADMIN</span>
     <!-- The tier is worth SAYING, not just enforcing. A race director who finds
@@ -413,17 +415,17 @@
     <div class="rm-practice-head">
       <span class="rm-practice-title">Practice</span>
       <span class="rm-practice-state" ng-if="practice">
-        on <b>{{ practiceLayout }}</b> &middot; lap {{ practiceDone + 1 }}<span
+        on <b>{{ practiceLayout }}</b> &middot; {{ practiceDrag ? 'pass' : 'lap' }} {{ practiceDone + 1 }}<span
           ng-if="practiceLeft !== null">, {{ practiceLeft }} left</span>
       </span>
       <span class="rm-practice-state" ng-if="practiceComplete">
-        complete on <b>{{ practiceLayout }}</b> &middot; {{ practiceDone }} {{ practiceDone === 1 ? 'lap' : 'laps' }}
+        complete on <b>{{ practiceLayout }}</b> &middot; {{ practiceDone }} {{ practiceDrag ? (practiceDone === 1 ? 'pass' : 'passes') : (practiceDone === 1 ? 'lap' : 'laps') }}
       </span>
       <span class="rm-practice-state rm-practice-off" ng-if="!practice && !practiceComplete && !practiceLayouts().length">
         No tracks are open for practice
       </span>
       <span class="rm-practice-state" ng-if="(practice || practiceComplete) && practiceBest !== null">
-        best <b>{{ formatLap(practiceBest) }}</b>
+        best <b>{{ practiceDrag ? ('ET ' + dragET(practiceBest)) : formatLap(practiceBest) }}</b>
       </span>
     </div>
     <!-- THE LAPS RUN SO FAR. The lap readout holds a time for a few seconds and
@@ -438,7 +440,9 @@
       <div class="rm-practice-lap" ng-repeat="l in practiceLaps track by $index"
            ng-class="{'rm-practice-lap-best': practiceIsBest(l)}">
         <span class="rm-practice-lapno">{{ l.lap }}</span>
-        <span class="rm-practice-laptime">{{ formatLap(l.time) }}</span>
+        <span class="rm-practice-laptime" ng-if="!practiceDrag">{{ formatLap(l.time) }}</span>
+        <span class="rm-practice-laptime" ng-if="practiceDrag">RT {{ dragET(l.rt) }} &middot; ET {{ dragET(l.time) }} &middot; {{ dragMPH(l.speed) }} mph<b
+          class="rm-drag-slip-foul" ng-if="l.foul"> RED</b></span>
         <span class="rm-practice-lapdelta" ng-if="l.delta !== null">
           {{ l.delta > 0 ? '+' : '' }}{{ l.delta.toFixed(3) }}
         </span>
@@ -460,7 +464,7 @@
                ng-repeat="l in practiceLayouts() track by l.name"
                ng-class="{'rm-layout-option-active': l.name === practiceUi.selected}"
                ng-click="selectPracticeLayout(l)">
-            {{ l.name }} ({{ l.checkpoints.length }} gates)
+            {{ l.name }} ({{ isDragLayout(l) ? 'drag strip' : l.checkpoints.length + ' gates' }})
           </div>
         </div>
       </div>
@@ -469,8 +473,8 @@
       <input type="number" class="rm-width-num" min="0" max="99" step="1"
              ng-model="practiceUi.laps" ng-change="applyPracticeLaps()"
              ng-model-options="{debounce: 600}"
-             title="How many laps to run. 0 or blank is unlimited.">
-      <span class="rm-setting-val">{{ practiceUi.laps > 0 ? 'laps' : 'unlimited' }}</span>
+             title="How many {{ practicePickedDrag() ? 'passes' : 'laps' }} to run. 0 or blank is unlimited.">
+      <span class="rm-setting-val">{{ practiceUi.laps > 0 ? (practicePickedDrag() ? 'passes' : 'laps') : 'unlimited' }}</span>
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-admin-tab-active': practiceGhost}"
               ng-click="togglePracticeGhost()"
               title="On: you are a ghost to everybody while you practise. Off: solid, so you can run with other drivers who also turned it off.">
@@ -483,9 +487,17 @@
       </button>
     </div>
     <div class="rm-practice-row" ng-if="practice">
-      <span class="rm-practice-note">
+      <span class="rm-practice-note" ng-if="!practiceDrag">
         Your laps are timed for you alone: nothing here is scored, reported or saved.
       </span>
+      <!-- The tree drops itself once the car is staged, as on race night. -->
+      <span class="rm-practice-note" ng-if="practiceDrag">
+        Stage on lane 1 and the tree drops by itself. Your passes are timed for you alone: nothing is scored, reported or saved.
+      </span>
+      <button class="rm-btn rm-btn-start" ng-if="practiceDrag" ng-click="practiceNextPass()"
+              title="Back to the start line for another pass.">
+        Next pass
+      </button>
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-admin-tab-active': practiceGhost}"
               ng-click="togglePracticeGhost()"
               title="On: you are a ghost to everybody while you practise. Off: solid, so you can run with other drivers who also turned it off.">
@@ -497,8 +509,8 @@
       </button>
     </div>
     <div class="rm-practice-row" ng-if="practiceComplete">
-      <span class="rm-practice-note">Lap target reached. Timing has stopped.</span>
-      <button class="rm-btn" ng-click="endPractice()" title="Put these laps away.">Close</button>
+      <span class="rm-practice-note">{{ practiceDrag ? 'Pass' : 'Lap' }} target reached. Timing has stopped.</span>
+      <button class="rm-btn" ng-click="endPractice()" title="Put these {{ practiceDrag ? 'passes' : 'laps' }} away.">Close</button>
     </div>
   </div>
 
@@ -599,6 +611,12 @@
          all the time it would roughly double the bindings a plain racer's
          digest walks, for a control they touch once a night. Shut, it costs
          nothing. -->
+    <div class="rm-garage-controls" ng-if="garagePickUi.open">
+      <button class="rm-btn rm-btn-mini" ng-click="openVehicleSelector()"
+              title="Open the game's vehicle selector (the E key) to spawn a car">
+        Vehicle Selector
+      </button>
+    </div>
     <div class="rm-garage-pickrow" ng-if="garagePickUi.open"
          ng-repeat="g in garageSpawnable track by $index">
       <span class="rm-garage-label" title="{{ g.model }}">{{ g.label }}</span>
@@ -1936,6 +1954,10 @@
       Switch it off to add cars to the list.
     </div>
     <div class="rm-garage-controls">
+      <button class="rm-btn" ng-click="openVehicleSelector()"
+              title="Open the game's vehicle selector (the E key) to spawn a car">
+        Vehicle Selector
+      </button>
       <button class="rm-btn rm-btn-grid" ng-click="whitelistCurrentVehicle()"
               title="Capture the car you are driving right now and add it to the list">
         + Whitelist Current Vehicle

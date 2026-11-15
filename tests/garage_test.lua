@@ -1744,5 +1744,37 @@ do
     'and the metallic data alongside it, so a metallic finish survives too')
 end
 
+-- ---------------------------------------------------------------------------
+-- Vehicle Selector: the game's own menu, as its E key opens it
+-- ---------------------------------------------------------------------------
+do
+  local realCV = core_vehicles
+  local opened = 0
+  core_vehicles = { removeCurrent = function () end,
+                    openSelectorUI = function () opened = opened + 1 end }
+  hooks = {}
+  RM.openVehicleSelector()
+  check(opened == 1, 'Vehicle Selector opens the game\'s selector')
+  local legacy = false
+  for _, h in ipairs(hooks) do
+    if h.event == 'MenuOpenModule' then legacy = true end
+  end
+  check(not legacy, 'and does not also open the old menu')
+
+  -- A build without it, or one where it throws: the old menu's hook.
+  for _, cv in ipairs({
+    { removeCurrent = function () end },
+    { removeCurrent = function () end, openSelectorUI = function () error('boom') end },
+  }) do
+    core_vehicles = cv
+    hooks = {}
+    RM.openVehicleSelector()
+    local h = hooks[#hooks]
+    check(h and h.event == 'MenuOpenModule' and h.payload == 'vehicleselect',
+      'falls back to the old vehicle select menu')
+  end
+  core_vehicles = realCV
+end
+
 print(string.format('garage_test: %d checks, %d failures', checks, fails))
 if fails > 0 then os.exit(1) end
