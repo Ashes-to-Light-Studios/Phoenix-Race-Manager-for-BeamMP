@@ -3180,11 +3180,17 @@ Nothing in `Data/` is touched: tracks, arenas, the cup, the roster, the garage,
 settings, records and results all carry over.
 
 **How it restarts.** The way a map switch does (see [How the server
-restarts](#how-the-server-restarts)), with one difference: an update changes no
-setting, so the Management Tool's config check never fires, and under the tool
-Race Manager restarts the server itself. With `mapRestart` set to `manual`, or
-on a BeamMP server too old to stop itself (before 3.1), it does not install: it
-says so and gives the release page to install by hand.
+restarts](#how-the-server-restarts)). An update has no Map line to change, so
+for the Management Tool's config check to see one it rewrites
+`UpdateReminderTime` in `ServerConfig.toml` as another spelling of the same
+time: `"30s"` becomes `"30.0s"`, and the next update turns it back. BeamMP keeps
+that spelling when it rewrites the file at startup, so the tool restarts the
+server once and still shows it running. A config without that line (BeamMP
+before it had one), or the tool's config check switched off, leaves Race Manager
+to restart the server itself, outside the tool, which then shows it as stopped.
+With `mapRestart` set to `manual`, or on a BeamMP server too old to stop itself
+(before 3.1), it does not install: it says so and gives the release page to
+install by hand.
 
 **Rolling back.** Copy the files from the `_attic` folder back into
 `Resources/` and restart the server.

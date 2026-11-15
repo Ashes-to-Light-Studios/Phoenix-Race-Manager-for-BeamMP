@@ -627,6 +627,72 @@ check(update.state.phase == 'idle' and update.lastError:find('map switch'), 'not
 maps.state = { phase = 'idle' }
 
 -- ---------------------------------------------------------------------------
+-- 11b. Under the Management Tool, the tool restarts it
+-- ---------------------------------------------------------------------------
+-- A server PRM restarts itself, the tool shows as stopped. With its config
+-- check on, the update respells UpdateReminderTime and the tool restarts it.
+do
+  local realProbe = maps.probe
+  maps.probe = function ()
+    local info = realProbe()
+    info.parent, info.mtconfig = 'BeamMP.Server.Management.Tool.v3.1.exe', 'True'
+    info.mt = { checkRestartCfgTimer = 'True', checkRestartCfgTimerSeconds = '20' }
+    return info
+  end
+  local CONFIG = 'Port = 30814\nMap = "/levels/gridmap_v2/info.json"\n\n[Misc]\n'
+    .. 'UpdateReminderTime = "30s"\n'
+
+  reboot()
+  write(root .. '/ServerConfig.toml', CONFIG)
+  newRelease('9.9.9', zip)
+  RM_onUpdateStart(ADMIN, '{"version":"9.9.9"}')
+  check(update.state.method == 'watch', 'under the tool with its check on: the tool restarts it')
+  finishJob(0, zip)
+  tick(1 + update.COUNTDOWN + update.SETTLE)
+  check(read(PLUGIN .. '/main.lua') == NEW_MAIN, 'the new release is installed')
+  check(read(root .. '/ServerConfig.toml') == CONFIG:gsub('"30s"', '"30.0s"'),
+    'and ServerConfig.toml respelt for the config check, nothing else changed')
+  check(exited == 0 and #spawned == 1, 'the server is left for the tool: no stop, no relaunch helper')
+  check(update.state.phase == 'restarting', 'it waits for the restart')
+  check(RM_Update_onPlayerAuth() ~= nil, 'and refuses joins meanwhile')
+
+  -- BeamMP hot-reloads the new main.lua meanwhile, and onInit warms again.
+  update.warm()
+  check(update.state.phase == 'restarting' and not update.pendingCheck,
+    'a hot reload keeps the wait and asks GitHub nothing')
+
+  tick(update.state.left - 1)
+  check(exited == 0, 'still waiting a second before the grace runs out')
+  tick()
+  check(exited == 1 and spawned[#spawned]:find('relaunch', 1, true),
+    'nothing restarted it: Race Manager restarts it itself, as before')
+
+  -- No line to respell: restarted from here, said up front.
+  reboot()
+  newRelease('9.9.9', zip)
+  RM_onUpdateStart(ADMIN, '{"version":"9.9.9"}')
+  check(update.state.method == 'relaunch' and update.state.note:find('outside the Management Tool'),
+    'a config without UpdateReminderTime: Race Manager restarts it, and says so')
+  RM_onUpdateCancel(ADMIN)
+
+  -- The config check is off: the same.
+  maps.probe = function ()
+    local info = realProbe()
+    info.parent, info.mtconfig = 'BeamMP.Server.Management.Tool.v3.1.exe', 'True'
+    info.mt = { checkRestartCfgTimer = 'False' }
+    return info
+  end
+  reboot()
+  write(root .. '/ServerConfig.toml', CONFIG)
+  newRelease('9.9.9', zip)
+  RM_onUpdateStart(ADMIN, '{"version":"9.9.9"}')
+  check(update.state.method == 'relaunch' and update.state.note:find('config check is off'),
+    'the tool\'s config check off: Race Manager restarts it, and says how to fix that')
+  RM_onUpdateCancel(ADMIN)
+  maps.probe = realProbe
+end
+
+-- ---------------------------------------------------------------------------
 -- 12. A bad repo never reaches a shell
 -- ---------------------------------------------------------------------------
 CFG.updateRepo = 'x/y" & calc'

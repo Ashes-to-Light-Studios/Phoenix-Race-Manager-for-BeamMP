@@ -6,6 +6,21 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Fixed
+
+- **After Update and restart, the Management Tool showed the server as
+  stopped.** Race Manager restarted the server itself, outside the tool, so
+  the tool lost track of it. With the tool's **Check for config update and
+  restart** on, an update now leaves the restart to the tool, as a map switch
+  does: it rewrites `UpdateReminderTime` in `ServerConfig.toml` as another
+  spelling of the same time (`"30s"` and `"30.0s"`), which the tool notices
+  and BeamMP keeps. If nothing has restarted the server once the check's
+  interval plus 15 seconds have passed, Race Manager restarts it itself, as
+  before. This takes effect from the update *after* this one: an update runs
+  the updater of the version being replaced.
+
 ## 0.23.2 - Drag strip practice, and a Vehicle Selector button
 
 #### Added
