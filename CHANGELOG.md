@@ -6,6 +6,36 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.23.2 - Drag strip practice, and a Vehicle Selector button
+
+#### Added
+
+- **Practise a drag strip as drag passes.** Practice on a layout whose type
+  is **Drag** used to time laps. It now runs passes the way race night does:
+  you are put on lane 1 with the server's drag settings (roll-up or held, the
+  sportsman or pro tree), and the tree drops by itself once you have sat
+  staged for a moment. Each pass shows your reaction time, ET and trap speed,
+  and goes on the practice list with your best ET and a **RED** tag for a red
+  light. **Next pass** puts you back on the line. A target counts passes. As
+  with lap practice, nothing is scored, reported or saved. A strip with no
+  start position or finish gate still practises as laps.
+- **Vehicle Selector** on the **Garage** tab, for admins and drivers alike,
+  opens the game's own vehicle selector: the one the **E** key opens.
+
+#### Changed
+
+- A drag pass being staged ends free practice, the same way a derby forming
+  already did.
+
+#### Fixed
+
+- **A Drag layout read POINT TO POINT** in the header, the same as a P2P
+  stage, so choosing Drag looked like it did nothing. It now says
+  **DRAG STRIP**. The type was always saved.
+- **Practice could lose its track type.** While you practised, every update
+  from the server set the type to that of the server's own loaded track. A
+  practice track now keeps its own.
+
 ## 0.23.1 - You choose where results are saved
 
 #### Changed
