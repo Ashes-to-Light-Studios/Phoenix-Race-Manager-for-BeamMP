@@ -217,6 +217,29 @@ do
     'no Map line is an error, not a guess')
 end
 
+-- The updater's change: UpdateReminderTime respelt to the same time, so the
+-- Management Tool sees a difference and BeamMP's rewrite keeps it.
+do
+  local base = '[General]\r\nMap = "/levels/x/info.json"\r\n\r\n[Misc]\r\n'
+    .. 'UpdateReminderTime = "30s"\r\n'
+  local once = maps.respellReminder(base)
+  check(once == base:gsub('"30s"', '"30.0s"'), '30s becomes 30.0s, every other byte kept')
+  check(once and maps.respellReminder(once) == base, 'and back again')
+  for _, pair in ipairs({ { '0.5min', '0.50min' }, { '1.25h', '1.250h' }, { '2.0d', '2d' },
+                          { '1.50s', '1.5s' }, { '30.s', '30s' } }) do
+    local text = 'UpdateReminderTime = "' .. pair[1] .. '"\n'
+    check(maps.respellReminder(text) == 'UpdateReminderTime = "' .. pair[2] .. '"\n',
+      pair[1] .. ' becomes ' .. pair[2])
+  end
+  check(maps.respellReminder("UpdateReminderTime = '30s'\n") == "UpdateReminderTime = '30.0s'\n",
+    'single quotes too')
+  check(maps.respellReminder('UpdateReminderTime = "30sec"\n') == nil,
+    'a unit BeamMP does not read is left alone')
+  check(maps.respellReminder('[General]\nPort = 1\n') == nil, 'no line: nil, not a guess')
+  check(maps.respellReminder('Description = "UpdateReminderTime = \\"30s\\""\n') == nil,
+    'a value that merely mentions it is not the line')
+end
+
 -- ---------------------------------------------------------------------------
 -- 4. The catalog
 -- ---------------------------------------------------------------------------

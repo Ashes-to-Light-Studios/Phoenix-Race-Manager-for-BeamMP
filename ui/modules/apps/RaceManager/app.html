@@ -3343,7 +3343,7 @@
         Restarting to install v{{ prmUpdate.target }} in {{ prmUpdate.left }}s
         <button class="rm-btn rm-btn-mini" ng-click="updateCancel()">Stop</button>
       </span>
-      <span class="rm-confirm" ng-if="prmUpdate.phase === 'kicking' || prmUpdate.phase === 'applying'">
+      <span class="rm-confirm" ng-if="prmUpdate.phase === 'kicking' || prmUpdate.phase === 'applying' || prmUpdate.phase === 'restarting'">
         Installing v{{ prmUpdate.target }} and restarting…
       </span>
       <button class="rm-btn rm-btn-mini" ng-if="updateAvailable() && prmUpdate.notes"
