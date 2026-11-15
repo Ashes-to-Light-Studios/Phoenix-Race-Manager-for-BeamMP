@@ -611,6 +611,12 @@
          all the time it would roughly double the bindings a plain racer's
          digest walks, for a control they touch once a night. Shut, it costs
          nothing. -->
+    <div class="rm-garage-controls" ng-if="garagePickUi.open">
+      <button class="rm-btn rm-btn-mini" ng-click="openVehicleSelector()"
+              title="Open the game's vehicle selector (the E key) to spawn a car">
+        Vehicle Selector
+      </button>
+    </div>
     <div class="rm-garage-pickrow" ng-if="garagePickUi.open"
          ng-repeat="g in garageSpawnable track by $index">
       <span class="rm-garage-label" title="{{ g.model }}">{{ g.label }}</span>
@@ -1948,6 +1954,10 @@
       Switch it off to add cars to the list.
     </div>
     <div class="rm-garage-controls">
+      <button class="rm-btn" ng-click="openVehicleSelector()"
+              title="Open the game's vehicle selector (the E key) to spawn a car">
+        Vehicle Selector
+      </button>
       <button class="rm-btn rm-btn-grid" ng-click="whitelistCurrentVehicle()"
               title="Capture the car you are driving right now and add it to the list">
         + Whitelist Current Vehicle

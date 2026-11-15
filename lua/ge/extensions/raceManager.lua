@@ -2628,6 +2628,16 @@ local function vehicleConfigUpdate(dt)
   reportVehicleConfig(false)
 end
 
+-- The game's own vehicle selector, as its E key opens it (core_vehicles picks
+-- the new or old menu). KEPT: the old menu's hook, for a build without it.
+function M.openVehicleSelector()
+  if core_vehicles and type(core_vehicles.openSelectorUI) == 'function'
+     and pcall(core_vehicles.openSelectorUI) then
+    return
+  end
+  guihooks.trigger('MenuOpenModule', 'vehicleselect')
+end
+
 -- Admin action: capture the car being driven right now and add it to the
 -- server's Garage List.
 function M.whitelistCurrentVehicle()

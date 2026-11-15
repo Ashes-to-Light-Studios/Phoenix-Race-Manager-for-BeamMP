@@ -4578,6 +4578,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         bngApi.engineLua('raceManager.setJokerEnabled(' + (!$scope.jokerEnabled) + ')');
       };
 
+      // The game's own vehicle selector, from either Garage view.
+      $scope.openVehicleSelector = function () {
+        bngApi.engineLua('raceManager.openVehicleSelector()');
+      };
       // Module 4: capture the vehicle the admin is driving right now.
       $scope.whitelistCurrentVehicle = function () {
         bngApi.engineLua('raceManager.whitelistCurrentVehicle()');
