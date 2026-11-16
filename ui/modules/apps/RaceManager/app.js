@@ -59,7 +59,13 @@ angular.module('beamng.apps')
         transfer: 0,           // drivers transferring out of each heat
         heatLaps: 0,           // laps a heat runs (0 = the race distance)
         finishAfter: 1,        // cars home before the finish countdown starts
-        finishSecs: 60         // the finish countdown, seconds (0 = off)
+        finishSecs: 60,        // the finish countdown, seconds (0 = off)
+        // Checkpoint skips: warnings before a penalty, the penalty's seconds,
+        // the lift's length and the window to serve it in.
+        cpSkipWarnings: 1,
+        cpSkipPenaltySec: 5,
+        cpSkipLiftSec: 3,
+        cpSkipLiftWindow: 30
       };
 
       // ----------------------------------------------------------------
@@ -81,6 +87,16 @@ angular.module('beamng.apps')
       $scope.finishTimer = 60;    // its length in seconds, 0 = wait for every car
       $scope.maxResets = -1;      // authoritative value mirrored from the server
       $scope.resetsUsed = 0;      // what THIS client has spent
+      // CHECKPOINT SKIPS (track cuts), mirrored from the server: off, or so many
+      // warnings and then 'time' | 'lift' | 'liftAndTime'. myCpSkip is this
+      // driver's own warnings, penalty and lift, null while clean.
+      $scope.cpSkipEnabled = false;
+      $scope.cpSkipWarnings = 1;
+      $scope.cpSkipType = 'time';
+      $scope.cpSkipPenaltySec = 5;
+      $scope.cpSkipLiftSec = 3;
+      $scope.cpSkipLiftWindow = 30;
+      $scope.myCpSkip = null;
       // What a legal reset does: repair in place, or respawn at the last
       // checkpoint the driver crossed. Mirrored from the server.
       $scope.resetMode = 'inplace';
@@ -338,6 +354,8 @@ angular.module('beamng.apps')
           $scope.lapHold = {
             lapTime: data.outLap ? null : data.lapTime,
             outLap: !!data.outLap,
+            // A checkpoint was skipped on it: shown, and marked as counting for nothing.
+            cut: !!data.cut,
             lap: data.lap || null,
             delta: (typeof data.delta === 'number') ? data.delta : null,
             until: Date.now() + LAP_HOLD_MS
@@ -1510,7 +1528,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.24.0';
+      var APP_BUILD = '0.25.0';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -2108,6 +2126,32 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (data.resetMode === 'checkpoint' || data.resetMode === 'inplace') {
             $scope.resetMode = data.resetMode;
           }
+          // Checkpoint skips. Each box is re-seeded only when the server's value
+          // MOVED, so typing survives the broadcast. No cpSkip: an older server.
+          var cs = data.cpSkip || null;
+          $scope.cpSkipEnabled = !!(cs && cs.enabled);
+          if (cs) {
+            if (typeof cs.warnings === 'number') {
+              if ($scope.cpSkipWarnings !== cs.warnings) { $scope.settingsUi.cpSkipWarnings = cs.warnings; }
+              $scope.cpSkipWarnings = cs.warnings;
+            }
+            if (cs.type === 'time' || cs.type === 'lift' || cs.type === 'liftAndTime') {
+              $scope.cpSkipType = cs.type;
+            }
+            if (typeof cs.penaltySec === 'number') {
+              if ($scope.cpSkipPenaltySec !== cs.penaltySec) { $scope.settingsUi.cpSkipPenaltySec = cs.penaltySec; }
+              $scope.cpSkipPenaltySec = cs.penaltySec;
+            }
+            if (typeof cs.liftSec === 'number') {
+              if ($scope.cpSkipLiftSec !== cs.liftSec) { $scope.settingsUi.cpSkipLiftSec = cs.liftSec; }
+              $scope.cpSkipLiftSec = cs.liftSec;
+            }
+            if (typeof cs.liftWindow === 'number') {
+              if ($scope.cpSkipLiftWindow !== cs.liftWindow) { $scope.settingsUi.cpSkipLiftWindow = cs.liftWindow; }
+              $scope.cpSkipLiftWindow = cs.liftWindow;
+            }
+          }
+          $scope.myCpSkip = data.myCpSkip || null;
           $scope.jokerEnabled = !!data.jokerEnabled;
           $scope.paceLap = !!data.paceLap;
           $scope.pacing = !!data.pacing;
@@ -4559,6 +4603,83 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         if (isNaN(n)) { return; }
         if (n < 0) { n = -1; }
         bngApi.engineLua('raceManager.setMaxResets(' + n + ')');
+      };
+
+      // CHECKPOINT SKIPS: every rule goes in one call. From a box (debounced),
+      // a blank one is mid-edit and nothing is sent; from a button, a blank box
+      // keeps the server's value.
+      function cpSkipNum(box, isInt) {
+        var n = isInt ? parseInt(box, 10) : parseFloat(box);
+        return isNaN(n) ? null : n;
+      }
+      function sendCpSkip(enabled, type, fromButton) {
+        var w = cpSkipNum($scope.settingsUi.cpSkipWarnings, true);
+        var s = cpSkipNum($scope.settingsUi.cpSkipPenaltySec, false);
+        var l = cpSkipNum($scope.settingsUi.cpSkipLiftSec, false);
+        var win = cpSkipNum($scope.settingsUi.cpSkipLiftWindow, true);
+        if (!fromButton && (w === null || s === null || l === null || win === null)) { return; }
+        if (w === null) { w = $scope.cpSkipWarnings; }
+        if (s === null) { s = $scope.cpSkipPenaltySec; }
+        if (l === null) { l = $scope.cpSkipLiftSec; }
+        if (win === null) { win = $scope.cpSkipLiftWindow; }
+        bngApi.engineLua('raceManager.setCheckpointSkip(' + (enabled ? 'true' : 'false') + ', '
+          + w + ', ' + luaStr(type) + ', ' + s + ', ' + l + ', ' + win + ')');
+      }
+      $scope.toggleCpSkip = function () {
+        sendCpSkip(!$scope.cpSkipEnabled, $scope.cpSkipType, true);
+      };
+      $scope.setCpSkipType = function (type) {
+        if (type !== 'time' && type !== 'lift' && type !== 'liftAndTime') { return; }
+        sendCpSkip($scope.cpSkipEnabled, type, true);
+      };
+      $scope.applyCpSkip = function () {
+        sendCpSkip($scope.cpSkipEnabled, $scope.cpSkipType, false);
+      };
+      $scope.cpSkipHasLift = function () {
+        return $scope.cpSkipType === 'lift' || $scope.cpSkipType === 'liftAndTime';
+      };
+      // The seconds box means the penalty in Time mode, and what an unserved
+      // lift becomes in Lift mode (both, in Lift + time).
+      $scope.cpSkipSecLabel = function () {
+        return $scope.cpSkipType === 'lift' ? 'If not served (s)' : 'Penalty per skip (s)';
+      };
+      // The rule, in one line, as the results file says it.
+      $scope.cpSkipLabel = function () {
+        if (!$scope.cpSkipEnabled) { return 'Off: a cut leaves the car armed on the gate it missed'; }
+        var w = $scope.cpSkipWarnings;
+        var head = w === 0 ? 'No warnings: ' : (w + ' warning' + (w === 1 ? '' : 's') + ', then ');
+        var pen = '+' + Number($scope.cpSkipPenaltySec).toFixed(1) + 's';
+        var lift = 'lift ' + Number($scope.cpSkipLiftSec).toFixed(1) + 's';
+        var serve = ' (serve within ' + $scope.cpSkipLiftWindow + 's or ' + pen
+          + ($scope.cpSkipType === 'liftAndTime' ? ' more)' : ')');
+        if ($scope.cpSkipType === 'lift') { return head + lift + serve; }
+        if ($scope.cpSkipType === 'liftAndTime') { return head + pen + ' and ' + lift + serve; }
+        return head + pen + ' per skipped checkpoint';
+      };
+      // The board's badges. nil on the wire is 0.
+      $scope.penaltyLabel = function (row) {
+        return '+' + Number(row.penaltySeconds || 0).toFixed(1) + 's';
+      };
+      $scope.cpWarnShown = function (row) {
+        return $scope.cpSkipEnabled && $scope.cpSkipWarnings > 0 && (row.checkpointWarningsUsed || 0) > 0;
+      };
+      $scope.cpWarnLabel = function (row) {
+        return 'W ' + (row.checkpointWarningsUsed || 0) + '/' + $scope.cpSkipWarnings;
+      };
+      // This driver's own readout: warnings, penalty, and a lift being served.
+      $scope.myCpLabel = function () {
+        var m = $scope.myCpSkip;
+        if (!m) { return ''; }
+        var parts = [];
+        if ($scope.cpSkipWarnings > 0 && m.warn > 0) { parts.push('W ' + m.warn + '/' + $scope.cpSkipWarnings); }
+        if (m.pen > 0) { parts.push('+' + Number(m.pen).toFixed(1) + 's'); }
+        if (m.lift > 0) {
+          var s = 'LIFT' + (m.lift > 1 ? ' x' + m.lift : '');
+          if (typeof m.liftLeft === 'number') { s += ' ' + m.liftLeft.toFixed(1) + 's'; }
+          if (typeof m.window === 'number') { s += ' (' + Math.ceil(m.window) + 's to serve)'; }
+          parts.push(s);
+        }
+        return parts.join(' \u00b7 ');
       };
 
       // Module 1: what a legal reset does - repair in place or respawn at the
