@@ -362,6 +362,39 @@ RM_onVehicleConfig(3, '{"vid":7,"model":"etk800","sig":"' .. SIG_B .. '"}')
 check(rejected[3] ~= nil, 'the same parts on a different tune are refused in strict mode')
 check(rejected[3].detail:find('Strict', 1, true), 'and the refusal names strict mode')
 
+-- ---------------------------------------------------------------------------
+-- Model mode: the vehicle alone, for a series that leaves the build to drivers
+-- ---------------------------------------------------------------------------
+-- A league asked for it: pick the car, and let every driver fit and tune it as
+-- they like. Matched on the model the signature names, nothing else.
+RM_onSetGarageMode(1, '{"mode":"model"}')
+check(lastGarage.garageMode == 'model', 'enforcement mode switched to model')
+rejected = {}
+RM_onVehicleConfig(3, '{"vid":7,"model":"etk800",'
+  .. '"sig":"model=etk800|parts=body=etk800_body;engine=v8_swap|vars=camber=-3.0000"}')
+check(rejected[3] == nil, 'in model mode a part swap AND a re-tune of an approved model pass')
+rejected = {}
+RM_onVehicleConfig(3, '{"vid":7,"model":"etk800","partsSig":"model=etk800|pd=1:2:3:4",'
+  .. '"sig":"model=etk800|pd=1:2:3:4|vd=5:6:7:8"}')
+check(rejected[3] == nil, 'so does a current client\'s digest signature of any build')
+rejected = {}
+RM_onVehicleConfig(3, '{"vid":7,"model":"ETK800",'
+  .. '"sig":"model=vehicles/ETK800.jbeam|parts=a=b|vars=c=1"}')
+check(rejected[3] == nil, 'the model name is compared without case, path or .jbeam')
+rejected = {}
+RM_onVehicleConfig(3, '{"vid":7,"model":"pigeon","sig":"model=pigeon|parts=body=pigeon_body|vars=x=1"}')
+check(rejected[3] ~= nil, 'a model not on the list is still refused')
+check(rejected[3] and rejected[3].detail:find('Model', 1, true),
+  'and the refusal names model mode')
+do
+  local f = io.open('Resources/Server/RaceManager/Data/garage.json', 'r')
+  local text = f and f:read('*a') or ''
+  if f then f:close() end
+  check(text:find('"mode":"model"', 1, true) ~= nil or text:find('"mode": "model"', 1, true) ~= nil,
+    'model mode is saved with the list')
+end
+RM_onSetGarageMode(1, '{"mode":"strict"}')
+
 RM_onSetGarageMode(1, '{"mode":"nonsense"}')
 check(lastGarage.garageMode == 'strict', 'an unrecognized mode is refused, not applied')
 RM_onSetGarageMode(3, '{"mode":"parts"}')

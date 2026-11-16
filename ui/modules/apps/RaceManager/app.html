@@ -1959,11 +1959,15 @@
       </button>
       <span class="rm-garage-count">{{ garage.length }} approved</span>
     </div>
-    <!-- What a captured entry actually locks. One switch per race, not per car:
-         several allowed builds of the same vehicle are several entries under
-         Parts, not a third mode. -->
+    <!-- What a captured entry actually locks. One switch per race, not per car.
+         Model is the loosest: the vehicle and nothing else, for a series that
+         picks the car and leaves the build to the driver. Several allowed
+         builds of the same vehicle are several entries under Parts. -->
     <div class="rm-garage-mode">
       <span class="rm-garage-mode-label">Locks</span>
+      <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': garageMode === 'model'}"
+              ng-click="setGarageMode('model')"
+              title="Only the vehicle model is locked. Parts, tuning and paint are the driver's.">Model</button>
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': garageMode === 'parts'}"
               ng-click="setGarageMode('parts')"
               title="Parts are locked. Tuning and paint are the driver's.">Parts</button>
@@ -1973,7 +1977,9 @@
       <span class="rm-garage-mode-note">
         {{ garageMode === 'strict'
            ? 'Exact tune must match. Paint free.'
-           : 'Tuning and paint free, parts locked.' }}
+           : (garageMode === 'model'
+              ? 'Model locked. Parts, tuning and paint free.'
+              : 'Tuning and paint free, parts locked.') }}
       </span>
     </div>
     <!-- Nobody is exempt any more, admins included, so an unapproved car is

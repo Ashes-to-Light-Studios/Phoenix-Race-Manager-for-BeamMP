@@ -3020,8 +3020,8 @@ function M.setGarageEnforce(enabled)
   end
 end
 
--- Which half of the signature the server matches on: 'parts' (tuning and paint
--- free) or 'strict' (parts plus tuning).
+-- How much of a car the server matches: 'model' (the model alone; parts and
+-- tuning free), 'parts' (tuning and paint free) or 'strict' (parts plus tuning).
 function M.setGarageMode(mode)
   if inMultiplayer() then
     TriggerServerEvent('RM_SetGarageMode', jsonEncode({ mode = tostring(mode or '') }))

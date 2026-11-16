@@ -181,7 +181,8 @@ angular.module('beamng.apps')
       // The rename editor, kept apart from `garage` for the same reason.
       $scope.garageNameUi = { index: null, name: '', was: '', def: '', custom: false };
       $scope.garageEnforce = false;
-      // 'parts' locks the parts, 'strict' the tuning too. The server owns it.
+      // 'model' locks the model alone, 'parts' the parts too, 'strict' the
+      // tuning on top. The server owns it.
       $scope.garageMode = 'parts';
       // Saved garage sets: a series in a file. Names only; the cars come back
       // when one is loaded. `name` is the box to save under, `selected` is the
@@ -3000,7 +3001,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         }
         $scope.garageClassUi.input.length = $scope.garage.length;
         $scope.garageEnforce = !!data.garageEnforce;
-        if (data.garageMode === 'parts' || data.garageMode === 'strict') {
+        if (data.garageMode === 'model' || data.garageMode === 'parts'
+            || data.garageMode === 'strict') {
           $scope.garageMode = data.garageMode;
         }
         $scope.garageSets = toArray(data.garageSets);

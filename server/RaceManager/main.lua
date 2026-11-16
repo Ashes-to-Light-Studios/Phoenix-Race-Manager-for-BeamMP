@@ -6237,10 +6237,11 @@ end
 
 local garage = {
   enforce = false,   -- master switch for the whole rule
-  -- Which half of the signature is matched:
+  -- How much of a car is matched:
+  --   'model'  the model only; parts, tuning and paint free
   --   'parts'  model + parts; tuning and paint free (the default)
   --   'strict' model + parts + tuning
-  -- Several allowed builds of one car are several entries, not a third mode.
+  -- Several allowed builds of one car are several entries under Parts.
   mode    = 'parts',
   -- { { model, label, sig, partsSig, game, class, name, pc, cfg } }
   -- `class` lives on the CAR (GT3 is GT3 whoever drives it); none anywhere
@@ -6249,6 +6250,15 @@ local garage = {
   list    = {},
 }
 local garageLoaded = false
+
+-- The three modes, and what each is called where people read it.
+garage.MODE_LABEL = { model = 'Model', parts = 'Parts', strict = 'Strict' }
+function garage.validMode(m)
+  return garage.MODE_LABEL[m] and m or nil
+end
+function garage.modeLabel(m)
+  return garage.MODE_LABEL[m] or 'Parts'
+end
 
 -- A display name beside the captured label; matching reads neither.
 garage.MAX_NAME = 40
@@ -6281,8 +6291,8 @@ local function loadGarageFromDisk()
     return
   end
   garage.enforce = data.enforce == true
-  -- Anything but 'strict' is 'parts' (the looser default for an old file).
-  garage.mode = (data.mode == 'strict') and 'strict' or 'parts'
+  -- Anything unknown is 'parts', the default (an old file has no mode).
+  garage.mode = garage.validMode(data.mode) or 'parts'
   garage.list = {}
   local derived = 0
   for _, e in ipairs(type(data.list) == 'table' and data.list or {}) do
@@ -6452,6 +6462,18 @@ garageSnapshot = function ()
   return garageView
 end
 
+-- The bare jbeam name: case, a leading path and .jbeam may differ between the
+-- list (getJBeamFilename) and the spawn packet ("jbm"). Above garageMatch,
+-- which reads it under Model.
+local function garageModelKey(model)
+  if type(model) ~= 'string' or model == '' then return nil end
+  model = model:match('([^/]+)$') or model
+  model = model:gsub('%.jbeam$', '')
+  model = model:lower()
+  if model == '' then return nil end
+  return model
+end
+
 -- Enforcement only bites when it is switched on AND at least one car has been
 -- captured - an empty whitelist would otherwise lock every player out.
 local function garageEnforcing()
@@ -6461,11 +6483,22 @@ end
 
 -- WHICH ENTRY THIS CAR IS under the mode in force, or nil: the ONE place the
 -- mode is interpreted, and where the class lives. An entry with no partsSig is
--- skipped in parts mode.
+-- skipped in parts mode. Under MODEL the car is matched by the model its
+-- signature names (`model=` leads both halves), so any parts and any tune of
+-- an approved model pass; with several entries of one model, the first is the
+-- one whose class and name it takes.
 local function garageMatch(partsSig, fullSig)
-  local strict = getGarage().mode == 'strict'
+  local mode = getGarage().mode
+  local strict = mode == 'strict'
+  local wanted = nil
+  if mode == 'model' then
+    wanted = garageModelKey(type(partsSig) == 'string' and partsSig:match('^model=([^|]*)') or nil)
+    if not wanted then return nil end
+  end
   for _, e in ipairs(getGarage().list) do
-    if strict then
+    if wanted then
+      if garageModelKey(e.model) == wanted then return e end
+    elseif strict then
       if fullSig and fullSig ~= '' and e.sig == fullSig then return e end
     else
       if partsSig and partsSig ~= '' and e.partsSig == partsSig then return e end
@@ -6524,16 +6557,6 @@ garageAudit = function ()
   return bad
 end
 
--- The bare jbeam name: case, a leading path and .jbeam may differ between the
--- list (getJBeamFilename) and the spawn packet ("jbm").
-local function garageModelKey(model)
-  if type(model) ~= 'string' or model == '' then return nil end
-  model = model:match('([^/]+)$') or model
-  model = model:gsub('%.jbeam$', '')
-  model = model:lower()
-  if model == '' then return nil end
-  return model
-end
 
 local function garageHasModel(model)
   local wanted = garageModelKey(model)
@@ -6690,6 +6713,7 @@ function RM_onWhitelistVehicle(pid, rawData)
   MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
     added = true, message = 'Added "' .. entry.label .. '" to the Garage List ('
       .. (g.mode == 'strict' and 'Strict: this exact tune'
+          or g.mode == 'model' and 'Model: this model, any parts and tune'
           or 'Parts: these parts, any tune') .. ')',
   }))
   local msg = string.format('[RaceManager] "%s" added to the Garage List by %s (%d approved)',
@@ -6841,7 +6865,7 @@ function RM_onSaveGarageSet(pid, rawData)
     name, existing and 'updated' or 'saved', MP.GetPlayerName(pid) or pid, #g.list, g.mode)
   MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
     added = true, message = 'Saved "' .. name .. '" (' .. #g.list .. ' car(s), '
-      .. (g.mode == 'strict' and 'Strict' or 'Parts') .. ')' }))
+      .. garage.modeLabel(g.mode) .. ')' }))
   MP.SendChatMessage(-1, msg)
   print(msg)
 end
@@ -6895,7 +6919,7 @@ function RM_onLoadGarageSet(pid, rawData)
     end
   end
   -- The mode travels with the series; the enforcement switch never does.
-  local mode = (stored.mode == 'strict') and 'strict' or 'parts'
+  local mode = garage.validMode(stored.mode) or 'parts'
 
   local added, skipped = #list, 0
   if append then
@@ -6904,8 +6928,8 @@ function RM_onLoadGarageSet(pid, rawData)
     if mode ~= g.mode then
       MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
         added = false,
-        message = '"' .. name .. '" is a ' .. (mode == 'strict' and 'Strict' or 'Parts')
-          .. ' set and the list is ' .. (g.mode == 'strict' and 'Strict' or 'Parts')
+        message = '"' .. name .. '" is a ' .. garage.modeLabel(mode)
+          .. ' set and the list is ' .. garage.modeLabel(g.mode)
           .. '. The two rule cars differently, so they cannot be merged: load it '
           .. 'on its own, or re-save one of them in the other mode.' }))
       return
@@ -6946,7 +6970,7 @@ function RM_onLoadGarageSet(pid, rawData)
     and (', ' .. skipped .. ' already on the list') or ''
   local msg = string.format('[RaceManager] Garage set "%s" %s by %s (%d car(s)%s, %d total, %s%s)',
     name, append and 'added' or 'loaded', MP.GetPlayerName(pid) or pid, added, dupNote,
-    #g.list, g.mode == 'strict' and 'Strict' or 'Parts',
+    #g.list, garage.modeLabel(g.mode),
     g.enforce and ', enforcing' or ', not enforced')
   MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
     added = true,
@@ -6954,7 +6978,7 @@ function RM_onLoadGarageSet(pid, rawData)
       and ('Added "' .. name .. '": ' .. added .. ' car(s)' .. dupNote
            .. ', ' .. #g.list .. ' on the list')
       or ('Loaded "' .. name .. '": ' .. added .. ' car(s)'))
-      .. ', ' .. (g.mode == 'strict' and 'Strict' or 'Parts')
+      .. ', ' .. garage.modeLabel(g.mode)
       .. (g.enforce and '' or ' (enforcement is still off)') }))
   MP.SendChatMessage(-1, msg)
   print(msg)
@@ -6985,12 +7009,12 @@ function RM_onSetGarageEnforce(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
--- Parts or Strict; saveGarageToDisk re-judges every driver.
+-- Model, Parts or Strict; saveGarageToDisk re-judges every driver.
 function RM_onSetGarageMode(pid, rawData)
   local data = adminPayload(pid, rawData)
   if not data then return end
-  local mode = tostring(data.mode or '')
-  if mode ~= 'parts' and mode ~= 'strict' then return end
+  local mode = garage.validMode(tostring(data.mode or ''))
+  if not mode then return end
   local g = getGarage()
   if g.mode == mode then return end
   g.mode = mode
@@ -7043,13 +7067,14 @@ function RM_onVehicleConfig(pid, rawData)
   if allowed then return end
 
   -- Both signatures side by side in the console, for the admin (truncated).
-  local shown = (getGarage().mode == 'strict') and sig or partsSig
+  local gmode = getGarage().mode
+  local shown = gmode == 'strict' and sig or gmode == 'model' and model or partsSig
   print(string.format('[RaceManager] Garage mismatch (%s mode) for %s',
     getGarage().mode, MP.GetPlayerName(pid) or pid))
   print('[RaceManager]   driving: ' .. shown:sub(1, 300))
   for _, e in ipairs(getGarage().list) do
     if garageModelKey(e.model) == garageModelKey(model) then
-      local listed = (getGarage().mode == 'strict') and e.sig or e.partsSig
+      local listed = gmode == 'strict' and e.sig or gmode == 'model' and e.model or e.partsSig
       print('[RaceManager]   listed : ' .. tostring(listed):sub(1, 300))
     end
   end
@@ -7063,8 +7088,11 @@ function RM_onVehicleConfig(pid, rawData)
     return
   end
   -- Naming the mode tells the driver whether to undo a part swap or a tune.
-  rejectVehicle(pid, nil, getGarage().mode == 'strict'
+  rejectVehicle(pid, nil, gmode == 'strict'
     and 'this exact setup is not on the Garage List (Strict: parts AND tuning are locked)'
+    or  gmode == 'model'
+    and ('this model is not on the Garage List (Model: any parts and tune of an '
+        .. 'approved model are allowed)')
     or  'these parts are not on the Garage List (Parts: tuning and paint are free, '
         .. 'parts are locked)')
 end

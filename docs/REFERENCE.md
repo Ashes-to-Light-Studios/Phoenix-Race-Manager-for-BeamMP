@@ -2376,16 +2376,24 @@ The **Garage** panel (admin only) locks the session down to approved cars:
 
 | Mode | Model | Parts | Tuning | Paint |
 |---|---|---|---|---|
+| **Model** | locked | free | free | free |
 | **Parts** (default) | locked | locked | free | free |
 | **Strict** | locked | locked | locked | free |
 
-Paint is not matched under either mode: it has never been part of the
-signature.
+Paint is not matched under any mode: it has never been part of the signature.
+
+**Model** is for a series that chooses the car and leaves the build to the
+drivers: any parts and any tune of an approved model are allowed, and only a
+different vehicle is refused. Capture one of each model you want to allow.
+Further entries of the same model change nothing under Model. The first one
+on the list gives the car its class and name.
 
 One switch for the whole session, not per entry. **Several allowed builds of
-the same car - a choice of engine, a choice of gearbox - is not a third mode**;
-it is several entries under **Parts**, one per build. Capture each variant you
-want to permit.
+the same car (a choice of engine, a choice of gearbox) are several entries
+under Parts**, one per build. Capture each variant you want to permit.
+
+A Garage Set remembers its mode, and sets in different modes cannot be added
+together, because the two would rule the same cars differently.
 
 Refusals name the mode in force, so a driver is told whether the thing to undo
 is a part swap or a tune.
