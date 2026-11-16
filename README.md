@@ -227,6 +227,7 @@ expect without touching any of it.
 | Feature | What it gives you |
 |---|---|
 | **[Vehicle reset limits](docs/REFERENCE.md#vehicle-reset-limits)** | Cap resets per driver per session. Past the allowance the reset key genuinely stops working. Can respawn at the last checkpoint instead of in place. |
+| **[Checkpoint skips](docs/REFERENCE.md#checkpoint-skips-track-cuts)** | Optional track-cut rule. A driver who crosses a checkpoint ahead of the one they are due is moved on instead of left stuck, gets a set number of warnings, then a penalty: seconds on their race time, a lift off the throttle for a few seconds, or both. Penalties count in the final classification and the results file; a cut lap sets no time. |
 | **[Reset ghosting](docs/REFERENCE.md#reset-ghosting)** | A driver who resets is intangible for a few seconds rather than reappearing solid in the racing line. Collisions return only once the space around them is provably clear. |
 | **[Branch gates](docs/REFERENCE.md#branch-gates-two-ways-through-a-checkpoint)** | Give a checkpoint a second gate and either one clears it. Split lanes and head-on "suicide" ovals, scored together on one leaderboard, with nothing to assign anyone to. |
 | **[Sectors](docs/REFERENCE.md#sectors)** | Define a track's sectors, such as S1 from the line to CP 3 and S2 from CP 3 to CP 6, and drivers are timed on those instead of on every checkpoint. Each sector time shows against the driver's own best for it. |

@@ -1147,6 +1147,143 @@ And because the reset key repeats while it is held, the block is applied to
 every press but the notice, the console line and the server report are limited
 to one a second.
 
+### Checkpoint skips (track cuts)
+
+**Checkpoint skips** (Race settings, admin only) is off as shipped. Off, a
+driver who cuts the track and crosses a checkpoint ahead of the one they are
+due (CP 1 straight to CP 3) gets nothing for it: the car stays armed on the gate
+it missed until it drives back through it, exactly as it always has.
+
+Switched on, the cut is seen. The car is moved on past the gate it actually
+crossed, so it is not left stuck, and the skip costs a **warning**, then the
+**penalty** you chose:
+
+| Penalty | What a penalised skip costs |
+|---------|-----------------------------|
+| **Time** | Seconds added to the driver's race time. Shown on the board, and counted in the final classification |
+| **Lift** | The driver is told to lift off the throttle for a few seconds, then carry on racing. Not served within the serve window, or still owed at the flag, it becomes the seconds instead |
+| **Lift + time** | Both: the seconds at once, and a lift to serve as well (an unserved lift adds its seconds on top) |
+
+| Setting | `config.json` key | Default | Range |
+|---------|-------------------|---------|-------|
+| Checkpoint skips | `enableCheckpointSkipPenalty` | `false` | on / off |
+| Warnings | `checkpointSkipWarningsAllowed` | `1` | 0-99. `0` penalises the first skip |
+| Penalty | `checkpointSkipPenaltyType` | `"time"` | `"time"`, `"lift"`, `"liftAndTime"` |
+| Penalty per skip / If not served (s) | `checkpointSkipPenaltySeconds` | `5` | 0.5-300, in steps of 0.5 |
+| Lift (s) | `checkpointSkipLiftSeconds` | `3` | 0.5-30, in steps of 0.5 |
+| Serve within (s) | `checkpointSkipLiftWindow` | `30` | 5-300 seconds of green-flag running |
+| (not in the panel) | `checkpointSkipMaxGates` | `2` | 1-5: how far ahead, in gates, a crossing still counts as a skip |
+
+The `config.json` values are what the server starts with; the panel changes
+them for the night. Like every regulation they are locked once a countdown or
+session starts, and the server clamps every value and rounds the half-second
+ones. The line under the setting says the rule in words, for example
+`1 warning, then +5.0s per skipped checkpoint` or
+`1 warning, then lift 3.0s (serve within 30s or +5.0s)`.
+
+**What counts as a skip.** Only the gate a car is due is ever tested, so a
+skip is looked for only when that gate was *not* crossed this frame: the next
+`checkpointSkipMaxGates` gates are tested, and the first one crossed is where
+the car lands. Two gates skipped at once is two skips.
+
+- **Forward crossings only.** A gate driven against its direction never counts
+  as a skip, which keeps figure-8 crossovers, shared straights, head-on ovals
+  and the other lane's gates out of it. On a layout with branch gates the panel
+  says so: *gates crossed against their direction are not checked for skips*.
+- **The start/finish line can be landed on, never skipped**, so there is no wrap
+  into the next lap. Cutting the last corner into the line is one skip; it
+  completes the lap, which is a cut lap.
+- **A grid behind the line** drives over the line straight after GO. Until a
+  car has cleared its first gate of the session, the line is never a skip.
+- **Never on an out lap**: qualifying's, a grid off the line, or the pace lap.
+- **Never a reset or a teleport.** A reset in place, a reset to the last
+  checkpoint, a recovery, a respawn or a vehicle switch can move the car
+  through a gate in one frame: no skip is read for half a second after one of
+  your own resets, or from any frame that moved the car more than 30 m.
+- **Never the joker route or the pit lane**, which are not checkpoints.
+- Spinning, reversing, or going back through a gate already cleared does
+  nothing: gates behind the one due are never tested.
+
+**Warnings first, then the penalty.** Each skip uses a warning while any are
+left. Once they are gone every skipped checkpoint is penalised. A cut that
+skips two gates with one warning left uses the warning on the first and
+penalises the second.
+
+**What the driver is told** (on the HUD, and in chat), and what race control
+gets:
+
+| Case | Driver sees |
+|------|-------------|
+| A warning | `Track Cut Warning (1/2) - next skip: +5.0s` (or `- next skip: lift 3.0s`) |
+| The last warning and a penalty in one cut | `Track Cut: last warning used, +5.0s for 1 more checkpoint` |
+| Time penalty | `Checkpoint skipped: +5.0s penalty (warnings used up)`, or `2 checkpoints skipped: +10.0s penalty ...` |
+| Lift penalty | `Checkpoint skipped: LIFT OFF THE THROTTLE for 3.0s within 30s (warnings used up)` |
+| Lift + time | `Checkpoint skipped: +5.0s and LIFT OFF for 3.0s (warnings used up)` |
+| Lift served | `LIFT SERVED - carry on` |
+| Lift not served | `Lift not served: +5.0s penalty` |
+
+Race control (every logged-in admin and moderator, and the console) gets one
+line each time: `[RaceManager] Race control: Alice skipped CP 2 on lap 3:
+warning 1/2`, `... +5.0s`, `... lift 3.0s owed`, `Alice lift served`,
+`Alice lift converted to +5.0s`.
+
+**Serving a lift.** While a lift is owed the HUD holds
+`LIFT OFF THE THROTTLE: 3.0s`, counting down while it is being served. It does
+not time out like the other HUD lines: it stays until the lift is served or
+turned into time.
+
+- The countdown runs while the throttle is off (5% or less), the car is doing
+  at least 5 m/s, the race is green, and the car is not held (a pit stop, the
+  grid hold).
+- Back on the throttle for more than a quarter of a second starts that lift
+  again from the top, and the line says `THROTTLE ON - lift restarted (3.0s)`.
+  A blip shorter than that is forgiven.
+- Below 5 m/s, or under a caution, a caution called, a red flag, the pace lap
+  or a restart, the countdown pauses and keeps what is left.
+- Two lifts owed are served one after the other.
+
+The throttle read is the driver's **input**, before the car's own aids, so a
+keyboard, a pad and a wheel are all treated the same. The lift is told and
+watched, not enforced: nothing cuts the throttle for the driver.
+
+The serve window counts green-flag running only: it pauses under a caution, a
+caution called, a red flag and the pace lap. Each new penalty starts the window
+again. When it runs out, every lift still owed becomes `penalty seconds` each.
+A lift still owed when the car takes the flag is turned into time at once,
+before its place is worked out. A car that retires (DNF or DSQ) has its owed
+lift dropped; its warnings and seconds stay in the results.
+
+**Cut laps.** A lap with a skip on it still counts toward the distance, but its
+time is not used: no best lap, no fastest lap, no qualifying time and so no lap
+record, even when the skip only cost a warning. The driver's lap readout marks
+it `CUT`.
+
+**Qualifying.** Skips are still detected, so nobody is left stuck, and the lap
+is not timed (it still counts as one of the laps allowed). There are no
+warnings, penalties or lifts in qualifying.
+
+**Point-to-point stages** follow the same rules. The finish is the last gate,
+and a skip that lands on it finishes the stage.
+
+**Classification.** Between cars that finished on the same number of laps,
+the order is the flag **plus** the penalty seconds. Laps completed still decide
+first, so a penalty never puts a car behind one that completed fewer laps.
+Penalties are left out of the order on the road, the gaps, the intervals and
+the blue flag, which describe the race as it is being driven. A driver home
+with a penalty is told their place as provisional
+(`You placed 2nd (provisional: penalty applied)`), because a car still out can
+finish inside the penalty. Cup points, heat transfers, awards and Discord all
+take the same final order.
+
+**On the board and in the results.** Next to a driver's name the board shows
+`+5.0s` for a time penalty, `LIFT` while a lift is owed, and `W 1/2` once a
+warning has been used; your own header shows `CUTS` with the same. The results
+file states the rule under the header, gives each penalised car's race time as
+the corrected time with `(+5.0s pen)` beside it, and adds a **Track cuts**
+column: skips, warnings used, penalty seconds, lifts served, converted or owed,
+and cut laps. Qualifying's lines note laps that were cut. The Discord post uses
+the corrected times too.
+
 ### Fastest lap
 
 The quickest lap set by anyone in the session is shown **in gold** in the Best

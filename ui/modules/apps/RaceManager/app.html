@@ -93,7 +93,9 @@
         LAP<b ng-if="lapHold.lap">&nbsp;{{ lapHold.lap }}</b> {{ formatLap(lapHold.lapTime) }}<span
           class="rm-delta" ng-class="deltaClass(lapHold.delta)"
           ng-if="lapHold.delta !== null && lapHold.delta !== undefined"
-          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span>
+          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span><span
+          class="rm-lapcut" ng-if="lapHold.cut"
+          title="A checkpoint was skipped on this lap: its time does not count for a best lap, the fastest lap or qualifying.">&nbsp;CUT</span>
       </span>
       <!-- Sector times sit beside the lap readout rather than replacing it:
            both can be on screen at once (the last sector of a lap closes at the
@@ -190,6 +192,12 @@
          an admin running the session is usually driving it as well. -->
     <span class="rm-driverbar-label" ng-if="jokerEnabled">
       JOKER <b ng-class="{'rm-joker-done': jokerTaken}">{{ jokerTaken ? 'DONE (lap ' + jokerLap + ')' : 'PENDING' }}</b>
+    </span>
+    <!-- Checkpoint skips: this driver's warnings, time penalty and a lift-off
+         to serve, only once there is one. -->
+    <span class="rm-driverbar-label" ng-if="cpSkipEnabled &amp;&amp; myCpSkip"
+          title="Your checkpoint skips: warnings used, the time penalty on your race time, and a lift-off to serve">
+      CUTS <b class="rm-cp-mine">{{ myCpLabel() }}</b>
     </span>
     <span class="rm-driverbar-label" ng-if="resetsLimited()">
       RESETS <b ng-class="{'rm-reset-low': myResetsLow()}">{{ resetsUsed }}/{{ maxResets }}</b>
@@ -1064,6 +1072,65 @@
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': resetMode === 'checkpoint'}"
               ng-click="setResetMode('checkpoint')"
               ng-disabled="!canSetRules()">Last checkpoint</button>
+    </span>
+    <!-- CHECKPOINT SKIPS (track cuts). Off as shipped: a cut leaves the car
+         armed on the gate it missed until it goes back. On, crossing a gate
+         ahead of the one due moves the car on, and the skip costs a warning,
+         then the penalty chosen here. A rule like the others: locked once the
+         session is under way (the server refuses it too). -->
+    <span class="rm-setting" title="Crossing a checkpoint ahead of the one due (cutting the track) moves the car on past it, and costs a warning, then a penalty.">
+      <label>Checkpoint skips</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': cpSkipEnabled}"
+              ng-click="toggleCpSkip()"
+              ng-disabled="!canSetRules()">
+        {{ cpSkipEnabled ? '&#10003; Enabled' : 'Disabled' }}
+      </button>
+      <span class="rm-setting-sub" title="Skips let off with a warning before the penalties start. 0 penalises the first one.">
+        <label>Warnings</label>
+        <input type="number" class="rm-width-num" min="0" max="99" step="1" ng-model="settingsUi.cpSkipWarnings"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+      </span>
+      <span class="rm-setting-sub" title="What a skipped checkpoint costs once the warnings are used up.">
+        <label>Penalty</label>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipType === 'time'}"
+                ng-click="setCpSkipType('time')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="Seconds added to the driver's race time. Shown on the board, and counted in the final classification.">Time</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipType === 'lift'}"
+                ng-click="setCpSkipType('lift')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="The driver lifts off the throttle for a few seconds at racing speed, then races on. Not served in time, or still owed at the flag, it becomes the seconds instead.">Lift</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipType === 'liftAndTime'}"
+                ng-click="setCpSkipType('liftAndTime')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="Both: the seconds at once, and a lift to serve as well (or more seconds).">Lift + time</button>
+      </span>
+      <span class="rm-setting-sub" title="Seconds per penalised skip, and per lift not served.">
+        <label>{{ cpSkipSecLabel() }}</label>
+        <input type="number" class="rm-width-num" min="0.5" max="300" step="0.5" ng-model="settingsUi.cpSkipPenaltySec"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+      </span>
+      <span class="rm-setting-sub" ng-if="cpSkipHasLift()"
+            title="Seconds off the throttle per penalised skip, at racing speed under green, and the green-flag running allowed to serve it in.">
+        <label>Lift (s)</label>
+        <input type="number" class="rm-width-num" min="0.5" max="30" step="0.5" ng-model="settingsUi.cpSkipLiftSec"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+        <label>Serve within (s)</label>
+        <input type="number" class="rm-width-num" min="5" max="300" step="1" ng-model="settingsUi.cpSkipLiftWindow"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+      </span>
+      <span class="rm-setting-val">{{ cpSkipLabel() }}</span>
+      <span class="rm-setting-warn" ng-if="cpSkipEnabled &amp;&amp; hasBranches">
+        Gates crossed against their direction are not checked for skips.
+      </span>
     </span>
     <!-- Module 5: the pace lap -->
     <span class="rm-setting" title="Start the race behind a pace car: the field is released under yellow, forms up, and the green falls as the P1 starter returns to the line.">
@@ -4196,7 +4263,9 @@
         LAP<b ng-if="lapHold.lap">&nbsp;{{ lapHold.lap }}</b> {{ formatLap(lapHold.lapTime) }}<span
           class="rm-delta" ng-class="deltaClass(lapHold.delta)"
           ng-if="lapHold.delta !== null && lapHold.delta !== undefined"
-          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span>
+          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span><span
+          class="rm-lapcut" ng-if="lapHold.cut"
+          title="A checkpoint was skipped on this lap: its time does not count for a best lap, the fastest lap or qualifying.">&nbsp;CUT</span>
       </span>
       <!-- SECTORS ON THE DRIVER BAR TOO, and this is the board that needs them
            most: it is the whole HUD for a non-admin, who has no header above it
@@ -4289,6 +4358,12 @@
           title="The run to the line has begun: the green flag falls at a random point before it. Hold position until it does.">GET READY &middot; HOLD UNTIL THE GREEN FLAG</span>
     <span class="rm-driverbar-label" ng-if="jokerEnabled">
       JOKER <b ng-class="{'rm-joker-done': jokerTaken}">{{ jokerTaken ? 'DONE (lap ' + jokerLap + ')' : 'PENDING' }}</b>
+    </span>
+    <!-- Checkpoint skips: this driver's warnings, time penalty and a lift-off
+         to serve, only once there is one. -->
+    <span class="rm-driverbar-label" ng-if="cpSkipEnabled &amp;&amp; myCpSkip"
+          title="Your checkpoint skips: warnings used, the time penalty on your race time, and a lift-off to serve">
+      CUTS <b class="rm-cp-mine">{{ myCpLabel() }}</b>
     </span>
     <span class="rm-driverbar-label" ng-if="resetsLimited()">
       RESETS <b ng-class="{'rm-reset-low': myResetsLow()}">{{ resetsUsed }}/{{ maxResets }}</b>
@@ -4887,7 +4962,13 @@
           </td>
           <td class="rm-col-name" title="{{ driverName(row) }}{{ realName(row) ? ' (' + realName(row) + ')' : '' }}">{{ driverName(row) }}<span
               class="rm-ucpass" ng-if="row.ucPassed"
-              title="Passed {{ row.ucPassed }} under caution and has not given the place back. The board keeps the frozen order until the green.">&#9888; owes a place</span></td>
+              title="Passed {{ row.ucPassed }} under caution and has not given the place back. The board keeps the frozen order until the green.">&#9888; owes a place</span><span
+              class="rm-ucpass rm-cp-pen" ng-if="row.penaltySeconds"
+              title="Checkpoint-skip penalty: added to the race time in the final classification, not to the order on the road.">{{ penaltyLabel(row) }}</span><span
+              class="rm-ucpass rm-cp-lift" ng-if="row.liftOwed"
+              title="Owes a lift-off for a skipped checkpoint. Not served in time, or still owed at the flag, it becomes a time penalty.">LIFT</span><span
+              class="rm-cp-warn" ng-if="cpWarnShown(row)"
+              title="Checkpoint-skip warnings used">{{ cpWarnLabel(row) }}</span></td>
           <td class="rm-col-lap" ng-if="!pointToPoint" title="{{ (row.outLap && sessionKind === 'quali') ? 'Out lap: not timed, not counted' : (row.cpCleared ? row.cpCleared + ' checkpoint(s) cleared this lap' : '') }}">{{ lapLabel(row) }}</td>
           <td class="rm-col-lap" ng-if="pointToPoint" title="Checkpoints cleared of the stage's total">{{ stageProgress(row) }}</td>
           <!-- Fastest lap of the session, in gold. A plain equality test per
@@ -6375,6 +6456,17 @@
     color: #1a1a1a;
     background: #fdd663;
   }
+  /* Checkpoint skips, beside the name like the pass under caution: a time
+     penalty in red, a lift owed in amber, warnings used as a quiet tag. */
+  .rm-cp-pen { color: #fff; background: #d93025; }
+  .rm-cp-lift { color: #1a1a1a; background: #fbbc05; }
+  .rm-cp-warn {
+    margin-left: 6px;
+    font-size: 10px;
+    color: var(--rm-muted, #9aa0a6);
+  }
+  .rm-cp-mine { color: #ff8a80; }
+  .rm-lapcut { color: #ff8a80; font-weight: 700; }
   .rm-uc-passes {
     display: flex;
     flex-wrap: wrap;

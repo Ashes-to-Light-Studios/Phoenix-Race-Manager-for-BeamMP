@@ -6,6 +6,35 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.25.0 - Checkpoint skip warnings and penalties
+
+#### Added
+
+- **Checkpoint skips (track cuts).** A new rule in Race settings, off unless you
+  turn it on. Off, nothing changes: a driver who cuts the track and crosses a
+  checkpoint ahead of the one they are due stays armed on the gate they missed
+  until they drive back through it. On, the cut is seen and the car is moved on
+  past the gate it crossed, and each skipped checkpoint costs one of the
+  **warnings** you allow, then the **penalty** you choose:
+  - **Time**: seconds added to the driver's race time, shown on the board and
+    counted in the final classification.
+  - **Lift**: the driver is told to lift off the throttle for a few seconds and
+    then carry on. The HUD counts it down while they do it. Not served within
+    the serve window, or still owed at the flag, it becomes the seconds.
+  - **Lift + time**: both.
+
+  Only forward crossings up to two gates ahead count (`checkpointSkipMaxGates`
+  in `config.json`), and the start/finish line can be landed on but never
+  skipped. Out laps, the pace lap, resets, recoveries, teleports, the joker
+  route and the pit lane are never skips, and neither is a grid behind the line
+  driving over it at the start. A lap with a skip on it counts toward the
+  distance but sets no best lap, fastest lap, qualifying time or lap record. In
+  qualifying a skip only costs the lap time. Drivers see `+5.0s`, `LIFT` and
+  `W 1/2` on the board, race control is told every ruling, and the results file
+  shows each corrected time with its penalty and a **Track cuts** column. All
+  the settings are also in `config.json`. See
+  [Checkpoint skips](docs/REFERENCE.md#checkpoint-skips-track-cuts).
+
 ## 0.24.0 - Sectors, a caution frozen at the call, and a Model lock
 
 #### Added
