@@ -1453,8 +1453,20 @@ still racing:
 
 ### Caution and restart
 
-A **full-course yellow** called mid-race, and **the field races back to the
-line**. Press **Caution** while a race is running and:
+A **full-course yellow** called mid-race that **freezes the running order**.
+There are two rules for *when* it freezes, set under **Caution** in Race
+settings:
+
+- **Race back to the line** (the default): the field races back, and each car's
+  place locks as it completes the leader's lap. Described step by step below.
+- **Freeze at the call**: the order is frozen where the field is the moment
+  Caution is pressed, with no racing back. See
+  [Freezing at the call](#freezing-at-the-call).
+
+Either way, **a pass under the yellow never counts**, and it is shown: see
+[Passes under caution](#passes-under-caution).
+
+Under **Race back to the line**, press **Caution** while a race is running and:
 
 1. The flag goes yellow and the field is told, in chat and on screen, to **race
    back to the line**. Nothing is frozen yet: on the road the race is still on,
@@ -1487,6 +1499,65 @@ It is **not** a ruling on any individual overtake. Nobody is penalised and no
 incident is judged &mdash; the board simply stops re-sorting once you are past
 the line. A marshal who can see the incident is still better at judging it than a
 distance comparison.
+
+#### Freezing at the call
+
+For leagues that do not race back. With **Caution** set to **Freeze at the
+call**, pressing Caution makes it official at once:
+
+- The board is frozen in the running order of that instant: laps, then
+  checkpoints, then distance to the next checkpoint.
+- A car is a lap down if the leader has already gone past it on the road. One
+  more lap on the leader's counter is not enough.
+- The field is told positions are frozen and to hold their place. Nobody is
+  told to race back.
+- The free pass, if it is on, goes out straight away, because the whole field
+  is locked at the call.
+- Laps under the caution count from the leader's next crossing.
+
+The snapshot is only as exact as the last position reports, which each car
+sends about three times a second. Two cars side by side at the moment of the
+call are ordered as they last reported. That is the price of not racing back.
+
+The rule can be changed at any time **except while a caution is out**. A caution
+runs under the rule it was called under until the green. It is a runtime
+setting like the free pass. To make it the server's default, set
+`"cautionMode": "call"` (or `"line"`) in
+`Resources/Server/RaceManager/Data/config.json`.
+
+#### Passes under caution
+
+The server cannot slow a car or block a pass: it has no physics access, and
+taking control of a driver's car would be worse than the pass. What it does
+is make sure a pass gains nothing, and make sure everyone knows about it.
+
+- **While the yellow is out, a pass does not count.** The board holds the
+  frozen order whatever happens on the road.
+- **Every pass is spotted.** Under caution, each car locked behind another is
+  compared with it on the road. Getting ahead by more than 5 m and staying
+  there for a second is a pass. The margin and the wait stop two cars running
+  side by side from being reported as passes.
+- **The driver is told to give it back**: a **GIVE THE PLACE BACK** notice,
+  a line on the HUD that stays until they do, and a chat message.
+- **Race control is told**: every logged-in admin and moderator gets a chat
+  line naming who passed whom and on which lap. The board marks the passer
+  **⚠ owes a place**, and a **Passed under caution** list under the race
+  controls shows every pass this race.
+- **Dropping back behind the car is giving it back.** The driver, race control
+  and the list all say so.
+- **Only real race passes count.** Cars are compared by race distance, so a
+  lead-lap car going by a backmarker, or a backmarker getting ahead on the road,
+  is no pass. The free pass car is never reported, because it is meant to drop
+  to the tail of the lead lap.
+- **Passes while racing back to the line are the rule, not a pass.** Under
+  Race back to the line, a car is only watched once its own place has locked.
+
+**At the green the board goes back to the road**, so a place taken under the
+yellow and never given back is a place kept. Nothing takes it away
+automatically, because there are no penalties to give. Instead, race control
+is told about every pass still owed as the green falls, and **the results file
+lists every pass under caution**, marked *given back* or *NOT given back*, so
+a steward can rule on it afterwards.
 
 #### The free pass ("lucky dog")
 
@@ -1533,6 +1604,18 @@ Some details worth knowing:
   goes back to its caution rather than being waved off the instant the wreck is
   moved. A red also holds the restart: a leader who rolls the last few meters to
   the line under one does not start the race by arriving.
+- **A caution called while a red is out leaves the red out.** The clock stays
+  stopped and the field is told to stay stopped. Lifting the red is what puts
+  the race under the caution: racing back to the line, or frozen where the
+  field stood when it was called. (Pressing Caution under a red used to lift the
+  red without saying so.)
+- **Passes are watched under a red too.** A car that drives past a stopped field
+  while a red is out over a caution is reported like any other pass under
+  caution, marked *under the red flag*. The driver is told to stay stopped and
+  give the place back once the red is lifted.
+- **Under a red, the HUD line says RED FLAG - stop where you are.** It takes
+  priority over every caution instruction, so a stopped field is never told to
+  race back, get ready for a restart or give a place back while the red is out.
 - **The Green flag button is still the restart** where it is reachable (a chat
   command, an older panel), so a green called by hand can never leave the race
   running with the order frozen and nothing to unfreeze it.
@@ -1547,9 +1630,15 @@ Some details worth knowing:
   board is a list of best times, so there is no running order to freeze.
 - **Not during the pace lap.** The field is already under yellow with a green to
   come, which is what a caution would be asking for.
-- The results file records **how many cautions there were and how many laps ran
-  under them**. A race with four yellows in it used to read exactly like a clean
-  one, which makes a lap chart impossible to explain afterwards.
+- The results file records **how many cautions there were, how many laps ran
+  under them in all, and under which rule**, followed by every pass made under
+  them. A race with four yellows in it used to read exactly like a clean one,
+  which makes a lap chart impossible to explain afterwards.
+- **A green before the leader makes a caution official withdraws it.** Nothing
+  was frozen and no lap ran under it, so it is not counted. Lifting a red over
+  a caution still being raced back to returns to that caution, not to green.
+- **The Yellow flag button is not a caution.** It tells the field there is a
+  hazard and to take care. It freezes nothing and asks nobody to race back.
 
 ### Where the server keeps its data
 
@@ -2230,8 +2319,47 @@ rows of three.
 
 Every placed gate and grid slot also has **✕** (delete just this one),
 **+ Before** (insert at your car) and **▲ ▼** (reorder). Editing the main route
-renumbers the branch gates with it; deleting a checkpoint drops the branch gates
-that belonged to it, and says so.
+renumbers the branch gates and sectors with it; deleting a checkpoint drops the
+branch gates that belonged to it, and says so.
+
+### Sectors
+
+A **sector** is a stretch of the lap timed on its own. A sector is not a
+checkpoint: you name the two gates it runs between, so a circuit with thirty
+checkpoints can have three sectors, for example **S1** from the start/finish to
+**CP 3**, **S2** from **CP 3** to **CP 6**, and **S3** from **CP 6** back to the
+line.
+
+On the editor's **Main** tab, under **Sectors**:
+
+- **+ Add Sector** adds one that starts where the last one ends. Set its two
+  ends with the pickers, and remove it with **✕**. The ones after it move up a
+  number. A layout can have up to 20 sectors.
+- Each end is a checkpoint or the **Start/finish** (**Start** or **Finish** on a
+  point-to-point stage). An end on the line stays on the line when you place
+  more gates after it, because the last gate is always the line.
+- The gate list shows where each sector ends and starts, such as
+  `S1 ends · S2 starts`.
+- Sectors are saved with the layout and reach every driver with it.
+
+**What drivers see:** when a car crosses a sector's end gate, that driver gets
+**S2 0:21.4** beside the lap time, with the gap to their own best for that
+sector. Green is quicker, and a personal best is drawn purple. The time runs
+from that car's last crossing of the sector's start gate, so sectors can meet,
+overlap, or run across the line into the next lap. Sector times are display only
+and score nothing. The out lap is not timed.
+
+**With no sectors defined, every checkpoint closes a sector of its own**,
+numbered by the gate. Layouts saved before sectors existed keep working this way.
+
+- A sector that starts and ends at the same gate times nothing. The editor
+  flags it, and the layout will not save until you fix it.
+- Inserting, deleting or reordering checkpoints keeps each end on the same gate.
+  An end on a deleted checkpoint moves to the gate before it.
+- Sectors cannot be changed while a session is running.
+- The server refuses a save whose sectors do not fit the route. Saving over a
+  layout that has sectors with none (from an older client, say) is held for
+  the admin to confirm, like every other section.
 
 ### Vehicle & setup locking (the Garage List)
 
@@ -2248,16 +2376,24 @@ The **Garage** panel (admin only) locks the session down to approved cars:
 
 | Mode | Model | Parts | Tuning | Paint |
 |---|---|---|---|---|
+| **Model** | locked | free | free | free |
 | **Parts** (default) | locked | locked | free | free |
 | **Strict** | locked | locked | locked | free |
 
-Paint is not matched under either mode: it has never been part of the
-signature.
+Paint is not matched under any mode: it has never been part of the signature.
+
+**Model** is for a series that chooses the car and leaves the build to the
+drivers: any parts and any tune of an approved model are allowed, and only a
+different vehicle is refused. Capture one of each model you want to allow.
+Further entries of the same model change nothing under Model. The first one
+on the list gives the car its class and name.
 
 One switch for the whole session, not per entry. **Several allowed builds of
-the same car - a choice of engine, a choice of gearbox - is not a third mode**;
-it is several entries under **Parts**, one per build. Capture each variant you
-want to permit.
+the same car (a choice of engine, a choice of gearbox) are several entries
+under Parts**, one per build. Capture each variant you want to permit.
+
+A Garage Set remembers its mode, and sets in different modes cannot be added
+together, because the two would rule the same cars differently.
 
 Refusals name the mode in force, so a driver is told whether the thing to undo
 is a part swap or a tune.

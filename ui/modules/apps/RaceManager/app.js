@@ -101,6 +101,12 @@ angular.module('beamng.apps')
       // The free pass: the rule, and the driver who took it this caution.
       $scope.luckyDog = false;
       $scope.cautionLucky = null;
+      // How a caution freezes the order: 'line' (race back to it) or 'call'
+      // (where the field is when it is called).
+      $scope.cautionMode = 'line';
+      // Passes made under caution this race, for race control:
+      // [{ passer, passed, lap, restored }].
+      $scope.cautionPasses = [];
       $scope.heatLaps = 0;
       $scope.heatDraw = 'quali';
       // Module 6: the heat program.
@@ -153,6 +159,10 @@ angular.module('beamng.apps')
       $scope.branchSlot = 1;       // checkpoint the next placed branch gate belongs to
       $scope.gridOffLine = false;  // grid is away from the line, so an out lap is owed
       $scope.firstCheckpoint = 1;  // the gate an out lap arms first
+      // The layout's sectors: [{ from, to }], each a checkpoint number or 0 for
+      // the start/finish line. Empty: every checkpoint is a sector of its own.
+      $scope.sectors = [];
+      $scope.maxSectors = 20;      // the client's cap, pushed with the route
       $scope.hasBranches = false;  // mirrored from the server: any branch gates on this track?
       // Bound with ng-model from inside ng-if blocks, so every one of these has to
       // hang off an object: a bare primitive is shadowed on the child scope
@@ -171,7 +181,8 @@ angular.module('beamng.apps')
       // The rename editor, kept apart from `garage` for the same reason.
       $scope.garageNameUi = { index: null, name: '', was: '', def: '', custom: false };
       $scope.garageEnforce = false;
-      // 'parts' locks the parts, 'strict' the tuning too. The server owns it.
+      // 'model' locks the model alone, 'parts' the parts too, 'strict' the
+      // tuning on top. The server owns it.
       $scope.garageMode = 'parts';
       // Saved garage sets: a series in a file. Names only; the cars come back
       // when one is loaded. `name` is the box to save under, `selected` is the
@@ -1499,7 +1510,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.23.4';
+      var APP_BUILD = '0.24.0';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -2107,6 +2118,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.restartPending = !!data.restartPending;
           $scope.luckyDog = !!data.luckyDog;
           $scope.cautionLucky = data.cautionLucky || null;
+          $scope.cautionMode = data.cautionMode === 'call' ? 'call' : 'line';
+          // THROUGH toArray: nil while there are none, {} if Lua sends it empty.
+          $scope.cautionPasses = toArray(data.cautionPasses);
           // Re-seeded only when the server's value MOVED, so typing survives.
           if ($scope.heatCount !== (data.heatCount || 0)) {
             $scope.settingsUi.heats = data.heatCount || 0;
@@ -2364,6 +2378,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (typeof data.branchSlot === 'number') { $scope.branchSlot = data.branchSlot; }
           $scope.gridOffLine = !!data.gridOffLine;
           $scope.firstCheckpoint = data.firstCheckpoint || 1;
+          // THROUGH toArray: an empty list arrives from Lua as {}.
+          $scope.sectors = toArray(data.sectors);
+          if (typeof data.maxSectors === 'number') { $scope.maxSectors = data.maxSectors; }
           // The spacing sliders are only offered while the generator owns a
           // block of slots; hand-placing, moving or dropping one lets go of it.
           $scope.gridGenerated = !!data.gridGenerated;
@@ -2503,6 +2520,72 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.pickFirstCheckpoint = function (s) {
         $scope.laneUi.menu = null;
         bngApi.engineLua('raceManager.setFirstCheckpoint(' + (parseInt(s, 10) || 1) + ')');
+      };
+      // ------------------------------------------------------------------
+      // Sectors (editor)
+      // ------------------------------------------------------------------
+      // A sector end as Lua reads it: the line is 0, and so is a number that
+      // has become the last gate (the line moved onto it).
+      function sectorKey(v) {
+        v = parseInt(v, 10) || 0;
+        return (v <= 0 || v >= $scope.routeWaypoints.length) ? 0 : v;
+      }
+      // In running order: a sector starts at the line or a checkpoint, and ends
+      // at a checkpoint or the line.
+      $scope.sectorStarts = function () {
+        var out = [0];
+        for (var i = 1; i < $scope.routeWaypoints.length; i++) { out.push(i); }
+        return out;
+      };
+      $scope.sectorEnds = function () {
+        var out = [];
+        for (var i = 1; i < $scope.routeWaypoints.length; i++) { out.push(i); }
+        out.push(0);
+        return out;
+      };
+      // The line is a start/finish on a circuit, and on a stage the start at
+      // one end and the finish at the other.
+      $scope.sectorFromName = function (v) {
+        if (sectorKey(v) === 0) { return $scope.pointToPoint ? 'Start' : 'Start/finish'; }
+        return 'CP ' + sectorKey(v);
+      };
+      $scope.sectorToName = function (v) {
+        if (sectorKey(v) === 0) { return $scope.pointToPoint ? 'Finish' : 'Start/finish'; }
+        return 'CP ' + sectorKey(v);
+      };
+      $scope.sectorEmpty = function (sec) {
+        return !!sec && sectorKey(sec.from) === sectorKey(sec.to);
+      };
+      $scope.sectorKeyOf = function (v) { return sectorKey(v); };
+      $scope.addSector = function () {
+        bngApi.engineLua('raceManager.addSector()');
+      };
+      $scope.removeSector = function (index) {
+        bngApi.engineLua('raceManager.removeSector(' + (parseInt(index, 10) || 0) + ')');
+      };
+      // One end at a time; Lua leaves the other where it is.
+      $scope.pickSectorEnd = function (index, which, v) {
+        $scope.laneUi.menu = null;
+        var n = parseInt(v, 10) || 0;
+        bngApi.engineLua('raceManager.setSector(' + (parseInt(index, 10) || 0) + ', '
+          + (which === 'from' ? n + ', nil' : 'nil, ' + n) + ')');
+      };
+      // What a row of the gate list says about sectors: the ones ending and
+      // starting at that gate. `gate` is its number; the last one is the line.
+      $scope.sectorBadge = function (gate) {
+        if (!$scope.sectors.length) { return ''; }
+        var key = sectorKey(gate === $scope.routeWaypoints.length ? 0 : gate);
+        var ends = [], starts = [];
+        for (var i = 0; i < $scope.sectors.length; i++) {
+          var sec = $scope.sectors[i];
+          if ($scope.sectorEmpty(sec)) { continue; }
+          if (sectorKey(sec.to) === key) { ends.push('S' + (i + 1)); }
+          if (sectorKey(sec.from) === key) { starts.push('S' + (i + 1)); }
+        }
+        var parts = [];
+        if (ends.length) { parts.push(ends.join(', ') + ' ends'); }
+        if (starts.length) { parts.push(starts.join(', ') + ' starts'); }
+        return parts.join(' · ');
       };
       // The last gate is the line, and the picker offers it by that name.
       $scope.checkpointName = function (s) {
@@ -2918,7 +3001,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         }
         $scope.garageClassUi.input.length = $scope.garage.length;
         $scope.garageEnforce = !!data.garageEnforce;
-        if (data.garageMode === 'parts' || data.garageMode === 'strict') {
+        if (data.garageMode === 'model' || data.garageMode === 'parts'
+            || data.garageMode === 'strict') {
           $scope.garageMode = data.garageMode;
         }
         $scope.garageSets = toArray(data.garageSets);
@@ -4023,7 +4107,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
             + 'drive anywhere and nobody still racing can touch you.';
         }
         if ($scope.driverFlag === 'red') { return 'Red flag: stop where you are and wait'; }
-        if ($scope.driverFlag === 'yellow') { return 'Yellow flag: caution, race back to the line'; }
+        if ($scope.driverFlag === 'yellow') {
+          // Three kinds of yellow, and only one of them is raced back to.
+          if ($scope.cautionPending) { return 'Yellow flag: caution, race back to the line'; }
+          if ($scope.caution) { return 'Yellow flag: caution, positions frozen. Hold your place.'; }
+          return 'Yellow flag: hazard on track, take care';
+        }
         if ($scope.driverFlag === 'white') { return 'White flag: last lap'; }
         if ($scope.driverFlag === 'blue') {
           return 'Blue flag: a car a lap up is close behind you. Hold your line '
@@ -4512,6 +4601,22 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // caution and the board stays frozen.
       $scope.cancelRestart = function () {
         bngApi.engineLua('raceManager.cancelRestart()');
+      };
+      // The caution rule, for the next caution called (refused while one is out).
+      $scope.setCautionMode = function (mode) {
+        if (mode !== 'line' && mode !== 'call') { return; }
+        bngApi.engineLua('raceManager.setCautionMode(' + luaStr(mode) + ')');
+      };
+      // What the Caution button and the frozen badge say, by the rule.
+      $scope.cautionButtonTitle = function () {
+        return $scope.cautionMode === 'call'
+          ? 'Full-course yellow. Positions freeze where the field is right now; a pass under it does not count.'
+          : 'Full-course yellow. The field races back to the line and positions lock as each driver completes the lap the leader is on.';
+      };
+      $scope.cautionFrozenTitle = function () {
+        return $scope.cautionMode === 'call'
+          ? 'Full-course caution: hold position, no overtaking. Places are frozen where the field was when it was called.'
+          : 'Full-course caution: hold position, no overtaking. Places are locked in the order the field came back to the line.';
       };
       // The free pass rule, for the next caution called.
       $scope.toggleLuckyDog = function () {

@@ -32,6 +32,9 @@ local M = {}
 -- One table, not a local apiece: the top level is near Lua's 200-local limit,
 -- and going over stops the file compiling, with no error in game.
 local TUNE = {
+  -- Most sectors a layout may define. The server caps it too (sector_test
+  -- holds the two together).
+  MAX_SECTORS = 20,
   DEFAULT_WIDTH = 20,    -- meters across the gate (lateral span)
   MIN_WIDTH = 2,
   MAX_WIDTH = 120,
@@ -195,7 +198,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.23.4'
+local RM_BUILD = '0.24.0'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -228,6 +231,9 @@ local session = {
   --   lappingAhead  the car close ahead is a lap or more down.
   beingLapped  = false,
   lappingAhead = false,
+  -- Off our own row too: the cars we passed under caution and have not given
+  -- back (names), or nil.
+  ucPassed     = nil,
   -- A restart is called and the green falls as the leader reaches the line.
   restartPending = false,
   -- The heat program: a heat can run its own distance (effectiveLapTarget).
@@ -302,6 +308,12 @@ local track = {
   -- The gate an out lap arms first, by number (branch.firstGate). Past 1 for a
   -- grid part way round. Travels with the layout.
   firstCheckpoint = 1,
+  -- SECTORS, defined by the admin: { from = a, to = b }, each end a checkpoint
+  -- number or 0 for the start/finish line. 0 rather than the line's number,
+  -- because the line is whichever gate is LAST and moves as gates are added.
+  -- Empty: every checkpoint closes a sector of its own, as before sectors
+  -- could be defined. Travels with the layout.
+  sectors = {},
   -- Size given to newly placed gates, and the layout's stored default for any
   -- gate without an override of its own.
   checkpointWidth  = TUNE.DEFAULT_WIDTH,
@@ -632,14 +644,97 @@ local practice = { on = false, layout = nil, lapTarget = 0, lapsDone = 0,
 --   prevLap      the last TIMED lap, which the lap delta is measured against
 --   bestSector   [n] = fastest time seen for sector n this session
 --   sectors      [n] = this lap's sector times, for the readout
-local timing = { sectorStart = 0, prevLap = nil, bestSector = {}, sectors = {} }
+--   passed       [gate] = localTime this car last crossed that gate, the line
+--                as 0; a defined sector runs from one of these to the next.
+local timing = { sectorStart = 0, prevLap = nil, bestSector = {}, sectors = {},
+                 passed = {} }
 
--- Wiped on every session change.
+-- Wiped on every session change. Starting the clock is crossing the line.
 local function timingReset()
   timing.sectorStart = localTime
   timing.prevLap     = nil
   timing.bestSector  = {}
   timing.sectors     = {}
+  timing.passed      = { [0] = localTime }
+end
+
+-- A gate number as a sector end: the line is 0, whatever its number. So is
+-- anything past the route, which is where a reference to the old line lands
+-- when the last gate is taken away.
+function timing.gateKey(n)
+  n = math.floor(tonumber(n) or 0)
+  if n <= 0 or n >= #track.route then return 0 end
+  return n
+end
+
+-- A layout's sectors as they arrive, kept only where both ends name a gate on
+-- the route now loaded (the server checks the same on save).
+function timing.unbundleSectors(raw)
+  local out = {}
+  if type(raw) ~= 'table' then return out end
+  local n = #track.route
+  for _, sec in ipairs(raw) do
+    local from = type(sec) == 'table' and tonumber(sec.from)
+    local to   = type(sec) == 'table' and tonumber(sec.to)
+    if from and to then
+      from, to = math.floor(from), math.floor(to)
+      if from >= 0 and to >= 0 and from < n and to < n and from ~= to then
+        out[#out + 1] = { from = from, to = to }
+      end
+    end
+  end
+  return out
+end
+
+-- The sectors for a save, each end as the server checks it (the line is 0).
+-- Returns nil and the number of a sector that starts and ends at one gate,
+-- which times nothing and would be refused.
+function timing.bundleSectors()
+  if #track.sectors == 0 then return nil end
+  local out = {}
+  for i, sec in ipairs(track.sectors) do
+    local from, to = timing.gateKey(sec.from), timing.gateKey(sec.to)
+    if from == to then return nil, i end
+    out[i] = { from = from, to = to }
+  end
+  return out
+end
+
+-- A checkpoint is going away. A sector starting or ending there moves to the
+-- gate before it; CP 1's goes to the line, which IS the gate before it.
+function timing.sectorsLoseGate(index)
+  for _, sec in ipairs(track.sectors) do
+    if sec.from == index then sec.from = index - 1 end
+    if sec.to == index then sec.to = index - 1 end
+  end
+end
+
+-- A checkpoint moved in the order: sector ends follow the gate they name,
+-- the way the first checkpoint does. The line (0) stays the line.
+function timing.sectorsReorder(from, to)
+  local lo, hi, step = math.min(from, to), math.max(from, to), (from < to) and -1 or 1
+  local function moved(v)
+    if v == 0 then return 0 end
+    if v == from then return to end
+    if v >= lo and v <= hi then return v + step end
+    return v
+  end
+  for _, sec in ipairs(track.sectors) do
+    sec.from, sec.to = moved(sec.from), moved(sec.to)
+  end
+end
+
+-- One sector done: hold its time against this driver's best for that sector.
+function timing.closeSector(n, count, t)
+  if not (t > 0) then return end
+  timing.sectors[n] = t
+  local best = timing.bestSector[n]
+  local delta = best and (t - best) or nil
+  if not best or t < best then timing.bestSector[n] = t end
+  guihooks.trigger('RaceManagerSector', {
+    sector = n, count = count, time = t,
+    delta = delta, best = not best or t <= timing.bestSector[n],
+  })
 end
 
 -- Seconds until the next live-position report.
@@ -1048,6 +1143,11 @@ function edit.fingerprint()
   fold(branch.list)
   fold(props.list)
   n = (n * 31 + (track.firstCheckpoint or 1)) % 2147483647
+  n = (n * 31 + #track.sectors) % 2147483647
+  for i = 1, #track.sectors do
+    local sec = track.sectors[i]
+    n = (n * 31 + (sec.from or 0) * 1000 + (sec.to or 0)) % 2147483647
+  end
   return n
 end
 
@@ -1139,6 +1239,8 @@ local function pushRouteState()
     branchSlot   = branch.editSlot,
     gridOffLine  = branch.gridIsOff(),
     firstCheckpoint = branch.firstGate(),
+    sectors      = track.sectors,
+    maxSectors   = TUNE.MAX_SECTORS,
     -- A generated grid the spacing sliders may move; hand-placed is left alone.
     gridGenerated = branch.gridTool.generated,
     gridSpacing   = branch.gridTool.spacing,
@@ -1295,6 +1397,11 @@ local sticky = {
 -- What the HUD should hold now, or nil: the one a driver must act on first.
 local function stickyMessage()
   if not sessionRunning() or session.spectatorLock then return nil end
+  -- A RED OUTRANKS ALL OF THEM. Laid over a caution or a restart, the lines
+  -- below would tell a stopped field to race back, hold station or get ready.
+  if session.raceFlag == 'red' then
+    return 'red', 'RED FLAG - stop where you are and wait.'
+  end
   if session.greenReady then
     return 'ready', 'GET READY: hold position until the green flag falls.'
   end
@@ -1306,6 +1413,12 @@ local function stickyMessage()
   end
   if session.cautionPending then
     return 'caution', 'CAUTION - race back to the line. Positions lock as you complete this lap.'
+  end
+  -- A pass under yellow to undo: more urgent than holding station, and the
+  -- server keeps it on our row until the place is back.
+  if session.caution and session.ucPassed then
+    return 'ucpass', 'GIVE THE PLACE BACK to ' .. session.ucPassed
+      .. ': you passed under caution, and it does not count.'
   end
   if session.caution then
     return 'caution', 'CAUTION - hold position, no overtaking. Places are frozen.'
@@ -1408,6 +1521,8 @@ local function clearTrackState(reason)
   branch.gridOffLine = false
   branch.editSlot    = 1
   track.firstCheckpoint = 1
+  -- Sectors name checkpoints by number: they go with the route.
+  track.sectors = {}
   pushRouteState()
   log('I', 'raceManager', 'Track state cleared (' .. tostring(reason or 'local') .. ')')
 end
@@ -1645,24 +1760,34 @@ local function checkGates()
       -- Back on the racing line: the pit lane is behind us however we left it.
       if pit.inLane then pit.leaveLane('cleared a checkpoint') end
 
-      -- SECTOR CLOSED (sector number = gate number). Taken before onLapCompleted
-      -- moves lapStart. The out lap is stamped but never scored.
+      -- SECTOR CLOSED. Taken before onLapCompleted moves lapStart. The out lap
+      -- is stamped but never scored. Not on a backwards crossing either: it
+      -- clears the gate but is no time anybody drove, and would poison the best.
       do
         local n = session.armedWp
-        local sectorTime = localTime - timing.sectorStart
-        timing.sectorStart = localTime
-        -- Not on a backwards crossing: it clears the gate but is no time anybody
-        -- drove, and would poison the best.
-        if sectorTime > 0 and not backwards and not onOutLap() then
-          timing.sectors[n] = sectorTime
-          local best = timing.bestSector[n]
-          local delta = best and (sectorTime - best) or nil
-          if not best or sectorTime < best then timing.bestSector[n] = sectorTime end
-          guihooks.trigger('RaceManagerSector', {
-            sector = n, count = #track.route, time = sectorTime,
-            delta = delta, best = not best or sectorTime <= timing.bestSector[n],
-          })
+        local scored = not backwards and not onOutLap()
+        local defined = track.sectors
+        if #defined > 0 then
+          -- THE ADMIN'S SECTORS. Each one ending at this gate closes, timed from
+          -- this car's last crossing of the gate it starts at. Closed before
+          -- this crossing is stamped, so one ending where the next begins times
+          -- both. One whose start was never crossed (an out lap begun past it)
+          -- has no time to give.
+          local key = timing.gateKey(n)
+          for i = 1, #defined do
+            local from, to = timing.gateKey(defined[i].from), timing.gateKey(defined[i].to)
+            local t0 = timing.passed[from]
+            if to == key and from ~= to and t0 and scored then
+              timing.closeSector(i, #defined, localTime - t0)
+            end
+          end
+          timing.passed[key] = localTime
+        else
+          -- None defined: every checkpoint closes one (sector number = gate).
+          local sectorTime = localTime - timing.sectorStart
+          if scored then timing.closeSector(n, #track.route, sectorTime) end
         end
+        timing.sectorStart = localTime
       end
       if session.armedWp >= #track.route then
         onLapCompleted()
@@ -2895,8 +3020,8 @@ function M.setGarageEnforce(enabled)
   end
 end
 
--- Which half of the signature the server matches on: 'parts' (tuning and paint
--- free) or 'strict' (parts plus tuning).
+-- How much of a car the server matches: 'model' (the model alone; parts and
+-- tuning free), 'parts' (tuning and paint free) or 'strict' (parts plus tuning).
 function M.setGarageMode(mode)
   if inMultiplayer() then
     TriggerServerEvent('RM_SetGarageMode', jsonEncode({ mode = tostring(mode or '') }))
@@ -6549,6 +6674,57 @@ function M.setFirstCheckpoint(slot)
   log('I', 'raceManager', 'Out lap starts at checkpoint ' .. slot)
 end
 
+-- --- Sectors ------------------------------------------------------------------
+-- Stretches of the lap timed on their own, named by the gates they run between
+-- (0 is the line). Display only: nothing is scored by them. Every edit forgets
+-- this driver's bests, which belonged to the sectors as they were.
+function timing.sectorEnd(v)
+  v = math.floor(tonumber(v) or 0)
+  if v < 0 or v >= #track.route then v = 0 end
+  return v
+end
+
+-- A new sector starts where the last one ends and runs to the next gate, so
+-- adding them one after another walks round the lap.
+function M.addSector()
+  if #track.route < 2 then
+    guihooks.trigger('RaceManagerEditorMsg', { msg = 'Place the main route first' })
+    return
+  end
+  if #track.sectors >= TUNE.MAX_SECTORS then
+    guihooks.trigger('RaceManagerEditorMsg', {
+      msg = 'A layout has at most ' .. TUNE.MAX_SECTORS .. ' sectors',
+    })
+    return
+  end
+  local last = track.sectors[#track.sectors]
+  local from = last and timing.gateKey(last.to) or 0
+  track.sectors[#track.sectors + 1] = { from = from, to = timing.sectorEnd(from + 1) }
+  timing.bestSector = {}
+  pushRouteState()
+  log('I', 'raceManager', 'Sector ' .. #track.sectors .. ' added')
+end
+
+-- Either end, or both; nil leaves that end where it is.
+function M.setSector(index, from, to)
+  local sec = track.sectors[math.floor(tonumber(index) or 0)]
+  if not sec then return end
+  if from ~= nil then sec.from = timing.sectorEnd(from) end
+  if to ~= nil then sec.to = timing.sectorEnd(to) end
+  timing.bestSector = {}
+  pushRouteState()
+end
+
+-- The ones after it close up and take the numbers down by one.
+function M.removeSector(index)
+  index = math.floor(tonumber(index) or 0)
+  if not track.sectors[index] then return end
+  table.remove(track.sectors, index)
+  timing.bestSector = {}
+  pushRouteState()
+  log('I', 'raceManager', 'Sector ' .. index .. ' removed')
+end
+
 -- Re-point a placed branch gate at another checkpoint (two on one is fine).
 function M.setBranchGateSlot(index, slot)
   index = math.floor(tonumber(index) or 0)
@@ -6817,6 +6993,11 @@ function branch.shiftSlots(from, delta)
   -- The out lap's first checkpoint is addressed by number too.
   local f = track.firstCheckpoint or 1
   if f > 1 and f >= from then track.firstCheckpoint = math.max(f + delta, 1) end
+  -- And the ends of the sectors. The line (0) is not a number that moves.
+  for _, sec in ipairs(track.sectors) do
+    if sec.from > 0 and sec.from >= from then sec.from = math.max(sec.from + delta, 0) end
+    if sec.to > 0 and sec.to >= from then sec.to = math.max(sec.to + delta, 0) end
+  end
 end
 
 -- Drop the branch gates of a checkpoint that is going away.
@@ -6841,6 +7022,7 @@ function M.removeCheckpoint(index)
   table.remove(list, index)
   if edit.target == 'main' then
     local dropped = branch.dropSlot(index)
+    timing.sectorsLoseGate(index)
     branch.shiftSlots(index + 1, -1)
     branch.rebuild()
     if dropped > 0 then
@@ -6921,6 +7103,7 @@ function M.reorderCheckpoint(from, to)
       if f == from then track.firstCheckpoint = to
       elseif f >= lo and f <= hi then track.firstCheckpoint = f + step end
     end
+    timing.sectorsReorder(from, to)
     branch.rebuild()
   end
   pushRouteState()
@@ -7599,6 +7782,11 @@ function M.saveLayout(name, confirmDrop)
     end
     if #alts == 0 then alts = nil end
   end
+  local secs, badSector = timing.bundleSectors()
+  if badSector then
+    editorMsg('Save failed: sector ' .. badSector .. ' starts and ends at the same gate')
+    return
+  end
   local payload = jsonEncode({
     name        = name,
     width       = clampWidth(track.checkpointWidth),
@@ -7612,6 +7800,8 @@ function M.saveLayout(name, confirmDrop)
     gridOffLine    = branch.gridIsOff(),
     -- nil for CP 1, so a layout that never set it saves as it did.
     firstCheckpoint = branch.firstGate() > 1 and branch.firstGate() or nil,
+    -- nil with none defined, so a layout without them saves as it did.
+    sectors        = secs,
     pits           = bundle(track.pitRoute, 'pit stall') or {},
     -- Empty tables, not nil, so a re-save never drops the lane's gates.
     pitEntry       = bundle(track.pitEntry, 'pit entry') or {},
@@ -7836,6 +8026,7 @@ for _, name in ipairs({
   'moveStartPosition', 'removeStartPosition',
   'generateStartPositions', 'respaceGrid', 'flipStartPositions',
   'setBranchSlot', 'setBranchGateSlot', 'removeBranchGate', 'setFirstCheckpoint',
+  'addSector', 'setSector', 'removeSector',
   'nudgeTurn', 'nudgeLift', 'nudgeDelete',
 }) do
   local inner = M[name]
@@ -7907,8 +8098,13 @@ local function onServerUpdate(rawData)
       pushNotice('flag', 'RED FLAG',
         { sub = 'Stop where you are and wait', color = 'red' })
     elseif session.raceFlag == 'yellow' then
-      pushNotice('flag', 'YELLOW FLAG',
-        { sub = 'Caution: race back to the line', color = 'yellow' })
+      -- Three yellows, three instructions. A caution frozen at the call is
+      -- official in the same update, so it must not be told to race back.
+      pushNotice('flag', 'YELLOW FLAG', {
+        sub = session.cautionPending and 'Caution: race back to the line'
+          or session.caution and 'Caution: positions frozen, hold your place'
+          or 'Hazard on track, take care',
+        color = 'yellow' })
     else
       pushNotice('flag', 'GREEN FLAG', { sub = 'Racing', color = 'green' })
     end
@@ -7926,13 +8122,17 @@ local function onServerUpdate(rawData)
       { still = true, color = 'yellow' })
   end
   -- Three edges, three instructions, in the order a driver meets them.
+  -- Called under a red, the red still stands: the caution comes when it lifts.
+  local underRed = session.raceFlag == 'red'
   if session.cautionPending and not wasPending then
-    pushNotice('flag', 'CAUTION - RACE BACK TO THE LINE',
-      { sub = 'Positions lock as you complete this lap', color = 'yellow' })
+    pushNotice('flag', underRed and 'CAUTION CALLED UNDER THE RED' or 'CAUTION - RACE BACK TO THE LINE',
+      { sub = underRed and 'Stay stopped. Race back to the line when the red is lifted'
+          or 'Positions lock as you complete this lap', color = 'yellow' })
   end
   if session.caution and not wasCaution then
-    pushNotice('flag', 'CAUTION',
-      { sub = 'Hold position, no overtaking - places are frozen', color = 'yellow' })
+    pushNotice('flag', underRed and 'CAUTION CALLED UNDER THE RED' or 'CAUTION',
+      { sub = underRed and 'Stay stopped. Positions are frozen where you stand'
+          or 'Hold position, no overtaking - places are frozen', color = 'yellow' })
   elseif session.restartPending and not wasRestart then
     -- The green is coming, at the line.
     pushNotice('flag', 'RESTART THIS LAP',
@@ -8018,7 +8218,9 @@ local function onServerUpdate(rawData)
   local myId = localServerId()
   local wasLapped  = session.beingLapped
   local wasLapping = session.lappingAhead
+  local wasPassed  = session.ucPassed
   session.beingLapped, session.lappingAhead = false, false
+  session.ucPassed = nil
   session.myHeat = nil
   -- Our status and slot, for the Ready button ('called': the grid waits on us).
   local wasStatus = session.myStatus
@@ -8032,6 +8234,7 @@ local function onServerUpdate(rawData)
         -- The blue flag rides on the row: a fact about one driver.
         session.beingLapped  = d.blue == true
         session.lappingAhead = d.lapping == true
+        session.ucPassed     = type(d.ucPassed) == 'string' and d.ucPassed or nil
         session.myHeat       = tonumber(d.heat)
         break
       end
@@ -8043,6 +8246,14 @@ local function onServerUpdate(rawData)
     pushNotice('flag', 'BLUE FLAG',
       { sub = 'Faster car a lap up behind you - let them by', color = 'blue' })
     if M.lightsMoment then M.lightsMoment('blue') end
+  end
+  -- Passed under caution: told on the edge, and again for each new car. The
+  -- sticky line holds it until the place is back.
+  if session.ucPassed and session.ucPassed ~= wasPassed and sessionRunning() then
+    pushNotice('flag', 'GIVE THE PLACE BACK',
+      { sub = session.raceFlag == 'red'
+          and ('You passed ' .. session.ucPassed .. ' - give it back when the red is lifted')
+          or  ('You passed ' .. session.ucPassed .. ' under caution'), color = 'yellow' })
   end
   -- The other half is a heads-up, not a flag: on the strip.
   if session.lappingAhead and not wasLapping and sessionRunning() then
@@ -8522,6 +8733,8 @@ local function onApplyLayout(rawData)
   branch.gridOffLine = data.gridOffLine == true
   -- Clamped where it is read (branch.firstGate); absent is CP 1.
   track.firstCheckpoint = math.floor(tonumber(data.firstCheckpoint) or 1)
+  -- After the route, which they are checked against. Absent is none.
+  track.sectors = timing.unbundleSectors(data.sectors)
   track.checkpointWidth  = clampWidth(data.width or track.checkpointWidth)
   -- The layout's default is migrated the same way, or new gates stand twice
   -- as tall as the loaded ones.
@@ -8560,7 +8773,7 @@ local function onSaveHeld(rawData)
     joker = 'joker gates', pits = 'pit stalls',
     pitEntry = 'pit entry gates', pitExit = 'pit exit gates',
     startPositions = 'start positions', branches = 'branch gates',
-    markers = 'direction markers', props = 'props',
+    markers = 'direction markers', props = 'props', sectors = 'sectors',
   }
   local parts = {}
   for key, n in pairs(lost) do
@@ -8888,6 +9101,14 @@ end
 function M.setLuckyDog(enabled)
   if inMultiplayer() then
     TriggerServerEvent('RM_SetLuckyDog', jsonEncode({ enabled = enabled == true }))
+  end
+end
+
+-- How the next caution freezes the order: 'line' or 'call'.
+function M.setCautionMode(mode)
+  if mode ~= 'line' and mode ~= 'call' then return end
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetCautionMode', jsonEncode({ mode = mode }))
   end
 end
 
@@ -9310,6 +9531,7 @@ local function resetToIdle(reason)
   session.restartPending  = false
   session.beingLapped     = false
   session.lappingAhead    = false
+  session.ucPassed        = nil
   session.heatCount       = 0
   session.heatCurrent     = 0
   session.heatLaps        = 0
