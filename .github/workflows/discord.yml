@@ -15,9 +15,10 @@ name: Post to Discord
 # green.
 #
 # RELEASES GO TO THEIR OWN CHANNEL: a second secret, DISCORD_RELEASES_WEBHOOK_URL,
-# holds that channel's webhook URL. Pushes, pull requests, issues and comments
-# go to DISCORD_WEBHOOK_URL. While the releases secret is unset, releases are
-# posted with everything else rather than nowhere.
+# holds that channel's webhook URL. New and deleted branches and tags, pull
+# requests, issues and comments go to DISCORD_WEBHOOK_URL. Commits are never
+# posted. While the releases secret is unset, releases are posted with
+# everything else rather than nowhere.
 #
 # pull_request_target, not pull_request: a pull request from a fork gets no
 # secrets under pull_request, so it could not post. This is safe here because

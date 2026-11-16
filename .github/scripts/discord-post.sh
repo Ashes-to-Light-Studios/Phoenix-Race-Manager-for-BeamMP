@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Post one GitHub event to a Discord channel, under the studio's name and
-# avatar, whoever caused it.
+# avatar, whoever caused it. Commits are never posted: a push is announced
+# only when it creates or deletes a branch or tag.
 #
 #   discord-post.sh <event name> <event payload file>
 #
@@ -43,10 +44,11 @@ message=$(jq -c \
   --arg name "$POST_AS_NAME" \
   --arg avatar "$POST_AS_AVATAR" '
   def trunc(n): if length > n then .[0:n-1] + "…" else . end;
-  def first_line: (. // "") | split("\n")[0];
   def body(n): (. // "") | gsub("\r"; "") | trunc(n);
 
   # --- what: null means "nothing worth a post" ---
+  # NO POSTS FOR COMMITS. A push says only that a branch or tag came or went;
+  # the commits it carries are never listed, however many there are.
   (if $event == "push" then
       (.ref | sub("^refs/(heads|tags)/"; "")) as $ref
       | (.ref | startswith("refs/tags/")) as $is_tag
@@ -54,22 +56,9 @@ message=$(jq -c \
           { title: "[\($repo)] \(if $is_tag then "Tag" else "Branch" end) deleted: \($ref)", color: 13574702 }
         elif $is_tag then
           { title: "[\($repo)] New tag: \($ref)", url: "\($repo_url)/releases/tag/\($ref)", color: 7506394 }
-        elif (.commits | length) == 0 then
-          if .created
-          then { title: "[\($repo)] New branch: \($ref)", url: "\($repo_url)/tree/\($ref)", color: 7506394 }
-          else null end
-        else
-          (.commits | length) as $n
-          | { title: ("[\($repo):\($ref)] \($n) new commit\(if $n == 1 then "" else "s" end)"
-                      + (if .forced then " (force push)" else "" end)),
-              url: .compare,
-              color: 7506394,
-              description: (
-                [.commits[:10][]
-                  | "[`\(.id[0:7])`](\(.url)) \(.message | first_line | trunc(72))"]
-                + (if $n > 10 then ["… and \($n - 10) more"] else [] end)
-                | join("\n")) }
-        end
+        elif .created then
+          { title: "[\($repo)] New branch: \($ref)", url: "\($repo_url)/tree/\($ref)", color: 7506394 }
+        else null end
 
     elif $event == "pull_request" or $event == "pull_request_target" then
       .pull_request as $pr
