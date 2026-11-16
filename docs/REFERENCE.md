@@ -3107,7 +3107,7 @@ Set by `mapRestart` in `config.json`:
 
 | Value | What happens |
 |---|---|
-| `auto` (default) | `watch` if the Management Tool started the server, `relaunch` otherwise |
+| `auto` (default) | `watch` if the Management Tool started the server, `exit` in a container (a game panel such as Pterodactyl or Pelican, Docker, Podman), `relaunch` otherwise |
 | `watch` | Waits for the Management Tool's config check to restart the server, up to `mapRestartGrace` seconds (default 90), then relaunches it itself |
 | `relaunch` | Starts a small helper script, stops the server, and the helper starts it again in the same folder with the same command line once the old one has exited |
 | `exit` | Stops the server. For a service manager, hosting panel or restart loop that starts it again on its own |
@@ -3136,17 +3136,45 @@ old console window closes and a new one opens on the new map. The helper is
 `Data/relaunch.cmd` (`relaunch.sh` on Linux); it waits up to five minutes for the
 old server to exit and is deleted on the next start.
 
-**Linux:** `relaunch` works for a server started from a shell. Under systemd,
-Docker or a hosting panel, set `mapRestart` to `exit` and let the service
-manager bring it back; a second copy started by the helper would fight it for
-the port.
+**Linux:** `relaunch` works for a server started from a shell. In a container,
+`auto` already picks `exit`: when the server stops, the container stops with it
+and takes the helper along, so the host has to start it again. On a game panel
+that is its crash restart; if the server stays off after a switch, start it
+from the panel. Race Manager spots a container from Pterodactyl's and Pelican's
+`P_SERVER_UUID`, a home of `/home/container`, Docker's `/.dockerenv` or
+Podman's `/run/.containerenv`. Under systemd, set `mapRestart` to `exit` and let
+the service manager bring it back; a second copy started by the helper would
+fight it for the port.
 
 
 ## Updating from the Admin tab
 
-When the server starts it asks GitHub for the newest Phoenix Race Manager
-release, once, in the background. If that release is newer than the one the
-server runs:
+**Off unless the server's owner turns it on.** As shipped, Race Manager never
+goes online by itself, because some game hosts cut a server off the internet
+when it does (see [Game hosts](#game-hosts)). The **Updates** row on the
+**Admin** panel then shows the version running and how to update by hand.
+
+### Updating by hand
+
+1. Download `RaceManager-vX.Y.Z.zip` from
+   [Releases](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/releases/latest).
+2. Stop the server.
+3. Upload the zip into the server's `Resources/` folder and extract it there,
+   replacing the old files.
+4. Delete the zip and start the server.
+
+Tracks, results and settings in `Data/` are kept, and players get the new
+version as they rejoin. If a release removes a file from
+`Resources/Server/RaceManager/`, delete it there too: BeamMP runs every `.lua`
+in that folder. On your own machine, `PRM-Setup.exe` (Windows) or
+`PRM-Install.sh` (Linux) does all of this and keeps the old files in `_attic/`.
+
+### Updating from the game
+
+On a server you run on your own machine, set `"onlineFeatures": true` in
+`Resources/Server/RaceManager/Data/config.json` and restart it. Then, when the
+server starts, it asks GitHub for the newest Phoenix Race Manager release, once,
+in the background. If that release is newer than the one the server runs:
 
 - The server console says so.
 - An admin who logs in is asked, in a band at the top of the app: **Update and
@@ -3199,7 +3227,8 @@ install by hand.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `updateCheck` | `true` | `false` never contacts GitHub: no check, no band, no button |
+| `onlineFeatures` | `false` | `true` lets the server go online by itself: update checks, **Update and restart** and Discord posts. Set in `config.json` only; the Admin panel cannot change it. Leave it off on a rented game server ([Game hosts](#game-hosts)) |
+| `updateCheck` | `true` | With `onlineFeatures` on, `false` still keeps updates off GitHub: no check, no band, no button |
 | `updateRepo` | `Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG` | Where to look, as owner/name. A fork can point it at its own releases |
 
 A release must be tagged `vX.Y.Z` and carry `RaceManager-vX.Y.Z.zip` laid out
@@ -3218,6 +3247,24 @@ it can be installed from the game.
 published, not who published it. So an update only ever starts when an admin
 presses the button, and nothing in GitHub's reply is run as a command: the
 download address is rebuilt from `updateRepo` and a checked version number.
+
+### Game hosts
+
+Some game hosts cut a server off the internet when it goes online by itself.
+On one Pterodactyl host, Race Manager's update check at startup was enough:
+from then on BeamMP could not reach its own login service, every player who
+joined, admins included, was kicked with **Invalid key! Please restart your
+game**, and the server dropped off the server list until it was restarted. The
+console shows `Resolving timed out` on a `POST to
+https://auth.beammp.com/pkToUser`.
+
+Nothing tells such a host apart from one that is fine, so `onlineFeatures` is
+off as shipped and only the server's owner can turn it on, in `config.json`.
+Turn it on only on a machine you run yourself. If that error shows up with it
+on, set it back to `false` and restart the server.
+
+Saving results is not affected: the server's copy is a file in `Data/results/`
+and an admin's copy travels over BeamMP's own connection.
 
 
 ## Lap records
@@ -3293,8 +3340,11 @@ whose last board is cleared loses its file.
 ## Posting results to Discord
 
 An optional add-on: as each session closes, the server posts its results to a
-Discord channel through a webhook. **It is off until a webhook is set**, and
-with none the server never contacts Discord.
+Discord channel through a webhook. **It is off until the server's owner sets
+`"onlineFeatures": true` in `config.json`, and then until a webhook is set.**
+Until both, the server never contacts Discord. Leave it off on a rented game
+server: a post goes online the same way the update check that got a server cut
+off did (see [Game hosts](#game-hosts)).
 
 **Setting it up.** In Discord, open the channel's settings: **Integrations**,
 **Webhooks**, **New Webhook**, then **Copy Webhook URL**. The name and picture

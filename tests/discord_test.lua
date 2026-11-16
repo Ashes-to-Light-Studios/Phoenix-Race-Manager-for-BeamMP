@@ -213,6 +213,39 @@ end
 check(warnedUnsaved(), 'not posted and Save results off as shipped: the admins are told')
 
 -- ---------------------------------------------------------------------------
+-- 3b. Off unless the owner turned onlineFeatures on
+-- ---------------------------------------------------------------------------
+-- A game host cut a server off the internet after it fetched on its own, so a
+-- webhook set by hand still posts nothing until config.json says so.
+do
+  -- As shipped. Set here, since another suite's config.json may still be on disk.
+  local CFG = host.CFG
+  CFG.onlineFeatures = false
+  local handSet = '{"webhook":"' .. HOOK .. '"}'
+  write(CFG_FILE, handSet)
+  chat = {}
+  runRace()
+  RM_DiscordTick()
+  check(#discord.queue == 0 and discord.job == nil and #commands == 0,
+    'a webhook set by hand posts nothing, and nothing is started')
+  local line
+  for _, c in ipairs(chat) do
+    if c.msg:find('were not saved anywhere', 1, true) then line = c.msg end
+  end
+  check(line ~= nil and not line:find('Discord', 1, true),
+    'the admins are told the results were kept nowhere, without pointing them at Discord')
+  RM_onDiscordSet(0, '{"clear":true}')
+  check(read(CFG_FILE) == handSet and (lastNotice(0) or ''):find('onlineFeatures', 1, true),
+    'the panel cannot change it, and the admin is told why')
+  RM_onDiscordTest(0)
+  check(#discord.queue == 0 and #commands == 0, 'nor send a test')
+  RM_onRequestState(0)
+  check(lastState(0).prmDiscord.online == false, 'the panel shows Discord off')
+  os.remove(CFG_FILE)
+  CFG.onlineFeatures = true
+end
+
+-- ---------------------------------------------------------------------------
 -- 4. Setting the webhook: the admin tier's
 -- ---------------------------------------------------------------------------
 RM_onDiscordSet(3, '{"webhook":"' .. HOOK .. '"}')

@@ -20,7 +20,8 @@
 -- voting with CFG.mapVoting.
 --
 -- RESTART is CFG.mapRestart:
---   auto      under the Management Tool: watch. Anything else: relaunch.
+--   auto      under the Management Tool: watch. In a container (a game
+--             panel, Docker): exit. Anything else: relaunch.
 --   watch     let the tool's "Check for config update and restart" do it
 --   relaunch  start a helper that waits for this process to end and starts
 --             the server again, then exit()
@@ -490,6 +491,27 @@ function M.probe()
   return info
 end
 
+-- { container, panel }: whether this server runs in a container, from what one
+-- leaves behind, so asking starts no process. Pterodactyl and Pelican set
+-- P_SERVER_UUID and run in /home/container; Docker leaves /.dockerenv, Podman
+-- /run/.containerenv. When the server exits its container stops, and takes any
+-- helper it started with it. Tests set hostingCache.
+M.hostingCache = nil
+function M.hosting()
+  if M.hostingCache then return M.hostingCache end
+  local h = { container = false, panel = false }
+  if not IS_WINDOWS then
+    if os.getenv('P_SERVER_UUID') or os.getenv('HOME') == '/home/container' then
+      h.container, h.panel = true, true
+    elseif exists('/.dockerenv') or exists('/run/.containerenv')
+        or os.getenv('KUBERNETES_SERVICE_HOST') then
+      h.container = true
+    end
+  end
+  M.hostingCache = h
+  return h
+end
+
 -- ---------------------------------------------------------------------------
 -- Restarting
 -- ---------------------------------------------------------------------------
@@ -512,7 +534,8 @@ function M.resolveRestart(info, noWatch)
   local underTool = type(info.parent) == 'string' and info.parent:lower():find('management') ~= nil
   local grace = cfg('mapRestartGrace', 90)
   local note
-  if want == 'auto' then want = underTool and 'watch' or 'relaunch' end
+  local boxed = M.hosting().container
+  if want == 'auto' then want = underTool and 'watch' or (boxed and 'exit' or 'relaunch') end
   if noWatch and want == 'watch' then
     want = 'relaunch'
     note = underTool and 'Race Manager restarts the server itself, outside the Management Tool.' or nil
@@ -541,7 +564,9 @@ function M.resolveRestart(info, noWatch)
     return 'relaunch', grace, note or 'Race Manager starts the server again once it has stopped.'
   end
   if want == 'exit' then
-    return 'exit', grace, 'The server stops, and your service manager starts it again.'
+    return 'exit', grace, boxed
+      and 'The server stops, and your host starts it again. If it stays off, start it from your panel.'
+      or 'The server stops, and your service manager starts it again.'
   end
   return 'manual', grace, 'Restart the server by hand to finish.'
 end
@@ -720,6 +745,7 @@ local function snapshot(withList, err)
     error   = err or M.lastError,
     last    = M.last,
     restart = cfg('mapRestart', 'auto'),
+    container = M.hosting().container or nil,   -- what auto means
     voting  = cfg('mapVoting', true) == true,
     votePercent = cfg('mapVotePercent', 60),
     voteWait = math.max(0, M.voteCooldownUntil - os.time()),

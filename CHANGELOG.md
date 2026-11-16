@@ -6,6 +6,40 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Fixed
+
+- **On a game host, every player was kicked with "Invalid key! Please restart
+  your game".** On a Pterodactyl host, the update check Race Manager ran at
+  startup was enough for the host to cut the server off the internet. BeamMP
+  could then not reach its own login service (`Resolving timed out` on
+  `auth.beammp.com` in the console), refused every join, admins included, and
+  dropped off the server list until a restart. Nothing tells such a host apart,
+  so **Race Manager no longer goes online by itself unless the server's owner
+  turns it on**: set `"onlineFeatures": true` in
+  `Resources/Server/RaceManager/Data/config.json`. The Admin panel cannot
+  change it.
+
+#### Changed
+
+- **In-game updates and Discord posts are off until `onlineFeatures` is on.**
+  Without it the server never checks GitHub, **Check now** and **Update and
+  restart** are gone, and no results are posted to Discord, even with a
+  webhook set. The **Updates** row shows how to update by hand instead: download
+  the release zip, stop the server, extract it over the old files in
+  `Resources/`, delete the zip and start the server. **If you run the server on
+  your own machine and use either feature, set `onlineFeatures` to `true` after
+  this update.** Saving results is unchanged: it never went online.
+- **On Linux, the results folder no longer runs `pwd`.** Its path for the Admin
+  panel comes from where BeamMP was started, so a game host sees no process.
+- **In a container, a map switch or an update leaves the restart to the
+  host.** On a game panel (Pterodactyl, Pelican), Docker or Podman, `mapRestart`
+  `auto` now means `exit`. The helper process Race Manager used to start went
+  down with the container the moment the server stopped, so the restart was
+  always the host's anyway. The Map row says so, and if the server stays off,
+  start it from the panel.
+
 ## 0.23.3 - Updates restart through the Management Tool
 
 #### Fixed

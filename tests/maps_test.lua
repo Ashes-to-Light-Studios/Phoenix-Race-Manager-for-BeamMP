@@ -163,6 +163,9 @@ maps.sys = {
   execute = function (cmd) spawned[#spawned + 1] = cmd; return true end,
   exit = function () exited = exited + 1 end,
 }
+-- A server outside any container, wherever the tests run: auto relaunches.
+local realHosting = maps.hosting
+maps.hostingCache = { container = false, panel = false }
 local realProbe = maps.probe
 maps.probe = function ()
   probed = probed + 1
@@ -463,6 +466,16 @@ do
   check(maps.resolveRestart({ parent = 'BeamMP.Server.Management.Tool.v3.1.exe', mt = {} }) == 'watch',
     'but the tool can still restart it: the config watch needs no exit()')
   maps.sys.exit = exitFn
+  -- In a container the old server's exit stops it, helper and all.
+  maps.hostingCache = { container = true, panel = true }
+  local m4, _, note4 = maps.resolveRestart({ parent = 'bash', mt = {} })
+  check(m4 == 'exit' and note4:find('your panel', 1, true) ~= nil,
+    'auto in a container: exit, and the host starts it again')
+  CFG.mapRestart = 'relaunch'
+  check(maps.resolveRestart({ parent = 'bash', mt = {} }) == 'relaunch',
+    'a container told to relaunch still relaunches')
+  CFG.mapRestart = 'auto'
+  maps.hostingCache = { container = false, panel = false }
 end
 
 -- Watch: nothing restarts it, so it restarts itself once the grace is up.
@@ -594,6 +607,13 @@ underWay(false)
 maps.sys.popen = function () error('no shell here') end
 local ok, info = pcall(realProbe)
 check(ok and type(info) == 'table' and info.pid == nil, 'a probe that cannot run returns an empty answer')
+
+-- Nor does asking where it runs, which starts no process at all.
+maps.hostingCache = nil
+maps.sys.execute = function () error('no process here') end
+local okH, where = pcall(realHosting)
+check(okH and type(where.container) == 'boolean' and type(where.panel) == 'boolean'
+  and (not IS_WINDOWS or not where.container), 'where the server runs is read without a process')
 
 -- ---------------------------------------------------------------------------
 -- Clean up
