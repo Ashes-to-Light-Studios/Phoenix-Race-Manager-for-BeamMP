@@ -87,8 +87,8 @@ the old one instead of leaving two copies side by side.
    if they don't match, something didn't copy. A stale file fails *silently*: a
    button just stops doing anything.
 2. **Change the admin password before your first public session.** It ships as
-   `phoenix`. Log in, then set a new one from the **Admin password** bar in the
-   **⚙** tab. There is a second, narrower **moderator** password for whoever
+   `phoenix`. Log in, then set a new one from the **Admin password** bar on the
+   **Admin** panel. There is a second, narrower **moderator** password for whoever
    runs your race nights; it ships empty, which means off. See
    [Two tiers](docs/REFERENCE.md#two-tiers-admin-and-moderator).
 3. **Upgrading from 0.6.0 or earlier on Linux?** Those packages spelled the
@@ -129,20 +129,21 @@ the app for a [spectator's board](docs/REFERENCE.md#broadcast-board-spectators):
 the whole field, who is out and why, cup standings, and click a name to put the
 camera on that car.
 
-**2. Build a track.** Press **Editor**, then drive the course. At each timing
-gate, drive through it *in the direction of travel* and press **+ Checkpoint
-Here**. Gates are flat rectangles standing across your heading, and what you see
-drawn in the world **is** the trigger.
+**2. Build a track.** Open **Track** on the menu bar, then drive the course. At
+each timing gate, drive through it *in the direction of travel* and press
+**+ Checkpoint Here**. Gates are flat rectangles standing across your heading,
+and what you see drawn in the world **is** the trigger.
 
 - **The last gate you place is the start/finish line.**
-- Set **Gate width**, and the two halves of the vertical: **up** is how far the
+- Each gate has a width and two halves of the vertical: **up** is how far the
   gate rises above where it was placed, **down** how far it drops below. They are
   independent, so a gate can stand tall enough to see without an equal amount of
   it hanging under the road. Raise **up** on **banked tracks** so the rectangle
-  covers the banking. Any single gate can override all three.
+  covers the banking. Click a gate in the list to change its **W**, **Up** and
+  **Dn**; the next gate you place takes the same size.
 - **Undo**, **Clear** and **Hide/Show Gates** do what you'd expect.
 
-Then switch to the **Start Grid** tab and drive to each grid slot *facing down
+Then switch to the **Grid** tab and drive to each grid slot *facing down
 the track*, pressing **+ Place Start Position Here**. Slot 1 is pole. Every slot
 stays editable: **Go** to it, **Move Here**, or **✕** to delete. For a grid part
 way round the circuit, set **First checkpoint** to the first gate ahead of it, so
@@ -161,8 +162,8 @@ server refuses and says exactly what would have gone.
 
 **4. Decide who's racing.** **Everyone on the server is in the field**, so
 there's nothing to do. A driver who'd rather watch presses **Spectate** and the
-session runs without them; their car stays put as a ghost, and **Rejoin the
-field** puts them back. That's the whole entry system, and it's the driver's own
+session runs without them; their car stays put as a ghost, and **Race**, beside
+it, puts them back. That's the whole entry system, and it's the driver's own
 call, not an admin setting. A one on one is two people racing and everybody else
 spectating. Once a session is running the field is fixed: the way out from there
 is **Retire**, which keeps a classified position and scores like any other DNF.
@@ -170,12 +171,13 @@ is **Retire**, which keeps a classified position and scores like any other DNF.
 **5. Qualifying.** Press **Start Quali**, then **Start Countdown**. The field
 starts from the grid, so the first lap is an **out lap**: not timed, not scored,
 and not counted against the allowance. *Three qualifying laps still means three
-timed laps*, run after it. Drivers see `OUT LAP: NOT TIMED` instead of a running
-clock until they cross the line. (A point-to-point stage is driven once, so it
-has no out lap.) The table shows everyone's best lap, fastest on top.
+timed laps*, run after it. Drivers see an **OUT LAP** badge and `NOT TIMED`
+instead of a running clock until they cross the line. (A point-to-point stage
+is driven once, so it has no out lap.) The table shows everyone's best lap, fastest on top.
 
-Optional: **Ghost quali** (rivals stop being obstacles), **Quali laps**, and
-**Quali mins** (which triggers a proper final lap rather than stopping dead).
+Optional, under **Race ▾ → Qualifying**: **Ghost quali** (rivals stop being
+obstacles) and **Quali length**, run to **Laps** or **Timed** minutes (a timed
+session ends on a proper final lap rather than stopping dead).
 
 **6. Grid and race.** Set **Laps**, pick a **Grid order** (Quali, Reverse,
 Random, Points, Points rev or Custom), then **Generate Grid**. Every driver is placed on their slot
@@ -231,7 +233,7 @@ expect without touching any of it.
 | **[Reset ghosting](docs/REFERENCE.md#reset-ghosting)** | A driver who resets is intangible for a few seconds rather than reappearing solid in the racing line. Collisions return only once the space around them is provably clear. |
 | **[Branch gates](docs/REFERENCE.md#branch-gates-two-ways-through-a-checkpoint)** | Give a checkpoint a second gate and either one clears it. Split lanes and head-on "suicide" ovals, scored together on one leaderboard, with nothing to assign anyone to. |
 | **[Sectors](docs/REFERENCE.md#sectors)** | Define a track's sectors, such as S1 from the line to CP 3 and S2 from CP 3 to CP 6, and drivers are timed on those instead of on every checkpoint. Each sector time shows against the driver's own best for it. |
-| **[Mouse track editing](docs/REFERENCE.md#tutorial-running-a-race-night)** | Nudge mode: click, drag and scroll to move and turn gates from free cam, ctrl+click to place new ones. Driving to a gate still works and still builds the track. |
+| **[Mouse track editing](docs/REFERENCE.md#tutorial-running-a-race-night)** | **✋ Place** mode: click, drag and scroll to move and turn gates from free cam, ctrl+click to place new ones. Works on props, grid slots and derby arenas too. Driving to a gate still works and still builds the track. |
 | **[Caution and restart](docs/REFERENCE.md#caution-and-restart)** | A full-course yellow that freezes the running order. By default the field **races back to the line**: the leader's crossing sets the lap, everyone locks their place as they complete it, and lapped cars go to the bottom in their own order. Or **freeze at the call**, where the field stands. Passes under yellow never count, and are shown to the driver and race control and listed in the results. Optional free pass. The restart is called and falls at the line, and can be waved off. |
 | **[Multi-class racing](docs/REFERENCE.md#multi-class-racing)** | Two car types on one grid, scored as two races. Tag a class on each Garage List entry and every driver in that car is in it: a Class column with per-class positions on the board, and a section per class in the results file. The overall order is unchanged. |
 | **[The blue flag](docs/REFERENCE.md#the-blue-flag)** | Lapped traffic gets signalled instead of only displayed: the backmarker is shown blue when a car a lap up closes on them, and the car doing the lapping is told there is one ahead. Measured on the road rather than off the timing sheet, which are different orders once anybody is lapped. |
