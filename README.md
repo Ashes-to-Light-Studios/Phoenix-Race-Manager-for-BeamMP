@@ -42,7 +42,7 @@ curl -fsSLO https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-B
 [Releases](../../releases), upload it into the server's `Resources/` folder and
 extract it there.
 
-Then start the server, or restart it. BeamMP pushes `RaceManager.zip` to everyone
+Then start the server, or restart it. BeamMP pushes `PhoenixRM Client.zip` to everyone
 who joins, so **players install nothing by hand**.
 
 Both installers stop if the server is running, keep anything they replace in
@@ -55,10 +55,18 @@ the server, upload the zip into `Resources/` and extract it there over the old
 files, delete the zip and start the server. Your tracks, results and settings
 are kept.
 
+**From 0.23.x or older, the folders are renamed** to `Resources/Client/PhoenixRM
+Client.zip` and `Resources/Server/PhoenixRM Server/`, so you can see what is
+installed. The installers move the old ones across. Updating by hand, the first
+start moves your data from `Resources/Server/PhoenixRM Server/Data` into the new
+folder and the old copy to `_attic/`, then asks you to **restart once**, because
+that start ran both. Update and restart from the game cannot make this jump;
+use the zip or an installer once.
+
 **Updating from the game** is off as shipped, because some game hosts cut a
 server off the internet when it goes online by itself and every player who
 joins is kicked. On a server you run on your own machine, set
-`"onlineFeatures": true` in `Resources/Server/RaceManager/Data/config.json`:
+`"onlineFeatures": true` in `Resources/Server/PhoenixRM Server/Data/config.json`:
 the server then looks for a newer release at each start, and **Update and
 restart** on the **Admin** tab installs it. See [Updating from the Admin
 tab](docs/REFERENCE.md#updating-from-the-admin-tab).
@@ -67,7 +75,7 @@ Building from source instead? `python3 tools/deploy.py` writes the package and
 installs both halves onto a BeamMP server it finds, backing up whatever it
 replaces and leaving your saved layouts and results alone. Add `--dry-run` to see
 what it would do first. The client zip is always
-called `RaceManager.zip`, with no version in the name, so an update overwrites
+called `PhoenixRM Client.zip`, with no version in the name, so an update overwrites
 the old one instead of leaving two copies side by side.
 
 **Three things to get right:**
@@ -202,7 +210,7 @@ pace lap at any time if the field never makes it round.
 **7. Results.** At the flag the server builds a results file, ready for league
 standings, with the cup round it just banked appended if a cup is running. You
 choose where it goes on the **Admin** panel's **Save results** row: **On the
-server** (`Resources/Server/RaceManager/Data/results/`, with the path announced
+server** (`Resources/Server/PhoenixRM Server/Data/results/`, with the path announced
 in chat) and **On admins' PCs**. **Both are off until you turn them on**, so do
 that before the first race you want to keep. Discord is its own row.
 **Reset** clears the session for the next one.

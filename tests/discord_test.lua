@@ -43,7 +43,7 @@ print = function (...)
   printed[#printed + 1] = table.concat(parts, ' ')
 end
 
-local DATA = 'Resources/Server/RaceManager/Data'
+local DATA = 'Resources/Server/PhoenixRM Server/Data'
 local CFG_FILE = DATA .. '/discord.json'
 local JOB = DATA .. '/discord'
 os.remove(CFG_FILE)

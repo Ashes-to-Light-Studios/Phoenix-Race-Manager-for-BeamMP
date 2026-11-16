@@ -73,7 +73,7 @@ end
 -- race engine behind it. tests/ready_test.lua covers calling the grid.
 local function adminLogin(pid) RM_onLogin(pid, '{"password":"phoenix"}'); RM_onSetReadyCheck(pid, '{"on":false}') end
 
-local RESULTS_DIR = 'Resources/Server/RaceManager/Data/results'
+local RESULTS_DIR = 'Resources/Server/PhoenixRM Server/Data/results'
 local function readResults()
   local path = lastChat and lastChat:match('(' .. RESULTS_DIR .. '/[%w%-_%.]+%.txt)')
   if not path then return nil, nil end
@@ -285,7 +285,7 @@ local SIG_B = 'model=etk800|parts=body=etk800_body;engine=etk800_engine|vars=cam
 -- START FROM A KNOWN GARAGE. This section persists to garage.json by design, so
 -- a run that dies partway leaves entries behind and the next run fails its first
 -- four checks for reasons that have nothing to do with the code being tested.
-os.remove('Resources/Server/RaceManager/Data/garage.json')
+os.remove('Resources/Server/PhoenixRM Server/Data/garage.json')
 dofile('server/RaceManager/main.lua')
 onInit()
 adminLogin(1)
@@ -387,7 +387,7 @@ check(rejected[3] ~= nil, 'a model not on the list is still refused')
 check(rejected[3] and rejected[3].detail:find('Model', 1, true),
   'and the refusal names model mode')
 do
-  local f = io.open('Resources/Server/RaceManager/Data/garage.json', 'r')
+  local f = io.open('Resources/Server/PhoenixRM Server/Data/garage.json', 'r')
   local text = f and f:read('*a') or ''
   if f then f:close() end
   check(text:find('"mode":"model"', 1, true) ~= nil or text:find('"mode": "model"', 1, true) ~= nil,
@@ -676,7 +676,7 @@ check(lastGarage.garageMode == 'strict', 'and so does the enforcement mode')
 -- per-entry `partsSig`. It must load, default to the LOOSER mode, and recover
 -- the parts half from the full signature rather than demanding a re-capture:
 -- an upgrade that silently starts rejecting legal tunes is worse than useless.
-local legacy = io.open('Resources/Server/RaceManager/Data/garage.json', 'w')
+local legacy = io.open('Resources/Server/PhoenixRM Server/Data/garage.json', 'w')
 legacy:write('{"version":1,"enforce":true,"list":[{"model":"etk800",'
   .. '"label":"ETK 800 - Legacy","sig":"' .. SIG_A .. '"}]}')
 legacy:close()
@@ -740,8 +740,8 @@ end
 -- series is Parts or Strict and comes back the way it was set up. The
 -- ENFORCEMENT SWITCH DOES NOT, because a load that quietly started or stopped
 -- policing the grid is a far bigger action than the button says.
-os.remove('Resources/Server/RaceManager/Data/Garage/GT3.json')
-os.remove('Resources/Server/RaceManager/Data/Garage/Trucks.json')
+os.remove('Resources/Server/PhoenixRM Server/Data/Garage/GT3.json')
+os.remove('Resources/Server/PhoenixRM Server/Data/Garage/Trucks.json')
 
 RM_onClearGarage(1)
 RM_onSetGarageEnforce(1, '{"enabled":false}')
@@ -870,9 +870,9 @@ check(garageMsg ~= nil and garageMsg.added == false,
 -- Running two classes together used to mean whitelisting the combined field car
 -- by car and keeping that combination as a fourth set -- one that goes stale the
 -- moment any of the real three is corrected. Load one class, add the next.
-os.remove('Resources/Server/RaceManager/Data/Garage/ClassA.json')
-os.remove('Resources/Server/RaceManager/Data/Garage/ClassB.json')
-os.remove('Resources/Server/RaceManager/Data/Garage/StrictSet.json')
+os.remove('Resources/Server/PhoenixRM Server/Data/Garage/ClassA.json')
+os.remove('Resources/Server/PhoenixRM Server/Data/Garage/ClassB.json')
+os.remove('Resources/Server/PhoenixRM Server/Data/Garage/StrictSet.json')
 
 local SIG_C = 'model=covet|parts=body=covet_body|vars=camber=0.0000'
 local SIG_D = 'model=sunburst|parts=body=sunburst_body|vars=camber=0.0000'

@@ -72,7 +72,7 @@ end
 local function savedPaths()
   local out = {}
   for _, m in ipairs(chatLog) do
-    local p = m:match('(Resources/Server/RaceManager/Data/results/[%w%-_%.]+%.txt)')
+    local p = m:match('(Resources/Server/PhoenixRM Server/Data/results/[%w%-_%.]+%.txt)')
     if p then out[#out + 1] = p end
   end
   return out
@@ -135,7 +135,7 @@ check(driver(3).qualiBest ~= nil, 'with the qualifying times on the board')
 -- Cup running, to prove the stopped race banks nothing.
 RM_onCupStart(0, '{"name":"Restart Cup"}')
 local function cupRounds()
-  local f = io.open('Resources/Server/RaceManager/Data/cup.json', 'r')
+  local f = io.open('Resources/Server/PhoenixRM Server/Data/cup.json', 'r')
   local text = f and f:read('*a') or ''
   if f then f:close() end
   return tonumber(text:match('"round"%s*:%s*(%d+)')) or 0

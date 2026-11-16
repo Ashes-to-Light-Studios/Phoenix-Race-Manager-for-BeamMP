@@ -38,8 +38,8 @@ M.MAX_NOTES     = 4000
 M.paths = {
   root   = '',
   plugin = (debug.getinfo(1, 'S').source:sub(2):gsub([[\]], '/'):match('^(.*)/[^/]+$'))
-    or 'Resources/Server/RaceManager',
-  data   = 'Resources/Server/RaceManager/Data',
+    or 'Resources/Server/PhoenixRM Server',
+  data   = 'Resources/Server/PhoenixRM Server/Data',
   attic  = '_attic',
 }
 
@@ -567,31 +567,42 @@ local CLIENT_MUST = {
   'ui/modules/apps/RaceManager/app.js',
 }
 
+-- Where a release keeps its two halves (0.24.0 on: "PhoenixRM Client.zip" and
+-- the "PhoenixRM Server" folder, which also holds the LICENSE).
+M.CLIENT_ZIP  = 'PhoenixRM Client.zip'
+M.SERVER_NAME = 'PhoenixRM Server'
+
 -- A release zip, unpacked and checked. Returns { client = bytes, server = {
--- [name] = bytes } } or nil and why. STRICT: a path this does not know where
--- to put stops the update, rather than installing half a release. Root files
--- (LICENSE) are not installed, as with a hand install.
+-- [name] = bytes }, license = bytes or nil } or nil and why. STRICT: a path
+-- this does not know where to put stops the update, rather than installing
+-- half a release. Root files are not installed, as with a hand install.
 function M.unpackRelease(data, version)
   local entries, err = M.zipEntries(data)
   if not entries then return nil, 'the download is ' .. err end
   local files = { server = {} }
+  local clientPath = 'Client/' .. M.CLIENT_ZIP
+  local serverPath = 'Server/' .. M.SERVER_NAME .. '/'
   for _, e in ipairs(entries) do
     local name = e.name
-    local plugin = name:match('^Server/RaceManager/([%w_%-]+%.lua)$')
+    local inServer = name:sub(1, #serverPath) == serverPath and name:sub(#serverPath + 1) or nil
+    local plugin = inServer and inServer:match('^([%w_%-]+%.lua)$')
+    local license = inServer == 'LICENSE'
     if name:sub(-1) == '/' then
       -- A folder entry.
-    elseif name == 'Client/RaceManager.zip' or plugin then
+    elseif name == clientPath or plugin or license then
       local bytes, why = M.zipRead(data, e)
       if not bytes then return nil, why end
-      if plugin then files.server[plugin] = bytes else files.client = bytes end
+      if plugin then files.server[plugin] = bytes
+      elseif license then files.license = bytes
+      else files.client = bytes end
     elseif name:find('/', 1, true) then
       return nil, 'the release has ' .. tostring(M.cleanText(name, 80))
         .. ', which this updater does not know where to put. Install it by hand'
     end
   end
-  if not files.client then return nil, 'the release has no Client/RaceManager.zip' end
+  if not files.client then return nil, 'the release has no ' .. clientPath end
   local main = files.server['main.lua']
-  if not main then return nil, 'the release has no Server/RaceManager/main.lua' end
+  if not main then return nil, 'the release has no ' .. serverPath .. 'main.lua' end
   local stamp = main:match("\nlocal RM_BUILD = '([^']+)'")
   if stamp ~= version then
     return nil, 'the release says v' .. version .. ' but its main.lua is build '
@@ -604,11 +615,11 @@ function M.unpackRelease(data, version)
     if not fn then return nil, name .. ' in the release does not compile: ' .. tostring(why) end
   end
   local inner, why = M.zipEntries(files.client)
-  if not inner then return nil, 'Client/RaceManager.zip is ' .. why end
+  if not inner then return nil, clientPath .. ' is ' .. why end
   local have = {}
   for _, e in ipairs(inner) do have[e.name] = true end
   for _, must in ipairs(CLIENT_MUST) do
-    if not have[must] then return nil, 'Client/RaceManager.zip has no ' .. must end
+    if not have[must] then return nil, clientPath .. ' has no ' .. must end
   end
   return files
 end
@@ -1045,8 +1056,14 @@ function M.apply(files, version)
   end
   local attic = M.paths.attic .. '/update-' .. host.RM_BUILD .. '-to-' .. version .. '_'
     .. os.date('%Y-%m-%d_%H-%M-%S')
-  local plan = { { path = client .. '/RaceManager.zip', new = files.client,
-    backup = attic .. '/Client/RaceManager.zip' } }
+  local plan = { { path = client .. '/' .. M.CLIENT_ZIP, new = files.client,
+    backup = attic .. '/Client/' .. M.CLIENT_ZIP } }
+  -- The LICENSE travels inside the plugin's folder; it is not a .lua, so BeamMP
+  -- leaves it alone.
+  if files.license then
+    plan[#plan + 1] = { path = plugin .. '/LICENSE', new = files.license,
+      backup = attic .. '/Server/' .. M.SERVER_NAME .. '/LICENSE' }
+  end
   -- Case-blind: on Windows Main.lua IS main.lua, and "removing" it would
   -- delete the file just written.
   local names, shipped = {}, {}
@@ -1061,11 +1078,11 @@ function M.apply(files, version)
   table.sort(names)
   for _, name in ipairs(names) do
     plan[#plan + 1] = { path = plugin .. '/' .. name, new = files.server[name],
-      backup = attic .. '/Server/RaceManager/' .. name }
+      backup = attic .. '/Server/' .. M.SERVER_NAME .. '/' .. name }
   end
 
   host.makeDirectory(at(attic .. '/Client'))
-  host.makeDirectory(at(attic .. '/Server/RaceManager'))
+  host.makeDirectory(at(attic .. '/Server/' .. M.SERVER_NAME))
   for _, p in ipairs(plan) do
     p.old = readFile(at(p.path)) or false
     if p.old and not writeFile(at(p.backup), p.old) then

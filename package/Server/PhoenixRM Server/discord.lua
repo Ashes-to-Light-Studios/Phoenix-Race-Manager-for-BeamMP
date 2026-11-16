@@ -35,7 +35,7 @@ M.ROWS        = 20          -- table rows in a post; the attached file has the r
 M.MAX_ATTACH  = 1024 * 1024
 
 -- Relative to the server's working directory. Tests point these at scratch.
-M.paths = { root = '', data = 'Resources/Server/RaceManager/Data' }
+M.paths = { root = '', data = 'Resources/Server/PhoenixRM Server/Data' }
 
 -- Process calls, as a table so the tests can stand in for them.
 M.sys = { popen = io.popen, execute = os.execute }

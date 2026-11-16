@@ -50,7 +50,7 @@ Util = {
   end,
 }
 
-local RESULTS_DIR = 'Resources/Server/RaceManager/Data/results'
+local RESULTS_DIR = 'Resources/Server/PhoenixRM Server/Data/results'
 os.execute(package.config:sub(1, 1) == '\\'
   and ('rmdir /s /q "' .. RESULTS_DIR:gsub('/', '\\') .. '" 2>nul')
   or  ('rm -rf "' .. RESULTS_DIR .. '"'))

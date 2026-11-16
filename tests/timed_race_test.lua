@@ -91,7 +91,7 @@ end
 local function resultsText()
   local path
   for _, m in ipairs(chatLog) do
-    path = m:match('(Resources/Server/RaceManager/Data/results/[%w%-_%.]+%.txt)') or path
+    path = m:match('(Resources/Server/PhoenixRM Server/Data/results/[%w%-_%.]+%.txt)') or path
   end
   local f = path and io.open(path, 'r')
   if not f then return '' end

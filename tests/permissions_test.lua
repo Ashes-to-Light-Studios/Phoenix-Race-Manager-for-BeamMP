@@ -34,7 +34,7 @@
 --
 -- Run from the repo root: lua5.3 tests/permissions_test.lua
 
-local DATA = 'Resources/Server/RaceManager/Data'
+local DATA = 'Resources/Server/PhoenixRM Server/Data'
 
 local checks, fails = 0, 0
 local function check(cond, msg)

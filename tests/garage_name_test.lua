@@ -46,8 +46,8 @@ Util = {
   end,
 }
 
-local GARAGE = 'Resources/Server/RaceManager/Data/garage.json'
-local SET = 'Resources/Server/RaceManager/Data/Garage/Names Test.json'
+local GARAGE = 'Resources/Server/PhoenixRM Server/Data/garage.json'
+local SET = 'Resources/Server/PhoenixRM Server/Data/Garage/Names Test.json'
 
 dofile('server/RaceManager/main.lua')
 local records = require('records')

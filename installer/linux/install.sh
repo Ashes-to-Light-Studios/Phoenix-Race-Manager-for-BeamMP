@@ -5,9 +5,12 @@
 #   bash PRM-Install.sh /path/to/server  that server
 #
 # ONE FILE: the release is packed onto the end of this script (build.sh). It
-# copies what it replaces into _attic/, writes Resources/Client/RaceManager.zip
-# and the plugin's .lua files, and never touches Resources/Server/RaceManager/
-# Data. The rules are the in-game updater's (server/RaceManager/update.lua).
+# copies what it replaces into _attic/, writes "Resources/Client/PhoenixRM
+# Client.zip" and the plugin's files in "Resources/Server/PhoenixRM Server",
+# and never touches what is in that folder's Data. The rules are the in-game
+# updater's (server/RaceManager/update.lua). An install from before 0.24.0, in
+# Resources/Server/RaceManager and RaceManager.zip, has its Data moved across
+# and the rest moved to _attic/.
 #
 # Run it with bash, never piped into bash: it reads its own file to find the
 # release. No set -u: bash before 4.4 calls an empty array unbound.
@@ -61,7 +64,9 @@ res=$(sed -n 's/^[[:space:]]*ResourceFolder[[:space:]]*=[[:space:]]*"\([^"]*\)".
 res=${res:-Resources}
 case $res in /*) ;; *) res="$server/$res" ;; esac
 client="$res/Client"
-plugin="$res/Server/RaceManager"
+plugin="$res/Server/PhoenixRM Server"
+# Where the plugin lived before 0.24.0.
+old_plugin="$res/Server/RaceManager"
 
 tmp=$(mktemp -d 2>/dev/null) || die "could not make a temporary folder"
 trap 'rm -rf "$tmp"' EXIT
@@ -69,12 +74,13 @@ start=$(awk '/^__PRM_PAYLOAD__$/ { print NR + 1; exit }' "$0")
 [ -n "$start" ] || die "this installer has no release in it. Download it again."
 tail -n +"$start" "$0" | base64 -d 2>/dev/null | tar -xzf - -C "$tmp" 2>/dev/null \
   || die "this installer is damaged. Download it again."
-[ -f "$tmp/Client/RaceManager.zip" ] && [ -f "$tmp/Server/RaceManager/main.lua" ] \
+[ -f "$tmp/Client/PhoenixRM Client.zip" ] && [ -f "$tmp/Server/PhoenixRM Server/main.lua" ] \
   || die "this installer is damaged. Download it again."
 
 old=$(sed -n "s/^local RM_BUILD = '\([^']*\)'.*/\1/p" "$plugin/main.lua" 2>/dev/null | head -n 1)
+[ -n "$old" ] || old=$(sed -n "s/^local RM_BUILD = '\([^']*\)'.*/\1/p" "$old_plugin/main.lua" 2>/dev/null | head -n 1)
 attic="$server/_attic/install-${old:-none}-to-${VERSION}_$(date +%Y-%m-%d_%H-%M-%S)"
-mkdir -p "$attic/Client" "$attic/Server/RaceManager" "$client" "$plugin" \
+mkdir -p "$attic/Client" "$attic/Server/PhoenixRM Server" "$client" "$plugin" \
   || die "could not make folders in $server"
 
 # Every change is recorded so a failure can put each file back.
@@ -85,6 +91,7 @@ rollback() {
   local i lost=0
   for (( i = ${#kinds[@]} - 1; i >= 0; i-- )); do
     if [ "${kinds[i]}" = restore ]; then cp -p "${froms[i]}" "${tos[i]}" 2>/dev/null || lost=1
+    elif [ "${kinds[i]}" = moveback ]; then mv "${tos[i]}" "${froms[i]}" 2>/dev/null || lost=1
     else rm -f "${tos[i]}" 2>/dev/null || lost=1; fi
   done
   return $lost
@@ -107,18 +114,33 @@ put() {
   written+=("${2#"$server"/}")
 }
 
-put "$tmp/Client/RaceManager.zip" "$client/RaceManager.zip" "$attic/Client/RaceManager.zip"
-for f in "$tmp"/Server/RaceManager/*.lua; do
-  put "$f" "$plugin/${f##*/}" "$attic/Server/RaceManager/${f##*/}"
+# THE DATA OF AN INSTALL FROM BEFORE 0.24.0 comes across first, whole, before
+# the old folder is moved out below: tracks, cup, garage, settings, results.
+# Only into a folder that has no Data yet.
+data_moved=''
+if [ ! -e "$plugin/Data" ] && [ -d "$old_plugin/Data" ]; then
+  mv "$old_plugin/Data" "$plugin/Data" 2>/dev/null \
+    || fail "could not move ${old_plugin#"$server"/}/Data to ${plugin#"$server"/}/Data"
+  remember moveback "$old_plugin/Data" "$plugin/Data"
+  data_moved=1
+fi
+
+put "$tmp/Client/PhoenixRM Client.zip" "$client/PhoenixRM Client.zip" "$attic/Client/PhoenixRM Client.zip"
+for f in "$tmp/Server/PhoenixRM Server"/*.lua; do
+  put "$f" "$plugin/${f##*/}" "$attic/Server/PhoenixRM Server/${f##*/}"
 done
+# The LICENSE travels in the plugin's folder (BeamMP loads only .lua files).
+if [ -f "$tmp/Server/PhoenixRM Server/LICENSE" ]; then
+  put "$tmp/Server/PhoenixRM Server/LICENSE" "$plugin/LICENSE" "$attic/Server/PhoenixRM Server/LICENSE"
+fi
 # A plugin file this release no longer has: BeamMP runs every .lua in the
 # folder, so it would keep running beside the new ones.
 for f in "$plugin"/*.lua; do
   [ -f "$f" ] || continue
   n=${f##*/}
-  [ -f "$tmp/Server/RaceManager/$n" ] && continue
-  cp -p "$f" "$attic/Server/RaceManager/$n" 2>/dev/null || fail "could not back up $f"
-  remember restore "$attic/Server/RaceManager/$n" "$f"
+  [ -f "$tmp/Server/PhoenixRM Server/$n" ] && continue
+  cp -p "$f" "$attic/Server/PhoenixRM Server/$n" 2>/dev/null || fail "could not back up $f"
+  remember restore "$attic/Server/PhoenixRM Server/$n" "$f"
   rm -f "$f" 2>/dev/null || fail "could not remove $f"
   moved+=("${f#"$server"/} (not part of PRM $VERSION)")
 done
@@ -136,19 +158,21 @@ holds_client() {
     python3 -c 'import sys, zipfile; sys.exit("lua/ge/extensions/raceManager.lua" not in zipfile.ZipFile(sys.argv[1]).namelist())' "$1" 2>/dev/null
   fi
 }
-# A second client zip: BeamMP sends every zip in Client to every player.
+# A second client zip: BeamMP sends every zip in Client to every player. The
+# one from before 0.24.0, RaceManager.zip, is one of them now.
 shopt -s nocaseglob nullglob
-for z in "$client"/RaceManager*.zip; do
-  [ "${z##*/}" = RaceManager.zip ] && continue
-  holds_client "$z" && move_out "$z" "$attic/Client/${z##*/}" "a second copy of the PRM client"
+for z in "$client"/RaceManager*.zip "$client"/PhoenixRM*.zip; do
+  [ "${z##*/}" = "PhoenixRM Client.zip" ] && continue
+  holds_client "$z" && move_out "$z" "$attic/Client/${z##*/}" "an older or second copy of the PRM client"
 done
 shopt -u nocaseglob
 # Another plugin folder: BeamMP runs every folder in Server.
 for d in "$res"/Server/*/; do
   d=${d%/}
   [ "$d" -ef "$plugin" ] && continue
+  if [ "$d" -ef "$old_plugin" ]; then what="the install from before 0.24.0"; else what="another Race Manager plugin"; fi
   [ -f "$d/main.lua" ] && grep -q 'RM_BUILD' "$d/main.lua" && grep -qF '[RaceManager]' "$d/main.lua" \
-    && move_out "$d" "$attic/Server/${d##*/}" "another Race Manager plugin"
+    && move_out "$d" "$attic/Server/${d##*/}" "$what"
 done
 # Packages up to 0.6.0 spelled the folders in lower case, which BeamMP never reads.
 if [ -d "$res/server/RaceManager" ] && ! [ "$res/server" -ef "$res/Server" ]; then
@@ -171,7 +195,11 @@ shopt -u nullglob
   fi
   for n in "${notes[@]}"; do say "$n"; done
   say "Anything replaced is in ${attic#"$server"/}."
-  say "Tracks, results and settings in ${plugin#"$server"/}/Data were not touched."
+  if [ -n "$data_moved" ]; then
+    say "Tracks, results and settings were moved from ${old_plugin#"$server"/}/Data to ${plugin#"$server"/}/Data."
+  else
+    say "Tracks, results and settings in ${plugin#"$server"/}/Data were not touched."
+  fi
   say ""
   say "Next:"
   say "  1. Start the server, or restart it if it is running."

@@ -19,8 +19,8 @@ $zipPath = (Resolve-Path $Zip).Path
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
 try {
-  $entry = $archive.GetEntry('Server/RaceManager/main.lua')
-  if (-not $entry) { throw "$Zip has no Server/RaceManager/main.lua" }
+  $entry = $archive.GetEntry('Server/PhoenixRM Server/main.lua')
+  if (-not $entry) { throw "$Zip has no Server/PhoenixRM Server/main.lua" }
   $reader = New-Object System.IO.StreamReader($entry.Open())
   try { $main = $reader.ReadToEnd() } finally { $reader.Dispose() }
 } finally { $archive.Dispose() }

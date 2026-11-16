@@ -39,7 +39,7 @@ M.paths = {
   root   = '',
   config = 'ServerConfig.toml',
   store  = 'custom_maps',
-  data   = 'Resources/Server/RaceManager/Data',
+  data   = 'Resources/Server/PhoenixRM Server/Data',
 }
 
 -- Process control, as a table so the tests can stand in for it. `exit` is

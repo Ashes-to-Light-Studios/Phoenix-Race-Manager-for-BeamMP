@@ -32,6 +32,20 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   Parts and Strict: any parts and any tune of an approved vehicle are allowed,
   and only a different vehicle is refused.
 
+#### Changed
+
+- **The install folders are renamed**, so you can see what is installed:
+  `Resources/Client/PhoenixRM Client.zip` and `Resources/Server/PhoenixRM
+  Server/`, which now also holds the LICENSE. They were `RaceManager.zip` and
+  `Resources/Server/RaceManager/`. **Your data comes with you:**
+  - The installers move the old `Data` folder (tracks, cup, garage, settings,
+    results) into the new folder, and the old copy to `_attic/`.
+  - Unzipped by hand, the new plugin does the same at its first start, then asks
+    you to **restart once**, because that start ran both copies.
+  - **Update and restart** from the game cannot make this jump: the 0.23.x
+    updater refuses the new layout and changes nothing. Use the zip or an
+    installer this once.
+
 #### Fixed
 
 - **The Branch tab's "+ Branch Gate" button was always greyed out**, so branch

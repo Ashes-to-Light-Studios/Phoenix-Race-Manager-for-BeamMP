@@ -87,8 +87,8 @@ local function check(cond, msg)
   if not cond then fails = fails + 1; print('FAIL: ' .. msg) end
 end
 
-local RESULTS_DIR = 'Resources/Server/RaceManager/Data/results'
-local CONFIG = 'Resources/Server/RaceManager/Data/config.json'
+local RESULTS_DIR = 'Resources/Server/PhoenixRM Server/Data/results'
+local CONFIG = 'Resources/Server/PhoenixRM Server/Data/config.json'
 -- The same shape raceManager.onResultsFile keeps; anything else is renamed.
 local CLIENT_NAME = '^[A-Za-z_]*results_[%d_%-]+%.txt$'
 
