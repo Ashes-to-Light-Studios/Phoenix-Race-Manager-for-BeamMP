@@ -363,6 +363,7 @@ maps.probe = function ()
     cmd = '"C:\\BeamNG Server\\BeamMP-Server.exe"', cwd = 'C:\\BeamNG Server',
     parent = 'explorer.exe', args = {}, mt = {} }
 end
+maps.hostingCache = { container = false, panel = false }
 
 local function tick(n) for _ = 1, n or 1 do RM_UpdateTick() end end
 
@@ -394,10 +395,32 @@ end
 -- ---------------------------------------------------------------------------
 -- Before anyone logs in, as at boot: a login on a server that has not looked
 -- yet starts a look of its own.
+CFG.onlineFeatures = true
 CFG.updateCheck = false
 update.warm()
 check(not update.pendingCheck, 'updateCheck false: GitHub is never asked')
 CFG.updateCheck = true
+
+-- OFF AS SHIPPED: a game host cut a server off the internet after its startup
+-- check, so nothing reaches the network until config.json says onlineFeatures.
+CFG.onlineFeatures = false
+CFG.updateCheck = true
+update.warm()
+check(not update.pendingCheck, 'onlineFeatures off: startup does not ask GitHub')
+update.onLogin()
+check(update.job == nil and not update.pendingCheck, 'nor does an admin logging in')
+do
+  local before = #spawned
+  local ok, why = update.startCheck('test')
+  check(not ok and why:find('onlineFeatures', 1, true) and update.job == nil and #spawned == before,
+    'nor anything else: the check is refused and nothing is started')
+  local snap = update.snapshot(1)
+  check(snap.online == false and snap.enabled == false
+    and snap.releases == 'https://github.com/' .. REPO .. '/releases/latest',
+    'the Admin tab shows updates off, and where to download one by hand')
+end
+CFG.onlineFeatures = true
+check(update.snapshot(1).online == true, 'turned on in config.json, the server may go online')
 
 update.warm()
 check(update.pendingCheck and update.job == nil, 'at boot the check waits for the first tick')
@@ -452,6 +475,18 @@ check(update.release.error and update.release.error:find('an hour')
 -- ---------------------------------------------------------------------------
 -- 9. Who may start one, and when
 -- ---------------------------------------------------------------------------
+do
+  CFG.onlineFeatures = false
+  local before = #spawned
+  RM_onUpdateStart(ADMIN, '{"version":"9.9.9"}')
+  check(update.state.phase == 'idle' and update.job == nil and #spawned == before
+    and (update.lastError or ''):find('onlineFeatures', 1, true),
+    'with onlineFeatures off even an admin cannot start one, and is told why')
+  RM_onUpdateCheck(ADMIN)
+  check(update.job == nil and #spawned == before, 'nor Check now')
+  CFG.onlineFeatures = true
+  update.lastError = nil
+end
 RM_onUpdateStart(DRIVER, '{"version":"9.9.9"}')
 check(update.state.phase == 'idle', 'a driver cannot start an update')
 RM_onUpdateStart(MOD, '{"version":"9.9.9"}')

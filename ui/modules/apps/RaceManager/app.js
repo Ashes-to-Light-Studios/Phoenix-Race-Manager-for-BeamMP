@@ -4265,7 +4265,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           case 'relaunch': return 'Restart: Race Manager starts the server again.';
           case 'exit':     return 'Restart: your service manager, when the server stops.';
           case 'manual':   return 'Restart: by hand.';
-          default:         return 'Restart: the Management Tool if it started the server, otherwise Race Manager.';
+          default:
+            // auto, in a container: the old server's exit stops it (maps.lua).
+            if ($scope.maps.container) { return 'Restart: your host, when the server stops.'; }
+            return 'Restart: the Management Tool if it started the server, otherwise Race Manager.';
         }
       };
 
@@ -4317,6 +4320,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.updateStatusText = function () {
         var u = $scope.prmUpdate;
         if (!u) { return ''; }
+        if (u.online === false) { return 'In-game updates are off: this server does not go online by itself.'; }
         if (!u.enabled) { return 'Update checks are off (updateCheck in config.json).'; }
         if (u.checking) { return 'Asking GitHub for the newest release…'; }
         if ($scope.updateAvailable()) {

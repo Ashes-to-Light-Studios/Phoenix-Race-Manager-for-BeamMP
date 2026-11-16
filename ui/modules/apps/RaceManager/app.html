@@ -645,7 +645,8 @@
     <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-end': mapsVoted(false)}" ng-click="mapsVote(false)">No</button>
   </div>
 
-  <!-- A NEWER RELEASE IS OUT: the server asked GitHub at startup. Admins only,
+  <!-- A NEWER RELEASE IS OUT: the server asked GitHub at startup (Windows) or on
+       Check now. Admins only,
        never over a session. It disconnects everyone and restarts the server,
        so it asks twice; Not now hides it until the app next loads. -->
   <div class="rm-update-ask" ng-if="updateAskShowing()">
@@ -3359,12 +3360,30 @@
       </span>
       <span class="rm-maps-error" ng-if="prmUpdate.error">{{ prmUpdate.error }}</span>
       <span class="rm-maps-error" ng-if="prmUpdate.checkError && prmUpdate.enabled">Could not check: {{ prmUpdate.checkError }}</span>
+      <!-- OFFLINE (the default): the server never goes online by itself, so
+           updating is by hand. A game host cut a server off the internet after
+           its own update check (update.lua, M.online). -->
+      <div class="rm-update-steps" ng-if="prmUpdate.online === false">
+        <div>To update by hand:</div>
+        <div>1. Download the RaceManager zip from {{ prmUpdate.releases || 'the GitHub Releases page' }}</div>
+        <div>2. Stop the server.</div>
+        <div>3. Upload the zip into the server's Resources folder and extract it there, replacing the old files.</div>
+        <div>4. Delete the zip and start the server.</div>
+        <div class="rm-layouts-hint">
+          Tracks, results and settings are kept. On your own machine, PRM-Setup.exe
+          (Windows) or PRM-Install.sh (Linux) does the same.
+        </div>
+        <div class="rm-layouts-hint">
+          Server on your own machine? Set onlineFeatures to true in config.json
+          for Check now and Update and restart.
+        </div>
+      </div>
       <span class="rm-layouts-hint" ng-if="prmUpdate.last">
         Last update: v{{ prmUpdate.last.from }} to v{{ prmUpdate.last.to }}<span ng-if="prmUpdate.last.at">,
         {{ updateWhen(prmUpdate.last.at) }}</span>{{ prmUpdate.last.ok ? ', done' : ', did not take' }}.
       </span>
       <div class="rm-update-notes" ng-if="updateUi.notes && prmUpdate.notes">{{ prmUpdate.notes }}</div>
-      <span class="rm-layouts-hint">
+      <span class="rm-layouts-hint" ng-if="prmUpdate.online !== false">
         Players get the new version as they rejoin. The files it replaces are
         kept in the server's _attic folder.
       </span>
@@ -3374,7 +3393,16 @@
     <!-- DISCORD. An optional add-on (server/RaceManager/discord.lua): no row
          on a server without it. The URL is typed into a password field and
          never sent back, so a streamed panel does not leak it. -->
-    <div class="rm-adminbar rm-discord" ng-if="isAdmin && prmDiscord">
+    <!-- Off until the owner sets onlineFeatures: a post is the same curl that
+         got a server cut off on a game host (discord.lua, M.online). -->
+    <div class="rm-adminbar rm-discord" ng-if="isAdmin && prmDiscord && prmDiscord.online === false">
+      <span class="rm-adminbar-label">Discord</span>
+      <span class="rm-layouts-hint">
+        Off: this server does not go online by itself. Server on your own
+        machine? Set onlineFeatures to true in config.json.
+      </span>
+    </div>
+    <div class="rm-adminbar rm-discord" ng-if="isAdmin && prmDiscord && prmDiscord.online !== false">
       <span class="rm-adminbar-label">Discord</span>
       <span class="rm-layouts-hint">{{ discordStatusText() }}</span>
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-start': !prmDiscord.configured}"
@@ -3410,7 +3438,7 @@
         Last post: {{ prmDiscord.last.what }}, {{ updateWhen(prmDiscord.last.at) }}.
       </span>
     </div>
-    <div class="rm-adminbar" ng-if="isAdmin && prmDiscord && prmDiscord.configured">
+    <div class="rm-adminbar" ng-if="isAdmin && prmDiscord && prmDiscord.configured && prmDiscord.online !== false">
       <span class="rm-adminbar-label">Post</span>
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-start': discordOn('race')}"
               ng-disabled="!prmDiscord.canEdit" ng-click="discordToggle('race')"
@@ -6490,6 +6518,16 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     padding: 4px 6px;
+  }
+  /* Updating by hand: its own line under the row, the steps one per line. */
+  .rm-update-steps {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 10px;
+    color: #c8ccd0;
+    overflow-wrap: anywhere;
   }
   /* Lap records: the garage's band, in the purple timing screens use for a best. */
   .rm-records {

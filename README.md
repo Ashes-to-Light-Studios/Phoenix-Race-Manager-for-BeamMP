@@ -50,11 +50,17 @@ the server's `_attic/` folder, move out leftovers of older installs that would
 run beside the new one, and never touch your tracks, results or settings. Run
 either again to update.
 
-**Updating** is also done from the game once a server runs a release that has
-the updater: at each start the server asks GitHub for a newer release, an admin
-is asked when they log in, and **Update and restart** on the **Admin** tab
-downloads and checks it, keeps the old files in `_attic/`, swaps the new ones in
-and restarts the server. See [Updating from the Admin
+**Updating on a hosting panel:** download the new `RaceManager-vX.Y.Z.zip`, stop
+the server, upload the zip into `Resources/` and extract it there over the old
+files, delete the zip and start the server. Your tracks, results and settings
+are kept.
+
+**Updating from the game** is off as shipped, because some game hosts cut a
+server off the internet when it goes online by itself and every player who
+joins is kicked. On a server you run on your own machine, set
+`"onlineFeatures": true` in `Resources/Server/RaceManager/Data/config.json`:
+the server then looks for a newer release at each start, and **Update and
+restart** on the **Admin** tab installs it. See [Updating from the Admin
 tab](docs/REFERENCE.md#updating-from-the-admin-tab).
 
 Building from source instead? `python3 tools/deploy.py` writes the package and
@@ -231,11 +237,11 @@ expect without touching any of it.
 | **[Demo Derby](docs/REFERENCE.md#demo-derby-parallel-game-mode)** | A separate last-man-standing mode with its own arena, timers and results, fully isolated from the racing. |
 | **[Ready check](docs/REFERENCE.md#the-ready-check)** | Forming a grid, a derby form-up and a drag pass call the drivers instead of teleporting them into place: each presses **Ready**, and the board shows who has. Admins see the count, can Ready All or place one driver, and are asked before starting without somebody. Not ready at the start sits that session or derby out, and is a no-show on the strip. |
 | **[Map switching and votes](docs/REFERENCE.md#switching-maps)** | Change the server's map from the Admin tab, or let drivers vote for one: it passes only at a percentage of the whole lobby you choose, and a race director can lock voting. Map zips move between `custom_maps` and `Resources/Client`, and the server restarts itself onto the new map, under the BeamMP Server Management Tool or started by hand. |
-| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | The server looks for a newer release on GitHub at startup and asks the admin. **Update and restart** downloads it, checks it against GitHub's SHA-256, keeps the old files, swaps the new ones in and restarts the server. Tracks, the cup and results are untouched. |
+| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | For a server on your own machine (`onlineFeatures` in `config.json`): it looks for a newer release on GitHub and asks the admin. **Update and restart** downloads it, checks it against GitHub's SHA-256, keeps the old files, swaps the new ones in and restarts the server. Tracks, the cup and results are untouched. |
 | **[Map display names](docs/REFERENCE.md#map-display-names)** | Show `bark_river_sc` as *Bark River International* in the map menus, the vote and the switch. Display only: no file is renamed. |
 | **[Lap records](docs/REFERENCE.md#lap-records)** | Each driver's fastest lap on every saved layout, per map, kept across restarts and open to everyone. Scored from qualifying and races. An admin can take a time off or clear a board in game, or edit the JSON on the server. |
 | **[Where results go](docs/REFERENCE.md#where-results-go)** | A results file for every race, derby and drag tournament, kept on the server, sent to each admin's PC, both or neither. Two switches on the Admin tab, off until you turn them on. |
-| **[Results on Discord](docs/REFERENCE.md#posting-results-to-discord)** | Paste a channel's webhook URL on the Admin tab and every race, derby and drag tournament posts its results there as it closes, with the full results file attached. Qualifying too if you want it. Off until a webhook is set. |
+| **[Results on Discord](docs/REFERENCE.md#posting-results-to-discord)** | Paste a channel's webhook URL on the Admin tab and every race, derby and drag tournament posts its results there as it closes, with the full results file attached. Qualifying too if you want it. For a server on your own machine (`onlineFeatures` in `config.json`), and off until a webhook is set. |
 | **[Drag racing](docs/REFERENCE.md#drag-racing-parallel-game-mode)** | A tournament ladder down a drag strip: single or double elimination, or a points shootout. Two to eight cars a pass with any number going through, a christmas tree with real red lights, reaction times, elapsed times and trap speeds, and dial-in bracket racing. Scores into the cup on a table of its own. The strip is an ordinary point-to-point layout saved with the type Drag, so the track editor already builds one, and a practice pass lets one driver try it before a field turns up. |
 | **[Broadcast board](docs/REFERENCE.md#broadcast-board-spectators)** | A spectator's board for streaming: the whole field, the drivers who are out and why, cup standings, and click a name to put the camera on that car in orbit. |
 | **[Race Lights (PRM)](docs/REFERENCE.md#race-lights-prm)** | An optional second app with the start lights, the flags and the drag tree in a box you place anywhere on screen. GET READY is a steady caption, so the green is the first thing that changes. Start sounds for the countdown, the green and the tree, mutable from the panel. |
