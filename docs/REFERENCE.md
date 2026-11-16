@@ -2018,9 +2018,9 @@ the line.
 ### Rallycross joker laps
 
 A **joker route** is a second, independent set of checkpoint gates describing
-the alternate rallycross line. Build it in the editor with the **Joker Route**
-tab (gates are drawn violet in the world), and it is saved and loaded together
-with the track layout - one layout carries both routes.
+the alternate rallycross line. Build it in the editor with the **Joker**
+tab and **+ Joker Gate Here** (gates are drawn violet in the world), and it is
+saved and loaded together with the track layout - one layout carries both routes.
 
 **The joker lap cannot be armed on a track that has no joker gates.** The rule
 reclassifies anyone who did not complete the route exactly once, so with no route
@@ -2029,7 +2029,8 @@ never there, and not told why until the results file is written. The toggle is
 grayed out until gates are placed, the server refuses it if asked anyway, and
 loading a track without a joker route switches it back off.
 
-Switch **Joker lap** on in Race settings and the rule is enforced:
+Switch **Joker lap** to **✓ Enabled** under **Race ▾ → Rules** and the rule is
+enforced:
 
 - The joker route must be completed **exactly once per race**.
 - **Lap 1 is closed**: any joker attempt on the opening lap is invalidated by
