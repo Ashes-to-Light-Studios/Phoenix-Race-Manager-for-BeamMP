@@ -101,6 +101,12 @@ angular.module('beamng.apps')
       // The free pass: the rule, and the driver who took it this caution.
       $scope.luckyDog = false;
       $scope.cautionLucky = null;
+      // How a caution freezes the order: 'line' (race back to it) or 'call'
+      // (where the field is when it is called).
+      $scope.cautionMode = 'line';
+      // Passes made under caution this race, for race control:
+      // [{ passer, passed, lap, restored }].
+      $scope.cautionPasses = [];
       $scope.heatLaps = 0;
       $scope.heatDraw = 'quali';
       // Module 6: the heat program.
@@ -2111,6 +2117,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.restartPending = !!data.restartPending;
           $scope.luckyDog = !!data.luckyDog;
           $scope.cautionLucky = data.cautionLucky || null;
+          $scope.cautionMode = data.cautionMode === 'call' ? 'call' : 'line';
+          // THROUGH toArray: nil while there are none, {} if Lua sends it empty.
+          $scope.cautionPasses = toArray(data.cautionPasses);
           // Re-seeded only when the server's value MOVED, so typing survives.
           if ($scope.heatCount !== (data.heatCount || 0)) {
             $scope.settingsUi.heats = data.heatCount || 0;
@@ -4096,7 +4105,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
             + 'drive anywhere and nobody still racing can touch you.';
         }
         if ($scope.driverFlag === 'red') { return 'Red flag: stop where you are and wait'; }
-        if ($scope.driverFlag === 'yellow') { return 'Yellow flag: caution, race back to the line'; }
+        if ($scope.driverFlag === 'yellow') {
+          // Three kinds of yellow, and only one of them is raced back to.
+          if ($scope.cautionPending) { return 'Yellow flag: caution, race back to the line'; }
+          if ($scope.caution) { return 'Yellow flag: caution, positions frozen. Hold your place.'; }
+          return 'Yellow flag: hazard on track, take care';
+        }
         if ($scope.driverFlag === 'white') { return 'White flag: last lap'; }
         if ($scope.driverFlag === 'blue') {
           return 'Blue flag: a car a lap up is close behind you. Hold your line '
@@ -4585,6 +4599,22 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // caution and the board stays frozen.
       $scope.cancelRestart = function () {
         bngApi.engineLua('raceManager.cancelRestart()');
+      };
+      // The caution rule, for the next caution called (refused while one is out).
+      $scope.setCautionMode = function (mode) {
+        if (mode !== 'line' && mode !== 'call') { return; }
+        bngApi.engineLua('raceManager.setCautionMode(' + luaStr(mode) + ')');
+      };
+      // What the Caution button and the frozen badge say, by the rule.
+      $scope.cautionButtonTitle = function () {
+        return $scope.cautionMode === 'call'
+          ? 'Full-course yellow. Positions freeze where the field is right now; a pass under it does not count.'
+          : 'Full-course yellow. The field races back to the line and positions lock as each driver completes the lap the leader is on.';
+      };
+      $scope.cautionFrozenTitle = function () {
+        return $scope.cautionMode === 'call'
+          ? 'Full-course caution: hold position, no overtaking. Places are frozen where the field was when it was called.'
+          : 'Full-course caution: hold position, no overtaking. Places are locked in the order the field came back to the line.';
       };
       // The free pass rule, for the next caution called.
       $scope.toggleLuckyDog = function () {

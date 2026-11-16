@@ -231,6 +231,9 @@ local session = {
   --   lappingAhead  the car close ahead is a lap or more down.
   beingLapped  = false,
   lappingAhead = false,
+  -- Off our own row too: the cars we passed under caution and have not given
+  -- back (names), or nil.
+  ucPassed     = nil,
   -- A restart is called and the green falls as the leader reaches the line.
   restartPending = false,
   -- The heat program: a heat can run its own distance (effectiveLapTarget).
@@ -1405,6 +1408,12 @@ local function stickyMessage()
   end
   if session.cautionPending then
     return 'caution', 'CAUTION - race back to the line. Positions lock as you complete this lap.'
+  end
+  -- A pass under yellow to undo: more urgent than holding station, and the
+  -- server keeps it on our row until the place is back.
+  if session.caution and session.ucPassed then
+    return 'ucpass', 'GIVE THE PLACE BACK to ' .. session.ucPassed
+      .. ': you passed under caution, and it does not count.'
   end
   if session.caution then
     return 'caution', 'CAUTION - hold position, no overtaking. Places are frozen.'
@@ -8084,8 +8093,13 @@ local function onServerUpdate(rawData)
       pushNotice('flag', 'RED FLAG',
         { sub = 'Stop where you are and wait', color = 'red' })
     elseif session.raceFlag == 'yellow' then
-      pushNotice('flag', 'YELLOW FLAG',
-        { sub = 'Caution: race back to the line', color = 'yellow' })
+      -- Three yellows, three instructions. A caution frozen at the call is
+      -- official in the same update, so it must not be told to race back.
+      pushNotice('flag', 'YELLOW FLAG', {
+        sub = session.cautionPending and 'Caution: race back to the line'
+          or session.caution and 'Caution: positions frozen, hold your place'
+          or 'Hazard on track, take care',
+        color = 'yellow' })
     else
       pushNotice('flag', 'GREEN FLAG', { sub = 'Racing', color = 'green' })
     end
@@ -8195,7 +8209,9 @@ local function onServerUpdate(rawData)
   local myId = localServerId()
   local wasLapped  = session.beingLapped
   local wasLapping = session.lappingAhead
+  local wasPassed  = session.ucPassed
   session.beingLapped, session.lappingAhead = false, false
+  session.ucPassed = nil
   session.myHeat = nil
   -- Our status and slot, for the Ready button ('called': the grid waits on us).
   local wasStatus = session.myStatus
@@ -8209,6 +8225,7 @@ local function onServerUpdate(rawData)
         -- The blue flag rides on the row: a fact about one driver.
         session.beingLapped  = d.blue == true
         session.lappingAhead = d.lapping == true
+        session.ucPassed     = type(d.ucPassed) == 'string' and d.ucPassed or nil
         session.myHeat       = tonumber(d.heat)
         break
       end
@@ -8220,6 +8237,12 @@ local function onServerUpdate(rawData)
     pushNotice('flag', 'BLUE FLAG',
       { sub = 'Faster car a lap up behind you - let them by', color = 'blue' })
     if M.lightsMoment then M.lightsMoment('blue') end
+  end
+  -- Passed under caution: told on the edge, and again for each new car. The
+  -- sticky line holds it until the place is back.
+  if session.ucPassed and session.ucPassed ~= wasPassed and sessionRunning() then
+    pushNotice('flag', 'GIVE THE PLACE BACK',
+      { sub = 'You passed ' .. session.ucPassed .. ' under caution', color = 'yellow' })
   end
   -- The other half is a heads-up, not a flag: on the strip.
   if session.lappingAhead and not wasLapping and sessionRunning() then
@@ -9070,6 +9093,14 @@ function M.setLuckyDog(enabled)
   end
 end
 
+-- How the next caution freezes the order: 'line' or 'call'.
+function M.setCautionMode(mode)
+  if mode ~= 'line' and mode ~= 'call' then return end
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetCautionMode', jsonEncode({ mode = mode }))
+  end
+end
+
 -- The heat program: count, transfer, and the heat distance.
 function M.setHeats(count, transfer, laps)
   if inMultiplayer() then
@@ -9489,6 +9520,7 @@ local function resetToIdle(reason)
   session.restartPending  = false
   session.beingLapped     = false
   session.lappingAhead    = false
+  session.ucPassed        = nil
   session.heatCount       = 0
   session.heatCurrent     = 0
   session.heatLaps        = 0

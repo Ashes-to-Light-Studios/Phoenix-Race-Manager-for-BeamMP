@@ -229,7 +229,7 @@
     <span class="rm-pace-badge" ng-if="cautionPending"
           title="The yellow is out and the field is racing back to the line. Positions lock as you complete this lap, on the lap the leader is on.">CAUTION &middot; RACE BACK TO THE LINE</span>
     <span class="rm-pace-badge" ng-if="caution &amp;&amp; !restartPending"
-          title="Full-course caution: hold position, no overtaking. Places are locked in the order the field came back to the line.">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
+          title="{{ cautionFrozenTitle() }}">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
     <span class="rm-restart-badge" ng-if="caution &amp;&amp; restartPending &amp;&amp; !greenReady"
           title="A restart is called: GET READY comes as the restart leader nears the line, then the green at a random point before it.">RESTART THIS LAP &middot; GREEN ON THE RUN IN</span>
     <!-- ONE BADGE FOR THE WHOLE FORMATION LAP: what it is, what to do, and that
@@ -791,7 +791,7 @@
          that also restarts, is offering to do a thing that is already done. -->
     <button class="rm-btn rm-btn-caution rm-btn-fcy" ng-click="callCaution()"
             ng-if="cautionAvailable() &amp;&amp; !caution &amp;&amp; !cautionPending"
-            title="Full-course yellow. The field races back to the line and positions lock as each driver completes the lap the leader is on.">Caution</button>
+            title="{{ cautionButtonTitle() }}">Caution</button>
     <!-- Called, waiting on the leader. Deliberately NOT a button: there is
          nothing useful to press between the call and the leader taking the
          line, and a second press of Caution would only count a second yellow. -->
@@ -816,6 +816,17 @@
     </span>
     <button class="rm-btn rm-btn-reset" ng-click="resetLeaderboard()"
             title="Clear the session for the next one, qualifying included. A race under way is ended and saved first. To run a race again on the same grid, use Restart from grid.">Reset</button>
+  </div>
+  <!-- PASSES UNDER CAUTION, for race control. Every one this race, given back or
+       not: the board already ignores them while the yellow is out, but the
+       green thaws it back to the road, so one not given back is a place kept.
+       Nothing here penalises anybody; it is what a steward needs to. -->
+  <div class="rm-uc-passes" ng-if="isAdmin &amp;&amp; cautionPasses.length">
+    <span class="rm-uc-title">Passed under caution</span>
+    <span class="rm-uc-pass" ng-repeat="p in cautionPasses track by $index"
+          ng-class="{'rm-uc-restored': p.restored}">
+      {{ p.passer }} on {{ p.passed }} &middot; lap {{ p.lap }} &middot; {{ p.restored ? 'given back' : 'not given back' }}
+    </span>
   </div>
 
   <!-- ================= Derby controls (derby mode, admin only) ===========
@@ -1086,6 +1097,25 @@
       </button>
       <span class="rm-setting-val" ng-if="luckyDog">
         Lucky dog &middot; one car per caution, the highest placed a lap down
+      </span>
+    </span>
+    <!-- THE CAUTION RULE. Racing back to the line is the default; a league that
+         freezes the field where it stands picks the other. Locked while a
+         caution is out (the server refuses it too): half a field locked one
+         way and half the other is no order at all. -->
+    <span class="rm-setting" title="How a caution freezes the running order.">
+      <label>Caution</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': cautionMode === 'line'}"
+              ng-click="setCautionMode('line')" ng-disabled="!isAdmin || caution || cautionPending"
+              title="The field races back to the line, and each car's place locks as it completes the leader's lap.">Race back to the line</button>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': cautionMode === 'call'}"
+              ng-click="setCautionMode('call')" ng-disabled="!isAdmin || caution || cautionPending"
+              title="Positions freeze where the field is the moment Caution is pressed. No racing back.">Freeze at the call</button>
+      <span class="rm-setting-val" ng-if="!caution &amp;&amp; !cautionPending">
+        Passes under yellow never count, and the driver and race control are told
+      </span>
+      <span class="rm-setting-warn" ng-if="caution || cautionPending">
+        Fixed until the restart: this caution runs under the rule it was called under.
       </span>
     </span>
     <!-- Module 2: rallycross joker lap -->
@@ -4241,7 +4271,7 @@
     <span class="rm-pace-badge" ng-if="cautionPending"
           title="The yellow is out and the field is racing back to the line. Positions lock as you complete this lap, on the lap the leader is on.">CAUTION &middot; RACE BACK TO THE LINE</span>
     <span class="rm-pace-badge" ng-if="caution &amp;&amp; !restartPending"
-          title="Full-course caution: hold position, no overtaking. Places are locked in the order the field came back to the line.">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
+          title="{{ cautionFrozenTitle() }}">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
     <span class="rm-restart-badge" ng-if="caution &amp;&amp; restartPending &amp;&amp; !greenReady"
           title="A restart is called: GET READY comes as the restart leader nears the line, then the green at a random point before it.">RESTART THIS LAP &middot; GREEN ON THE RUN IN</span>
     <!-- ONE BADGE FOR THE WHOLE FORMATION LAP: what it is, what to do, and that
@@ -4849,7 +4879,9 @@
                    ng-blur="pinGridSlot(row)"
                    title="Type a starting slot and press Enter to pin this driver to it">
           </td>
-          <td class="rm-col-name" title="{{ driverName(row) }}{{ realName(row) ? ' (' + realName(row) + ')' : '' }}">{{ driverName(row) }}</td>
+          <td class="rm-col-name" title="{{ driverName(row) }}{{ realName(row) ? ' (' + realName(row) + ')' : '' }}">{{ driverName(row) }}<span
+              class="rm-ucpass" ng-if="row.ucPassed"
+              title="Passed {{ row.ucPassed }} under caution and has not given the place back. The board keeps the frozen order until the green.">&#9888; owes a place</span></td>
           <td class="rm-col-lap" ng-if="!pointToPoint" title="{{ (row.outLap && sessionKind === 'quali') ? 'Out lap: not timed, not counted' : (row.cpCleared ? row.cpCleared + ' checkpoint(s) cleared this lap' : '') }}">{{ lapLabel(row) }}</td>
           <td class="rm-col-lap" ng-if="pointToPoint" title="Checkpoints cleared of the stage's total">{{ stageProgress(row) }}</td>
           <!-- Fastest lap of the session, in gold. A plain equality test per
@@ -6327,6 +6359,28 @@
   .rm-entryset { display: inline-flex; gap: 4px; }
   .rm-btn-redflag { border-color: rgba(255, 82, 82, 0.85); color: #ff8a8a; }
   .rm-btn-caution { border-color: rgba(251, 188, 5, 0.85); color: #fdd663; }
+  /* A pass under caution: amber like the caution, on the passer's row. */
+  .rm-ucpass {
+    margin-left: 6px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #1a1a1a;
+    background: #fdd663;
+  }
+  .rm-uc-passes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-top: 1px solid rgba(251, 188, 5, 0.35);
+  }
+  .rm-uc-title { font-weight: 700; color: #fdd663; }
+  .rm-uc-pass { color: #ff8a65; }
+  .rm-uc-restored { color: var(--rm-muted, #9aa0a6); }
   /* The full-course yellow and the restart out of it. Heavier than the advisory
      flag buttons beside them, because they change what the race IS rather than
      what is being shown to it. */

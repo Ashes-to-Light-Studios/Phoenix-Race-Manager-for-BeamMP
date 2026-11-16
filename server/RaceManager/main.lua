@@ -70,6 +70,11 @@ local CFG = {
   -- THE FREE PASS ("lucky dog"): the highest-placed lapped car gets its lap back
   -- before the restart. Off by default, like every scoring rule.
   luckyDog      = false,
+  -- HOW A CAUTION FREEZES THE ORDER. 'line': the field races back to the line
+  -- and each car locks as it completes the leader's lap. 'call': frozen where
+  -- the field is the moment Caution is pressed, for leagues that do not race
+  -- back.
+  cautionMode   = 'line',
   -- Laps a heat runs; 0 is the race's distance.
   heatLaps      = 0,
 
@@ -191,6 +196,18 @@ local race = {
   -- (ONE per caution).
   luckyDog     = CFG.luckyDog,
   cautionLucky = nil,
+  -- 'line' or 'call' (CFG.cautionMode). Fixed for a caution once it is out.
+  cautionMode  = CFG.cautionMode,
+  -- Laps run under every caution this race, for the results file (cautionLaps
+  -- is the current caution's alone, which the panel shows).
+  cautionLapsTotal = 0,
+  -- The rules this race's cautions ran under ({ line = true, call = true }),
+  -- for the results file: the setting may have changed between them.
+  cautionRulesUsed = {},
+  -- Every pass made under a caution this race, given back or not:
+  -- { lap, at, passer, passerId, passed, passedId, restored }. On the board
+  -- for race control, and in the results file.
+  cautionPasses = {},
   -- A restart called and not yet taken: the LEADER decides when, as they come
   -- back to the line. Cancellable until the green falls.
   restartPending = false,
@@ -331,7 +348,11 @@ local players = {}          -- [playerID] = per-player record
 -- Release a frozen caution order. Declared beside `players`: finishSession,
 -- far above the caution code, calls it, and a later local would be a nil global.
 local function thawOrder()
-  for _, rec in pairs(players) do rec.cautionPos, rec.cautionDown = nil, nil end
+  for _, rec in pairs(players) do
+    rec.cautionPos, rec.cautionDown = nil, nil
+    -- The pass watch belongs to the caution too (race.checkCautionPasses).
+    rec.ucSeen, rec.ucPass, rec.ucPassed = nil, nil, nil
+  end
 end
 -- Authoritative reset ghosts, [playerID] = { startedAt, duration } on
 -- race.time, so a driver joining mid-ghost is told. Per player: independent.
@@ -1043,8 +1064,9 @@ local DRIVER_WIRE_FIELDS = {
   'qualiBest', 'qualiLaps', 'outLap', 'raceBest', 'currentLap', 'lapsLed', 'cpCleared',
   'finishTime', 'resets', 'resetsBlocked',
   'jokerTaken', 'jokerLap', 'outReason', 'dnfPos', 'heldPos', 'bystander',
-  -- Laps down at the caution.
-  'cautionDown',
+  -- Laps down at the caution, and the cars this one passed under it and has
+  -- not given back (names, or nil).
+  'cautionDown', 'ucPassed',
   -- The blue flag, from both ends; each client reads its own row.
   'blue', 'lapping',
   -- The heat program per driver.
@@ -1278,6 +1300,10 @@ local function broadcastState(targetPid)
     restartPending = race.restartPending,
     -- The free pass rule, and who has it this caution.
     luckyDog     = race.luckyDog,
+    cautionMode  = race.cautionMode,
+    -- Passes under caution this race, for race control. nil while there are
+    -- none, so a clean race sends nothing.
+    cautionPasses = #race.cautionPasses > 0 and race.cautionPasses or nil,
     cautionLucky = race.cautionLucky,
     -- The heat program; heatLaps because the flags are waved client-side and
     -- must reach the same distance as sessionLapTarget.
@@ -1878,8 +1904,17 @@ local function buildResultsText(cupRound)
     #final))
   -- Cautions, which explain a finishing order that looks wrong.
   if race.cautionCount > 0 then
-    add(string.format(' Cautions: %d, over %d lap%s',
-      race.cautionCount, race.cautionLaps, race.cautionLaps == 1 and '' or 's'))
+    local used = race.cautionRulesUsed
+    add(string.format(' Cautions: %d, over %d lap%s (%s)',
+      race.cautionCount, race.cautionLapsTotal, race.cautionLapsTotal == 1 and '' or 's',
+      (used.call and used.line) and 'frozen at the call, and raced back to the line'
+        or used.call and 'frozen at the call' or 'raced back to the line'))
+    -- What a steward needs: who passed whom under yellow, and whether the
+    -- place went back before the green.
+    for _, p in ipairs(race.cautionPasses) do
+      add(string.format('   Passed under caution: %s on %s, lap %d (%s)',
+        p.passer, p.passed, p.lap, p.restored and 'given back' or 'NOT given back'))
+    end
   end
   add(string.format(' Regulations: resets %s | joker lap %s',
     race.maxResets < 0 and 'unlimited'
@@ -3521,6 +3556,26 @@ function RM_onSetLuckyDog(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
+-- How the next caution freezes the order: 'line' (race back to it) or 'call'
+-- (where the field is when it is called). Not idle-locked, like the free pass,
+-- but REFUSED while a caution is out: the rule it was called under stands until
+-- the green, or half a field would be locked one way and half the other.
+function RM_onSetCautionMode(pid, rawData)
+  local data = adminPayload(pid, rawData)
+  if not data then return end
+  local want = (data.mode == 'call' or data.mode == 'line') and data.mode or nil
+  if not want or want == race.cautionMode then return end
+  if race.caution or race.cautionPending then
+    MP.SendChatMessage(pid, '[RaceManager] Not while a caution is out: it runs under '
+      .. 'the rule it was called under until the restart.')
+    return
+  end
+  race.cautionMode = want
+  broadcastState()
+  print('[RaceManager] Caution rule: ' .. (want == 'call' and 'freeze at the call'
+    or 'race back to the line') .. ' (set by ' .. tostring(MP.GetPlayerName(pid) or pid) .. ')')
+end
+
 -- A client completed the joker route (it enforced lap 1 and once); the server
 -- records it and rules at the flag.
 function RM_onJokerLap(pid, rawData)
@@ -3598,6 +3653,9 @@ local function releaseField(pacing)
   race.cautionLaps  = 0
   race.cautionSeq   = 0
   race.cautionCount = 0
+  race.cautionLapsTotal = 0
+  race.cautionRulesUsed = {}
+  race.cautionPasses    = {}
   thawOrder()
   race.time = 0.0
   -- The green is now, or stamped when it falls after a pace lap.
@@ -4047,12 +4105,155 @@ local function lockCaution(rec, completed)
   awardLuckyDog('field locked')
 end
 
+-- FROZEN AT THE CALL (cautionMode 'call'): the board as it stands this instant
+-- is the order, with no race back. Every car on track locks now, in the live
+-- order, and its laps down are counted on the road against the leader
+-- (progress.lapsBehind: one more lap on the counter is not a lap down until the
+-- leader is past). Only as exact as the last position reports, about a third
+-- of a second old, so two cars side by side are ordered as they last reported.
+function race.freezeAtCall(who)
+  race.cautionPending = false
+  race.caution        = true
+  local leader = nil
+  for _, rec in ipairs(raceClassification()) do
+    if onTrack(rec) then
+      leader = leader or rec
+      race.cautionSeq = race.cautionSeq + 1
+      rec.cautionPos  = race.cautionSeq
+      rec.cautionDown = progress.lapsBehind(leader, rec)
+    end
+  end
+  -- What a car that joins the track later is measured against (lockCaution).
+  race.cautionLap = leader and progress.lapsDone(leader) or nil
+  MP.SendChatMessage(-1, string.format(
+    '[RaceManager] CAUTION - FULL COURSE YELLOW: POSITIONS ARE FROZEN AS OF NOW. '
+    .. 'Slow down and hold your place: a pass under yellow does not count, and '
+    .. 'race control is told. By %s.', tostring(who)))
+  print(string.format('[RaceManager] CAUTION #%d called by %s at %.1fs: frozen at the call',
+    race.cautionCount, tostring(who), race.time))
+  -- The whole field is locked, so the free pass is decided now.
+  awardLuckyDog('field frozen at the call')
+  broadcastState()
+end
+
+-- Messages for race control: every logged-in admin or moderator, wherever they
+-- are, and the console.
+function race.tellRaceControl(msg)
+  for pid in pairs(MP.GetPlayers() or {}) do
+    if isAuthenticated(pid) then MP.SendChatMessage(pid, msg) end
+  end
+  print(msg)
+end
+
+-- Is `a` ahead of `b` in the race on the road: laps, then checkpoints, then
+-- distance to the next one, by `margin` meters at least. nil when it cannot be
+-- told (a distance not reported yet), which leaves the watch where it was.
+function race.aheadOnRoad(a, b, margin)
+  local la, lb = progress.lapsDone(a), progress.lapsDone(b)
+  if la ~= lb then return la > lb end
+  local ca, cb = a.cpCleared or 0, b.cpCleared or 0
+  if ca ~= cb then return ca > cb end
+  local da, db = a.distNext, b.distNext
+  if not (da and db) then return nil end
+  return da + margin < db
+end
+
+-- THE PASS WATCH. Under a caution the board holds the frozen order whatever
+-- happens on the road, so a pass gains nothing while the yellow is out -- but
+-- the green thaws the board back to the road, and a place taken under yellow
+-- and never given back is kept from then on. So every car locked behind
+-- another is compared with it on the road:
+--   * ahead by PASS_MARGIN for PASS_CONFIRM seconds is a PASS: the driver is
+--     told to give it back and race control is told who and whom. The margin
+--     and the wait ride out telemetry: reports are a third of a second apart,
+--     and two cars side by side swap places in them.
+--   * back behind (by any amount) is the place GIVEN BACK, and both are told.
+-- Cars a lap or more down are compared by race distance like everybody, so a
+-- lead-lap car going by a backmarker on the road is no pass. The free pass car
+-- is left out: it is meant to drop to the tail of the lead lap.
+function race.checkCautionPasses()
+  if not race.caution then return end
+  local PASS_MARGIN, PASS_CONFIRM = 5.0, 1.0
+  local field = {}
+  for _, rec in pairs(players) do
+    if onTrack(rec) and rec.cautionPos and rec.id ~= race.cautionLucky then
+      field[#field + 1] = rec
+    end
+  end
+  table.sort(field, function (a, b)
+    local da, db = a.cautionDown or 0, b.cautionDown or 0
+    if da ~= db then return da < db end
+    return a.cautionPos < b.cautionPos
+  end)
+  for i = 1, #field do
+    local a = field[i]
+    a.ucSeen = a.ucSeen or {}
+    a.ucPass = a.ucPass or {}
+    local names = nil
+    for j = 1, i - 1 do
+      local b = field[j]
+      local open = a.ucPass[b.id]
+      if open then
+        -- Behind again by any amount: given back.
+        if race.aheadOnRoad(a, b, 0) == false then
+          open.restored = true
+          a.ucPass[b.id], a.ucSeen[b.id] = nil, nil
+          MP.SendChatMessage(a.id, string.format(
+            '[RaceManager] Place given back to %s. Hold it until the green.', displayName(b)))
+          race.tellRaceControl(string.format(
+            '[RaceManager] Race control: %s gave the place back to %s.', open.passer, open.passed))
+        else
+          names = names and (names .. ', ' .. displayName(b)) or displayName(b)
+        end
+      else
+        local ahead = race.aheadOnRoad(a, b, PASS_MARGIN)
+        if ahead then
+          local since = a.ucSeen[b.id]
+          if not since then
+            a.ucSeen[b.id] = race.time
+          elseif race.time - since >= PASS_CONFIRM then
+            local entry = {
+              lap = a.currentLap or 0, at = race.time,
+              passer = displayName(a), passerId = a.id,
+              passed = displayName(b), passedId = b.id, restored = false,
+            }
+            race.cautionPasses[#race.cautionPasses + 1] = entry
+            a.ucPass[b.id] = entry
+            names = names and (names .. ', ' .. entry.passed) or entry.passed
+            MP.SendChatMessage(a.id, string.format(
+              '[RaceManager] PASSED UNDER CAUTION: you went by %s. Give the place '
+              .. 'back now: it does not count, and race control has been told.', entry.passed))
+            race.tellRaceControl(string.format(
+              '[RaceManager] Race control: %s passed %s under caution (lap %d).',
+              entry.passer, entry.passed, entry.lap))
+          end
+        elseif ahead == false then
+          a.ucSeen[b.id] = nil
+        end
+      end
+    end
+    a.ucPassed = names
+  end
+end
+
 -- End the caution: one path for the Green button and Restart.
 local function restartRace(why)
   if not race.caution then return false end
   -- The fallback award: a car that never crossed again means the field never
   -- fully locked, and the green must not cancel the pass.
   awardLuckyDog('restart called before the field was fully locked')
+  -- A pass still not given back is kept from here on, because the board goes
+  -- back to the road. Nothing here can take it away (there are no penalties to
+  -- give), so race control hears about every one before the order thaws.
+  race.checkCautionPasses()
+  for _, p in ipairs(race.cautionPasses) do
+    if not p.restored and not p.reported then
+      p.reported = true
+      race.tellRaceControl(string.format(
+        '[RaceManager] Race control: at the green, %s is still ahead of %s after '
+        .. 'passing under caution (lap %d).', p.passer, p.passed, p.lap))
+    end
+  end
   race.caution        = false
   race.cautionPending = false
   race.restartPending = false
@@ -4107,8 +4308,6 @@ function RM_onCaution(pid)
       .. 'Restart when the track is clear.')
     return
   end
-  -- CALLED, NOT FROZEN: official when the LEADER takes the line (RM_onLap).
-  race.cautionPending = true
   race.restartPending = false
   race.cautionLucky   = nil
   race.flag           = 'yellow'
@@ -4116,7 +4315,14 @@ function RM_onCaution(pid)
   race.cautionLaps    = 0
   race.cautionSeq     = 0
   race.cautionCount   = race.cautionCount + 1
+  race.cautionRulesUsed[race.cautionMode] = true
   local who = MP.GetPlayerName(pid) or pid
+  if race.cautionMode == 'call' then
+    race.freezeAtCall(who)
+    return
+  end
+  -- CALLED, NOT FROZEN: official when the LEADER takes the line (RM_onLap).
+  race.cautionPending = true
   MP.SendChatMessage(-1, string.format(
     '[RaceManager] CAUTION - FULL COURSE YELLOW: RACE BACK TO THE LINE. Positions '
     .. 'lock as you complete this lap, and the leader decides which lap that is. '
@@ -4298,6 +4504,9 @@ function RM_onResetLeaderboard(pid)
   race.cautionLaps  = 0
   race.cautionSeq   = 0
   race.cautionCount = 0
+  race.cautionLapsTotal = 0
+  race.cautionRulesUsed = {}
+  race.cautionPasses    = {}
   thawOrder()
   -- The heat program goes with the evening (the records holding the draw are
   -- gone).
@@ -4450,6 +4659,7 @@ function RM_onLap(pid, rawData)
     -- official is not a lap under it).
     if race.caution then
       race.cautionLaps = race.cautionLaps + 1
+      race.cautionLapsTotal = race.cautionLapsTotal + 1
       print(string.format('[RaceManager] Caution lap %d (leader %s on lap %d)',
         race.cautionLaps, rec.name, completed))
     end
@@ -4914,6 +5124,7 @@ local function applyConfigTable(data)
   num('paceGreenFar', 0.5, 1000)
   num('paceArmAt', 20, 1000)
   bool('luckyDog')
+  str('cautionMode', { line = true, call = true })
   -- 0 means a heat runs the race distance.
   num('heatLaps', 0, CFG.maxTotalLaps)
   num('blueFlagWithin', 0.2, 60)
@@ -5004,6 +5215,7 @@ local function configFileText()
     paceGreenFar   = CFG.paceGreenFar,
     paceArmAt      = CFG.paceArmAt,
     luckyDog       = CFG.luckyDog,
+    cautionMode    = CFG.cautionMode,
     heatLaps       = CFG.heatLaps,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
@@ -5052,6 +5264,7 @@ local function applyConfigToRace()
   race.finishTimer    = math.floor(CFG.finishTimer)
   race.paceLap        = CFG.paceLap
   race.luckyDog       = CFG.luckyDog
+  race.cautionMode    = CFG.cautionMode
   race.heatLaps       = CFG.heatLaps
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
@@ -5752,12 +5965,17 @@ function RM_onSetFlag(pid, rawData)
   -- lap or caution it was under; the green or restart is called separately.
   -- A manual green otherwise ends a pace lap (no timeout needed: the marshal can
   -- see the track) through dropGreenFlag.
-  if want == 'green' and race.flag == 'red' and (race.pacing or race.caution) then
+  -- A caution still being raced back to counts: lifting a red under one once
+  -- went green and left it armed, so the leader's crossing froze the board
+  -- under a green flag.
+  if want == 'green' and race.flag == 'red'
+      and (race.pacing or race.caution or race.cautionPending) then
     race.flag = 'yellow'
     MP.SendChatMessage(-1, string.format(
       '[RaceManager] The red is lifted and the clock runs again: %s. By %s.',
       race.pacing and 'the PACE LAP resumes, hold position'
-                  or  'the race is STILL UNDER CAUTION, hold your position',
+        or race.cautionPending and 'the CAUTION is still out, race back to the line'
+        or 'the race is STILL UNDER CAUTION, hold your position',
       tostring(MP.GetPlayerName(pid) or pid)))
     print('[RaceManager] Red lifted back to '
       .. (race.pacing and 'the pace lap' or 'the caution') .. ' by '
@@ -5776,6 +5994,13 @@ function RM_onSetFlag(pid, rawData)
     restartRace('green flag called by ' .. tostring(MP.GetPlayerName(pid) or pid))
     return
   end
+  -- A green before the leader made the caution official WITHDRAWS it: nothing
+  -- was frozen and no lap ran under it, so it is not counted either. Left
+  -- armed, the leader's crossing would freeze the board under a green flag.
+  if want == 'green' and race.cautionPending then
+    race.cautionPending = false
+    race.cautionCount   = math.max(race.cautionCount - 1, 0)
+  end
   if want == race.flag then return end
   local who = MP.GetPlayerName(pid) or pid
   local wasRed = race.flag == 'red'
@@ -5785,7 +6010,9 @@ function RM_onSetFlag(pid, rawData)
       .. 'The session is still running; the race clock is stopped until the red '
       .. 'is lifted. By ' .. who .. '.')
   elseif want == 'yellow' then
-    MP.SendChatMessage(-1, '[RaceManager] YELLOW FLAG: caution called, race back to the line. '
+    -- NOT a caution (RM_onCaution is): a hazard pointed at, nothing frozen.
+    -- It once said "race back to the line", which is the caution's instruction.
+    MP.SendChatMessage(-1, '[RaceManager] YELLOW FLAG: hazard on track, take care. '
       .. (wasRed and 'The race clock is running again. ' or '') .. 'By ' .. who .. '.')
   else
     MP.SendChatMessage(-1, '[RaceManager] GREEN FLAG: racing. '
@@ -8891,6 +9118,8 @@ function RM_Tick()
   tickCounter = tickCounter + 1
   if tickCounter >= CFG.pushEveryTicks then
     tickCounter = 0
+    -- Passes under caution, judged on the reports this push will show.
+    if race.caution then race.checkCautionPasses() end
     broadcastState()
   end
 end
@@ -9051,6 +9280,7 @@ function onInit()
   MP.RegisterEvent('RM_Restart',          'RM_onRestart')
   MP.RegisterEvent('RM_CancelRestart',    'RM_onCancelRestart')  -- wave the restart off
   MP.RegisterEvent('RM_SetLuckyDog',      'RM_onSetLuckyDog')    -- the free pass rule
+  MP.RegisterEvent('RM_SetCautionMode',   'RM_onSetCautionMode') -- race back, or freeze at the call
   MP.RegisterEvent('RM_SetHeats',         'RM_onSetHeats')       -- Module 6
   MP.RegisterEvent('RM_DrawHeats',        'RM_onDrawHeats')
   MP.RegisterEvent('RM_SetHeatCurrent',   'RM_onSetHeatCurrent')
