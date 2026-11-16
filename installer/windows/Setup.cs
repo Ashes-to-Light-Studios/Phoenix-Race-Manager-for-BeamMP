@@ -2,9 +2,12 @@
 //
 // ONE FILE. The release zip is embedded in this exe, so a server owner
 // downloads it, opens it and is done. It finds the server, copies what it
-// replaces into _attic\, writes Resources\Client\RaceManager.zip and the
-// plugin's .lua files, and never touches Resources\Server\RaceManager\Data.
-// The rules are the in-game updater's (server/RaceManager/update.lua).
+// replaces into _attic\, writes "Resources\Client\PhoenixRM Client.zip" and
+// the plugin's files in "Resources\Server\PhoenixRM Server", and never
+// touches what is in that folder's Data. The rules are the in-game updater's
+// (server/RaceManager/update.lua). An install from before 0.24.0, in
+// Resources\Server\RaceManager and RaceManager.zip, has its Data moved across
+// and the rest moved to _attic\.
 //
 // C# 5, built by build.ps1 with the compiler in .NET Framework 4.x, which
 // every Windows 10 and 11 has: nothing to install to build it or to run it.
@@ -98,6 +101,7 @@ namespace PhoenixRaceManager
     {
         public string Version;
         public byte[] ClientZip;
+        public byte[] License;    // travels in the plugin's folder; BeamMP loads only .lua
         public readonly SortedDictionary<string, byte[]> Plugin =
             new SortedDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
 
@@ -114,9 +118,10 @@ namespace PhoenixRaceManager
                     {
                         string name = e.FullName.Replace('\\', '/');
                         if (name.EndsWith("/")) continue;
-                        if (name == "Client/RaceManager.zip") r.ClientZip = Bytes(e);
-                        else if (Regex.IsMatch(name, @"^Server/RaceManager/[A-Za-z0-9_\-]+\.lua$"))
-                            r.Plugin[name.Substring("Server/RaceManager/".Length)] = Bytes(e);
+                        if (name == "Client/PhoenixRM Client.zip") r.ClientZip = Bytes(e);
+                        else if (name == "Server/PhoenixRM Server/LICENSE") r.License = Bytes(e);
+                        else if (Regex.IsMatch(name, @"^Server/PhoenixRM Server/[A-Za-z0-9_\-]+\.lua$"))
+                            r.Plugin[name.Substring("Server/PhoenixRM Server/".Length)] = Bytes(e);
                         else if (name.IndexOf('/') >= 0)
                             throw new InvalidOperationException("The release inside this installer holds " + name
                                 + ", which it does not know where to put.");
@@ -190,8 +195,13 @@ namespace PhoenixRaceManager
         {
             try
             {
-                string main = Path.Combine(ResourcesDir(server), @"Server\RaceManager\main.lua");
-                return File.Exists(main) ? BuildOf(File.ReadAllText(main)) : null;
+                // Its own folder, or the one it had before 0.24.0.
+                foreach (string dir in new[] { @"Server\PhoenixRM Server", @"Server\RaceManager" })
+                {
+                    string main = Path.Combine(ResourcesDir(server), dir + @"\main.lua");
+                    if (File.Exists(main)) return BuildOf(File.ReadAllText(main));
+                }
+                return null;
             }
             catch { return null; }
         }
@@ -339,6 +349,9 @@ namespace PhoenixRaceManager
 
         readonly Release release;
         public readonly string ServerDir, ResourcesDir, ClientDir, PluginDir;
+        // Where the plugin lived before 0.24.0, and whether its Data came across.
+        public readonly string OldPluginDir;
+        public bool DataMoved;
         public string Previous;   // the PRM installed before, or null
         public string Attic;
         public string Error;
@@ -354,7 +367,8 @@ namespace PhoenixRaceManager
             ServerDir = Path.GetFullPath(server).TrimEnd('\\');
             ResourcesDir = Server.ResourcesDir(ServerDir);
             ClientDir = Path.Combine(ResourcesDir, "Client");
-            PluginDir = Path.Combine(ResourcesDir, @"Server\RaceManager");
+            PluginDir = Path.Combine(ResourcesDir, @"Server\PhoenixRM Server");
+            OldPluginDir = Path.Combine(ResourcesDir, @"Server\RaceManager");
         }
 
         public bool Run()
@@ -392,11 +406,14 @@ namespace PhoenixRaceManager
                 + "_" + DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
 
             var steps = new List<Step>();
-            steps.Add(new Step { Path = Path.Combine(ClientDir, "RaceManager.zip"), New = release.ClientZip,
-                Backup = Path.Combine(Attic, @"Client\RaceManager.zip") });
+            steps.Add(new Step { Path = Path.Combine(ClientDir, "PhoenixRM Client.zip"), New = release.ClientZip,
+                Backup = Path.Combine(Attic, @"Client\PhoenixRM Client.zip") });
             foreach (KeyValuePair<string, byte[]> kv in release.Plugin)
                 steps.Add(new Step { Path = Path.Combine(PluginDir, kv.Key), New = kv.Value,
-                    Backup = Path.Combine(Attic, @"Server\RaceManager\" + kv.Key) });
+                    Backup = Path.Combine(Attic, @"Server\PhoenixRM Server\" + kv.Key) });
+            if (release.License != null)
+                steps.Add(new Step { Path = Path.Combine(PluginDir, "LICENSE"), New = release.License,
+                    Backup = Path.Combine(Attic, @"Server\PhoenixRM Server\LICENSE") });
             // A plugin file this release no longer has: BeamMP runs every .lua in
             // the folder, so it would keep running beside the new ones.
             if (Directory.Exists(PluginDir))
@@ -404,7 +421,7 @@ namespace PhoenixRaceManager
                 {
                     string name = Path.GetFileName(f);
                     if (!name.EndsWith(".lua", StringComparison.OrdinalIgnoreCase) || release.Plugin.ContainsKey(name)) continue;
-                    steps.Add(new Step { Path = f, Backup = Path.Combine(Attic, @"Server\RaceManager\" + name) });
+                    steps.Add(new Step { Path = f, Backup = Path.Combine(Attic, @"Server\PhoenixRM Server\" + name) });
                     moved.Add(Rel(f) + " (not part of PRM " + release.Version + ")");
                 }
 
@@ -414,6 +431,17 @@ namespace PhoenixRaceManager
                 s.Old = File.ReadAllBytes(s.Path);
                 Directory.CreateDirectory(Path.GetDirectoryName(s.Backup));
                 File.WriteAllBytes(s.Backup, s.Old);
+            }
+
+            // THE DATA OF AN INSTALL FROM BEFORE 0.24.0 comes across first, whole,
+            // before the old folder is moved out (MoveOutOthers): tracks, cup,
+            // garage, settings, results. Only into a folder with no Data yet.
+            string oldData = Path.Combine(OldPluginDir, "Data"), newData = Path.Combine(PluginDir, "Data");
+            if (!Directory.Exists(newData) && Directory.Exists(oldData))
+            {
+                Directory.CreateDirectory(PluginDir);
+                Directory.Move(oldData, newData);
+                DataMoved = true;
             }
 
             var applied = new List<Step>();
@@ -435,6 +463,12 @@ namespace PhoenixRaceManager
             catch (Exception e)
             {
                 string lost = Restore(applied);
+                // And the data goes back where it was.
+                if (DataMoved)
+                {
+                    try { Directory.Move(newData, oldData); DataMoved = false; }
+                    catch { lost = (lost == null ? "" : lost + ", ") + newData; }
+                }
                 Error = "Could not install: " + e.Message + ". "
                     + (lost == null ? "Everything was put back as it was."
                        : "These could not be put back, copy them from " + Attic + ": " + lost);
@@ -481,9 +515,10 @@ namespace PhoenixRaceManager
             foreach (string zip in Directory.GetFiles(ClientDir))
             {
                 string name = Path.GetFileName(zip);
+                // RaceManager.zip, the client before 0.24.0, is one of them now.
                 if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-                    || name.Equals("RaceManager.zip", StringComparison.OrdinalIgnoreCase) || !HoldsClient(zip)) continue;
-                Move(zip, Path.Combine(Attic, @"Client\" + name), "a second copy of the PRM client");
+                    || name.Equals("PhoenixRM Client.zip", StringComparison.OrdinalIgnoreCase) || !HoldsClient(zip)) continue;
+                Move(zip, Path.Combine(Attic, @"Client\" + name), "an older or second copy of the PRM client");
             }
             string serverRoot = Path.Combine(ResourcesDir, "Server");
             foreach (string dir in Directory.GetDirectories(serverRoot))
@@ -494,7 +529,8 @@ namespace PhoenixRaceManager
                 try { text = File.Exists(main) ? File.ReadAllText(main) : ""; }
                 catch { text = ""; }
                 if (text.Contains("RM_BUILD") && text.Contains("[RaceManager]"))
-                    Move(dir, Path.Combine(Attic, @"Server\" + Path.GetFileName(dir)), "another Race Manager plugin");
+                    Move(dir, Path.Combine(Attic, @"Server\" + Path.GetFileName(dir)),
+                        Server.Same(dir, OldPluginDir) ? "the install from before 0.24.0" : "another Race Manager plugin");
             }
         }
 
@@ -551,7 +587,11 @@ namespace PhoenixRaceManager
             }
             foreach (string n in notes) b.AppendLine(n);
             b.AppendLine("Anything replaced is in " + Rel(Attic) + ".");
-            b.AppendLine("Tracks, results and settings in " + Rel(Path.Combine(PluginDir, "Data")) + " were not touched.");
+            if (DataMoved)
+                b.AppendLine("Tracks, results and settings were moved from " + Rel(Path.Combine(OldPluginDir, "Data"))
+                    + " to " + Rel(Path.Combine(PluginDir, "Data")) + ".");
+            else
+                b.AppendLine("Tracks, results and settings in " + Rel(Path.Combine(PluginDir, "Data")) + " were not touched.");
             b.AppendLine();
             b.AppendLine("Next:");
             b.AppendLine("  1. Start the server, or restart it if it is running.");
@@ -650,11 +690,13 @@ namespace PhoenixRaceManager
             details.Text = string.Join(Environment.NewLine, new[] {
                 "What this does:",
                 "",
-                "  1. Copies Resources\\Client\\RaceManager.zip (the part BeamMP sends to",
-                "     players) and the plugin in Resources\\Server\\RaceManager into the server.",
+                "  1. Copies Resources\\Client\\PhoenixRM Client.zip (the part BeamMP sends",
+                "     to players) and the plugin in Resources\\Server\\PhoenixRM Server into",
+                "     the server.",
                 "  2. Keeps anything it replaces in the server's _attic folder first.",
-                "  3. Leaves Resources\\Server\\RaceManager\\Data alone: your tracks, results,",
-                "     cup and settings carry over.",
+                "  3. Leaves your tracks, results, cup and settings (the Data folder) alone.",
+                "     From an install before 0.24.0, in Resources\\Server\\RaceManager, the",
+                "     Data folder is moved across and the old copy goes to _attic.",
                 "",
                 "Stop the server before installing, then start it again afterwards.",
             });

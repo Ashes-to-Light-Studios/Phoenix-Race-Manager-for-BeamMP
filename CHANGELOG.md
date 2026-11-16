@@ -6,6 +6,91 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.25.0 - Checkpoint skip warnings and penalties
+
+#### Added
+
+- **Checkpoint skips (track cuts).** A new rule in Race settings, off unless you
+  turn it on. Off, nothing changes: a driver who cuts the track and crosses a
+  checkpoint ahead of the one they are due stays armed on the gate they missed
+  until they drive back through it. On, the cut is seen and the car is moved on
+  past the gate it crossed, and each skipped checkpoint costs one of the
+  **warnings** you allow, then the **penalty** you choose:
+  - **Time**: seconds added to the driver's race time, shown on the board and
+    counted in the final classification.
+  - **Lift**: the driver is told to lift off the throttle for a few seconds and
+    then carry on. The HUD counts it down while they do it. Not served within
+    the serve window, or still owed at the flag, it becomes the seconds.
+  - **Lift + time**: both.
+
+  Only forward crossings up to two gates ahead count (`checkpointSkipMaxGates`
+  in `config.json`), and the start/finish line can be landed on but never
+  skipped. Out laps, the pace lap, resets, recoveries, teleports, the joker
+  route and the pit lane are never skips, and neither is a grid behind the line
+  driving over it at the start. A lap with a skip on it counts toward the
+  distance but sets no best lap, fastest lap, qualifying time or lap record. In
+  qualifying a skip only costs the lap time. Drivers see `+5.0s`, `LIFT` and
+  `W 1/2` on the board, race control is told every ruling, and the results file
+  shows each corrected time with its penalty and a **Track cuts** column. All
+  the settings are also in `config.json`. See
+  [Checkpoint skips](docs/REFERENCE.md#checkpoint-skips-track-cuts).
+
+## 0.24.0 - Sectors, a caution frozen at the call, and a Model lock
+
+#### Added
+
+- **Sectors you define.** Every checkpoint used to be a sector, so a thirty-gate
+  circuit showed S1 to S30. The editor's **Main** tab now has a **Sectors**
+  section: **+ Add Sector**, then pick where each one starts and ends, for
+  example S1 from the start/finish to CP 3 and S2 from CP 3 to CP 6. Drivers
+  see each sector's time against their own best, as before. Sectors are saved
+  with the layout, and keep their gates when checkpoints are added, removed or
+  reordered. A layout with none defined still times every checkpoint.
+- **Caution rule: Freeze at the call.** In Race settings, **Caution** is either
+  **Race back to the line** (the default, unchanged) or **Freeze at the call**,
+  for leagues that do not race back. Frozen at the call, the order is locked
+  where the field is the moment Caution is pressed. Set the server default with
+  `"cautionMode": "call"` in `config.json`.
+- **Passes under caution are shown.** The board already ignored them during the
+  yellow, but the green handed the place back to the road. Now a car that gets
+  past one it is frozen behind is told to **give the place back**, race control
+  is told who passed whom, the board marks the passer, and a list under the race
+  controls shows every pass. Giving it back is noticed too. Anything still owed
+  at the green is reported, and the results file lists every pass.
+- **Garage List: lock the Model only.** **Locks** now has **Model**, beside
+  Parts and Strict: any parts and any tune of an approved vehicle are allowed,
+  and only a different vehicle is refused.
+
+#### Changed
+
+- **The install folders are renamed**, so you can see what is installed:
+  `Resources/Client/PhoenixRM Client.zip` and `Resources/Server/PhoenixRM
+  Server/`, which now also holds the LICENSE. They were `RaceManager.zip` and
+  `Resources/Server/RaceManager/`. **Your data comes with you:**
+  - The installers move the old `Data` folder (tracks, cup, garage, settings,
+    results) into the new folder, and the old copy to `_attic/`.
+  - Unzipped by hand, the new plugin does the same at its first start, then asks
+    you to **restart once**, because that start ran both copies.
+  - **Update and restart** from the game cannot make this jump: the 0.23.x
+    updater refuses the new layout and changes nothing. Use the zip or an
+    installer this once.
+
+#### Fixed
+
+- **The Branch tab's "+ Branch Gate" button was always greyed out**, so branch
+  gates could only be placed with Ctrl+click.
+- **Calling a caution under a red flag lifted the red** without saying so: the
+  clock ran again and a stopped field was told to race back. The red now stays
+  out, and lifting it puts the race under the caution. Passes made under a red
+  over a caution are caught too, and the HUD says RED FLAG over any caution
+  instruction.
+- **The results file counted only the last caution's laps.** It now totals every
+  caution, and names the rule each ran under.
+- **A green before a caution went official left it armed**, so the leader's next
+  crossing froze the board under a green flag. That green now withdraws it.
+- **The Yellow flag button told the field to race back to the line** while
+  freezing nothing. It is a hazard warning now.
+
 ## 0.23.4 - Safe on game hosts: online features are opt-in
 
 #### Fixed

@@ -35,7 +35,7 @@
 -- So the legacy file is seeded where an UPGRADING server actually has it -- at
 -- the top level, beside main.lua -- and the store it ends up being read from is
 -- the copy inside Data/.
-local DIR    = 'Resources/Server/RaceManager'
+local DIR    = 'Resources/Server/PhoenixRM Server'
 local DATA   = DIR .. '/Data'
 local LEGACY = DIR .. '/layouts.json'
 local FLAT   = DATA .. '/layouts.json'

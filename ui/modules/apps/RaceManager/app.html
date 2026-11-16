@@ -93,7 +93,9 @@
         LAP<b ng-if="lapHold.lap">&nbsp;{{ lapHold.lap }}</b> {{ formatLap(lapHold.lapTime) }}<span
           class="rm-delta" ng-class="deltaClass(lapHold.delta)"
           ng-if="lapHold.delta !== null && lapHold.delta !== undefined"
-          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span>
+          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span><span
+          class="rm-lapcut" ng-if="lapHold.cut"
+          title="A checkpoint was skipped on this lap: its time does not count for a best lap, the fastest lap or qualifying.">&nbsp;CUT</span>
       </span>
       <!-- Sector times sit beside the lap readout rather than replacing it:
            both can be on screen at once (the last sector of a lap closes at the
@@ -191,6 +193,12 @@
     <span class="rm-driverbar-label" ng-if="jokerEnabled">
       JOKER <b ng-class="{'rm-joker-done': jokerTaken}">{{ jokerTaken ? 'DONE (lap ' + jokerLap + ')' : 'PENDING' }}</b>
     </span>
+    <!-- Checkpoint skips: this driver's warnings, time penalty and a lift-off
+         to serve, only once there is one. -->
+    <span class="rm-driverbar-label" ng-if="cpSkipEnabled &amp;&amp; myCpSkip"
+          title="Your checkpoint skips: warnings used, the time penalty on your race time, and a lift-off to serve">
+      CUTS <b class="rm-cp-mine">{{ myCpLabel() }}</b>
+    </span>
     <span class="rm-driverbar-label" ng-if="resetsLimited()">
       RESETS <b ng-class="{'rm-reset-low': myResetsLow()}">{{ resetsUsed }}/{{ maxResets }}</b>
       <!-- OUT, said in words and kept on screen.
@@ -229,7 +237,7 @@
     <span class="rm-pace-badge" ng-if="cautionPending"
           title="The yellow is out and the field is racing back to the line. Positions lock as you complete this lap, on the lap the leader is on.">CAUTION &middot; RACE BACK TO THE LINE</span>
     <span class="rm-pace-badge" ng-if="caution &amp;&amp; !restartPending"
-          title="Full-course caution: hold position, no overtaking. Places are locked in the order the field came back to the line.">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
+          title="{{ cautionFrozenTitle() }}">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
     <span class="rm-restart-badge" ng-if="caution &amp;&amp; restartPending &amp;&amp; !greenReady"
           title="A restart is called: GET READY comes as the restart leader nears the line, then the green at a random point before it.">RESTART THIS LAP &middot; GREEN ON THE RUN IN</span>
     <!-- ONE BADGE FOR THE WHOLE FORMATION LAP: what it is, what to do, and that
@@ -791,7 +799,7 @@
          that also restarts, is offering to do a thing that is already done. -->
     <button class="rm-btn rm-btn-caution rm-btn-fcy" ng-click="callCaution()"
             ng-if="cautionAvailable() &amp;&amp; !caution &amp;&amp; !cautionPending"
-            title="Full-course yellow. The field races back to the line and positions lock as each driver completes the lap the leader is on.">Caution</button>
+            title="{{ cautionButtonTitle() }}">Caution</button>
     <!-- Called, waiting on the leader. Deliberately NOT a button: there is
          nothing useful to press between the call and the leader taking the
          line, and a second press of Caution would only count a second yellow. -->
@@ -816,6 +824,17 @@
     </span>
     <button class="rm-btn rm-btn-reset" ng-click="resetLeaderboard()"
             title="Clear the session for the next one, qualifying included. A race under way is ended and saved first. To run a race again on the same grid, use Restart from grid.">Reset</button>
+  </div>
+  <!-- PASSES UNDER CAUTION, for race control. Every one this race, given back or
+       not: the board already ignores them while the yellow is out, but the
+       green thaws it back to the road, so one not given back is a place kept.
+       Nothing here penalises anybody; it is what a steward needs to. -->
+  <div class="rm-uc-passes" ng-if="isAdmin &amp;&amp; cautionPasses.length">
+    <span class="rm-uc-title">Passed under caution</span>
+    <span class="rm-uc-pass" ng-repeat="p in cautionPasses track by $index"
+          ng-class="{'rm-uc-restored': p.restored}">
+      {{ p.passer }} on {{ p.passed }} &middot; lap {{ p.lap }}<span ng-if="p.underRed"> &middot; under red</span> &middot; {{ p.restored ? 'given back' : 'not given back' }}
+    </span>
   </div>
 
   <!-- ================= Derby controls (derby mode, admin only) ===========
@@ -1054,6 +1073,65 @@
               ng-click="setResetMode('checkpoint')"
               ng-disabled="!canSetRules()">Last checkpoint</button>
     </span>
+    <!-- CHECKPOINT SKIPS (track cuts). Off as shipped: a cut leaves the car
+         armed on the gate it missed until it goes back. On, crossing a gate
+         ahead of the one due moves the car on, and the skip costs a warning,
+         then the penalty chosen here. A rule like the others: locked once the
+         session is under way (the server refuses it too). -->
+    <span class="rm-setting" title="Crossing a checkpoint ahead of the one due (cutting the track) moves the car on past it, and costs a warning, then a penalty.">
+      <label>Checkpoint skips</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': cpSkipEnabled}"
+              ng-click="toggleCpSkip()"
+              ng-disabled="!canSetRules()">
+        {{ cpSkipEnabled ? '&#10003; Enabled' : 'Disabled' }}
+      </button>
+      <span class="rm-setting-sub" title="Skips let off with a warning before the penalties start. 0 penalises the first one.">
+        <label>Warnings</label>
+        <input type="number" class="rm-width-num" min="0" max="99" step="1" ng-model="settingsUi.cpSkipWarnings"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+      </span>
+      <span class="rm-setting-sub" title="What a skipped checkpoint costs once the warnings are used up.">
+        <label>Penalty</label>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipType === 'time'}"
+                ng-click="setCpSkipType('time')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="Seconds added to the driver's race time. Shown on the board, and counted in the final classification.">Time</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipType === 'lift'}"
+                ng-click="setCpSkipType('lift')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="The driver lifts off the throttle for a few seconds at racing speed, then races on. Not served in time, or still owed at the flag, it becomes the seconds instead.">Lift</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipType === 'liftAndTime'}"
+                ng-click="setCpSkipType('liftAndTime')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="Both: the seconds at once, and a lift to serve as well (or more seconds).">Lift + time</button>
+      </span>
+      <span class="rm-setting-sub" title="Seconds per penalised skip, and per lift not served.">
+        <label>{{ cpSkipSecLabel() }}</label>
+        <input type="number" class="rm-width-num" min="0.5" max="300" step="0.5" ng-model="settingsUi.cpSkipPenaltySec"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+      </span>
+      <span class="rm-setting-sub" ng-if="cpSkipHasLift()"
+            title="Seconds off the throttle per penalised skip, at racing speed under green, and the green-flag running allowed to serve it in.">
+        <label>Lift (s)</label>
+        <input type="number" class="rm-width-num" min="0.5" max="30" step="0.5" ng-model="settingsUi.cpSkipLiftSec"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+        <label>Serve within (s)</label>
+        <input type="number" class="rm-width-num" min="5" max="300" step="1" ng-model="settingsUi.cpSkipLiftWindow"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyCpSkip()"
+               ng-disabled="!canSetRules() || !cpSkipEnabled">
+      </span>
+      <span class="rm-setting-val">{{ cpSkipLabel() }}</span>
+      <span class="rm-setting-warn" ng-if="cpSkipEnabled &amp;&amp; hasBranches">
+        Gates crossed against their direction are not checked for skips.
+      </span>
+    </span>
     <!-- Module 5: the pace lap -->
     <span class="rm-setting" title="Start the race behind a pace car: the field is released under yellow, forms up, and the green falls as the P1 starter returns to the line.">
       <label>Pace lap</label>
@@ -1086,6 +1164,25 @@
       </button>
       <span class="rm-setting-val" ng-if="luckyDog">
         Lucky dog &middot; one car per caution, the highest placed a lap down
+      </span>
+    </span>
+    <!-- THE CAUTION RULE. Racing back to the line is the default; a league that
+         freezes the field where it stands picks the other. Locked while a
+         caution is out (the server refuses it too): half a field locked one
+         way and half the other is no order at all. -->
+    <span class="rm-setting" title="How a caution freezes the running order.">
+      <label>Caution</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': cautionMode === 'line'}"
+              ng-click="setCautionMode('line')" ng-disabled="!isAdmin || caution || cautionPending"
+              title="The field races back to the line, and each car's place locks as it completes the leader's lap.">Race back to the line</button>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': cautionMode === 'call'}"
+              ng-click="setCautionMode('call')" ng-disabled="!isAdmin || caution || cautionPending"
+              title="Positions freeze where the field is the moment Caution is pressed. No racing back.">Freeze at the call</button>
+      <span class="rm-setting-val" ng-if="!caution &amp;&amp; !cautionPending">
+        Passes under yellow never count, and the driver and race control are told
+      </span>
+      <span class="rm-setting-warn" ng-if="caution || cautionPending">
+        Fixed until the restart: this caution runs under the rule it was called under.
       </span>
     </span>
     <!-- Module 2: rallycross joker lap -->
@@ -1929,11 +2026,15 @@
       </button>
       <span class="rm-garage-count">{{ garage.length }} approved</span>
     </div>
-    <!-- What a captured entry actually locks. One switch per race, not per car:
-         several allowed builds of the same vehicle are several entries under
-         Parts, not a third mode. -->
+    <!-- What a captured entry actually locks. One switch per race, not per car.
+         Model is the loosest: the vehicle and nothing else, for a series that
+         picks the car and leaves the build to the driver. Several allowed
+         builds of the same vehicle are several entries under Parts. -->
     <div class="rm-garage-mode">
       <span class="rm-garage-mode-label">Locks</span>
+      <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': garageMode === 'model'}"
+              ng-click="setGarageMode('model')"
+              title="Only the vehicle model is locked. Parts, tuning and paint are the driver's.">Model</button>
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': garageMode === 'parts'}"
               ng-click="setGarageMode('parts')"
               title="Parts are locked. Tuning and paint are the driver's.">Parts</button>
@@ -1943,7 +2044,9 @@
       <span class="rm-garage-mode-note">
         {{ garageMode === 'strict'
            ? 'Exact tune must match. Paint free.'
-           : 'Tuning and paint free, parts locked.' }}
+           : (garageMode === 'model'
+              ? 'Model locked. Parts, tuning and paint free.'
+              : 'Tuning and paint free, parts locked.') }}
       </span>
     </div>
     <!-- Nobody is exempt any more, admins included, so an unapproved car is
@@ -2251,7 +2354,7 @@
       <button class="rm-btn rm-btn-grid" ng-if="editorTarget === 'prop'" ng-click="editorAdd()"
               title="Place it a few meters in front of your car, facing the way you face">+ {{ propLabelOf(propKind) }} Ahead</button>
       <button class="rm-btn rm-btn-grid"  ng-click="editorAdd()" ng-if="editorTarget !== 'prop'"
-              ng-disabled="editorTarget === 'branch' && !waypoints.length">+ {{ editorTarget === 'joker' ? 'Joker Gate' : (editorTarget === 'start' ? 'Place Start Position' : (editorTarget === 'pit' ? 'Place Pit Stall' : (editorTarget === 'pitEntry' ? 'Place Pit Entry' : (editorTarget === 'pitExit' ? 'Place Pit Exit' : (editorTarget === 'branch' ? ('Branch Gate for CP ' + branchSlot) : (editorTarget === 'marker' ? ('Marker ' + markerGlyph(markerKind)) : 'Checkpoint')))))) }} Here</button>
+              ng-disabled="editorTarget === 'branch' && !routeWaypoints.length">+ {{ editorTarget === 'joker' ? 'Joker Gate' : (editorTarget === 'start' ? 'Place Start Position' : (editorTarget === 'pit' ? 'Place Pit Stall' : (editorTarget === 'pitEntry' ? 'Place Pit Entry' : (editorTarget === 'pitExit' ? 'Place Pit Exit' : (editorTarget === 'branch' ? ('Branch Gate for CP ' + branchSlot) : (editorTarget === 'marker' ? ('Marker ' + markerGlyph(markerKind)) : 'Checkpoint')))))) }} Here</button>
       <button class="rm-btn"              ng-click="editorUndo()"  ng-disabled="!editorWaypoints().length">Undo</button>
       <button class="rm-btn rm-btn-end"   ng-click="editorClear()" ng-disabled="!editorWaypoints().length">Clear</button>
       <button class="rm-btn" ng-click="editorToggleVisualize()">{{ visualize ? 'Hide' : 'Show' }} Gates</button>
@@ -2291,6 +2394,66 @@
       give the mouse back to the view.</div>
     </div>
     <div class="rm-editor-msg" ng-if="editorMsg">{{ editorMsg }}</div>
+
+    <!-- ===== Sectors: stretches of the lap, timed on their own =====
+         NOT CHECKPOINTS. A sector names the two gates it runs between, so a
+         track can have thirty gates and three sectors. Each driver's own
+         machine times them, against their best for that sector, exactly as the
+         per-checkpoint splits were; with none defined that is still what they
+         get. sIndex, not $index, inside the pickers: they repeat inside this
+         repeat, and the inner $index is the OPTION's. -->
+    <div class="rm-lanes rm-sectors" ng-if="editorTarget === 'main' && routeWaypoints.length > 1">
+      <div class="rm-lanes-row">
+        <span class="rm-sectors-title">Sectors</span>
+        <button class="rm-btn rm-btn-mini rm-btn-grid" ng-click="addSector()"
+                ng-disabled="!canEdit() || sectors.length >= maxSectors"
+                title="A new sector, starting where the last one ends. Set its two ends below.">+ Add Sector</button>
+        <span class="rm-route-tab-note" ng-if="!sectors.length">
+          None defined, so every checkpoint is a sector of its own.
+        </span>
+      </div>
+      <div class="rm-lanes-row" ng-repeat="sec in sectors track by $index" ng-init="sIndex = $index">
+        <span class="rm-sector-name">S{{ sIndex + 1 }}</span>
+        <div class="rm-layout-dropdown rm-lane-picker"
+             ng-class="{'rm-layout-dropdown-open': laneMenuOpen('secFrom' + sIndex)}">
+          <button type="button" class="rm-layout-trigger" ng-click="laneToggleMenu('secFrom' + sIndex)"
+                  ng-disabled="!canEdit()" title="The gate this sector's clock starts at">
+            <span class="rm-layout-trigger-label">{{ sectorFromName(sec.from) }}</span>
+            <span class="rm-layout-caret">▾</span>
+          </button>
+          <div class="rm-layout-menu" ng-if="laneMenuOpen('secFrom' + sIndex)">
+            <div class="rm-layout-option" ng-repeat="g in sectorStarts() track by g"
+                 ng-class="{'rm-layout-option-active': g === sectorKeyOf(sec.from)}"
+                 ng-click="pickSectorEnd(sIndex + 1, 'from', g)">{{ sectorFromName(g) }}</div>
+          </div>
+        </div>
+        <label class="rm-lane-label">to</label>
+        <div class="rm-layout-dropdown rm-lane-picker"
+             ng-class="{'rm-layout-dropdown-open': laneMenuOpen('secTo' + sIndex)}">
+          <button type="button" class="rm-layout-trigger" ng-click="laneToggleMenu('secTo' + sIndex)"
+                  ng-disabled="!canEdit()" title="The gate this sector's clock stops at">
+            <span class="rm-layout-trigger-label">{{ sectorToName(sec.to) }}</span>
+            <span class="rm-layout-caret">▾</span>
+          </button>
+          <div class="rm-layout-menu" ng-if="laneMenuOpen('secTo' + sIndex)">
+            <div class="rm-layout-option" ng-repeat="g in sectorEnds() track by g"
+                 ng-class="{'rm-layout-option-active': g === sectorKeyOf(sec.to)}"
+                 ng-click="pickSectorEnd(sIndex + 1, 'to', g)">{{ sectorToName(g) }}</div>
+          </div>
+        </div>
+        <button class="rm-btn rm-btn-mini rm-btn-end" ng-click="removeSector(sIndex + 1)"
+                ng-disabled="!canEdit()"
+                title="Delete this sector. The ones after it move up a number.">✕</button>
+        <span class="rm-route-tab-note rm-sector-bad" ng-if="sectorEmpty(sec)">
+          Starts and ends at the same gate, so it times nothing and the layout will not save.
+        </span>
+      </div>
+      <div class="rm-editor-hint" ng-if="!sectors.length">
+        Group checkpoints into sectors, such as <b>S1</b> from the start/finish to
+        <b>CP 3</b> and <b>S2</b> from <b>CP 3</b> to <b>CP 6</b>. Each driver sees each
+        sector's time against their own best for it. Sectors are saved with the layout.
+      </div>
+    </div>
 
     <!-- ===== Branch gates: the other ways through a checkpoint ===== -->
     <div class="rm-lanes" ng-if="editorTarget === 'branch'">
@@ -2481,6 +2644,9 @@
                 title="Other gates that clear this checkpoint. Driving through any one of them counts.">
             ⤳ {{ slotBranchCount($index + 1) }} branch{{ slotBranchCount($index + 1) === 1 ? '' : 'es' }}
           </span>
+          <!-- Which sectors end and start here, so the list reads as the lap. -->
+          <span class="rm-editor-sector" ng-if="editorTarget === 'main' && sectorBadge($index + 1)"
+                title="Sectors whose clock stops or starts at this gate">{{ sectorBadge($index + 1) }}</span>
           <!-- Re-point a placed branch gate at a different checkpoint. Not
                ng-model: the branch gate list is rebuilt each digest, so a two-way
                binding into it would write to an array nobody reads. -->
@@ -4097,7 +4263,9 @@
         LAP<b ng-if="lapHold.lap">&nbsp;{{ lapHold.lap }}</b> {{ formatLap(lapHold.lapTime) }}<span
           class="rm-delta" ng-class="deltaClass(lapHold.delta)"
           ng-if="lapHold.delta !== null && lapHold.delta !== undefined"
-          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span>
+          title="Against your previous lap. Green is faster.">&nbsp;{{ formatDelta(lapHold.delta) }}</span><span
+          class="rm-lapcut" ng-if="lapHold.cut"
+          title="A checkpoint was skipped on this lap: its time does not count for a best lap, the fastest lap or qualifying.">&nbsp;CUT</span>
       </span>
       <!-- SECTORS ON THE DRIVER BAR TOO, and this is the board that needs them
            most: it is the whole HUD for a non-admin, who has no header above it
@@ -4178,7 +4346,7 @@
     <span class="rm-pace-badge" ng-if="cautionPending"
           title="The yellow is out and the field is racing back to the line. Positions lock as you complete this lap, on the lap the leader is on.">CAUTION &middot; RACE BACK TO THE LINE</span>
     <span class="rm-pace-badge" ng-if="caution &amp;&amp; !restartPending"
-          title="Full-course caution: hold position, no overtaking. Places are locked in the order the field came back to the line.">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
+          title="{{ cautionFrozenTitle() }}">CAUTION &middot; POSITIONS FROZEN<b ng-if="cautionLaps"> &middot; LAP {{ cautionLaps }}</b></span>
     <span class="rm-restart-badge" ng-if="caution &amp;&amp; restartPending &amp;&amp; !greenReady"
           title="A restart is called: GET READY comes as the restart leader nears the line, then the green at a random point before it.">RESTART THIS LAP &middot; GREEN ON THE RUN IN</span>
     <!-- ONE BADGE FOR THE WHOLE FORMATION LAP: what it is, what to do, and that
@@ -4190,6 +4358,12 @@
           title="The run to the line has begun: the green flag falls at a random point before it. Hold position until it does.">GET READY &middot; HOLD UNTIL THE GREEN FLAG</span>
     <span class="rm-driverbar-label" ng-if="jokerEnabled">
       JOKER <b ng-class="{'rm-joker-done': jokerTaken}">{{ jokerTaken ? 'DONE (lap ' + jokerLap + ')' : 'PENDING' }}</b>
+    </span>
+    <!-- Checkpoint skips: this driver's warnings, time penalty and a lift-off
+         to serve, only once there is one. -->
+    <span class="rm-driverbar-label" ng-if="cpSkipEnabled &amp;&amp; myCpSkip"
+          title="Your checkpoint skips: warnings used, the time penalty on your race time, and a lift-off to serve">
+      CUTS <b class="rm-cp-mine">{{ myCpLabel() }}</b>
     </span>
     <span class="rm-driverbar-label" ng-if="resetsLimited()">
       RESETS <b ng-class="{'rm-reset-low': myResetsLow()}">{{ resetsUsed }}/{{ maxResets }}</b>
@@ -4786,7 +4960,15 @@
                    ng-blur="pinGridSlot(row)"
                    title="Type a starting slot and press Enter to pin this driver to it">
           </td>
-          <td class="rm-col-name" title="{{ driverName(row) }}{{ realName(row) ? ' (' + realName(row) + ')' : '' }}">{{ driverName(row) }}</td>
+          <td class="rm-col-name" title="{{ driverName(row) }}{{ realName(row) ? ' (' + realName(row) + ')' : '' }}">{{ driverName(row) }}<span
+              class="rm-ucpass" ng-if="row.ucPassed"
+              title="Passed {{ row.ucPassed }} under caution and has not given the place back. The board keeps the frozen order until the green.">&#9888; owes a place</span><span
+              class="rm-ucpass rm-cp-pen" ng-if="row.penaltySeconds"
+              title="Checkpoint-skip penalty: added to the race time in the final classification, not to the order on the road.">{{ penaltyLabel(row) }}</span><span
+              class="rm-ucpass rm-cp-lift" ng-if="row.liftOwed"
+              title="Owes a lift-off for a skipped checkpoint. Not served in time, or still owed at the flag, it becomes a time penalty.">LIFT</span><span
+              class="rm-cp-warn" ng-if="cpWarnShown(row)"
+              title="Checkpoint-skip warnings used">{{ cpWarnLabel(row) }}</span></td>
           <td class="rm-col-lap" ng-if="!pointToPoint" title="{{ (row.outLap && sessionKind === 'quali') ? 'Out lap: not timed, not counted' : (row.cpCleared ? row.cpCleared + ' checkpoint(s) cleared this lap' : '') }}">{{ lapLabel(row) }}</td>
           <td class="rm-col-lap" ng-if="pointToPoint" title="Checkpoints cleared of the stage's total">{{ stageProgress(row) }}</td>
           <!-- Fastest lap of the session, in gold. A plain equality test per
@@ -5886,6 +6068,25 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* Sectors: gold, a color no gate is drawn in, so a badge in the gate list is
+     never read as a kind of gate. */
+  .rm-sectors-title { font-size: 11px; font-weight: 700; color: #e6c86e; }
+  .rm-sector-name {
+    min-width: 24px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #e6c86e;
+  }
+  /* A gate name is short: the pickers stay compact instead of filling the row. */
+  .rm-sectors .rm-lane-picker { flex: 0 1 130px; }
+  .rm-sector-bad { color: #ff8a65; }
+  .rm-editor-sector {
+    font-size: 10px;
+    color: #e6c86e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   /* Derby arena editing: the two placed lists, side by side while the panel is
      wide enough and stacked when it is not. The rows themselves reuse the track
@@ -6245,6 +6446,39 @@
   .rm-entryset { display: inline-flex; gap: 4px; }
   .rm-btn-redflag { border-color: rgba(255, 82, 82, 0.85); color: #ff8a8a; }
   .rm-btn-caution { border-color: rgba(251, 188, 5, 0.85); color: #fdd663; }
+  /* A pass under caution: amber like the caution, on the passer's row. */
+  .rm-ucpass {
+    margin-left: 6px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #1a1a1a;
+    background: #fdd663;
+  }
+  /* Checkpoint skips, beside the name like the pass under caution: a time
+     penalty in red, a lift owed in amber, warnings used as a quiet tag. */
+  .rm-cp-pen { color: #fff; background: #d93025; }
+  .rm-cp-lift { color: #1a1a1a; background: #fbbc05; }
+  .rm-cp-warn {
+    margin-left: 6px;
+    font-size: 10px;
+    color: var(--rm-muted, #9aa0a6);
+  }
+  .rm-cp-mine { color: #ff8a80; }
+  .rm-lapcut { color: #ff8a80; font-weight: 700; }
+  .rm-uc-passes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-top: 1px solid rgba(251, 188, 5, 0.35);
+  }
+  .rm-uc-title { font-weight: 700; color: #fdd663; }
+  .rm-uc-pass { color: #ff8a65; }
+  .rm-uc-restored { color: var(--rm-muted, #9aa0a6); }
   /* The full-course yellow and the restart out of it. Heavier than the advisory
      flag buttons beside them, because they change what the race IS rather than
      what is being shown to it. */

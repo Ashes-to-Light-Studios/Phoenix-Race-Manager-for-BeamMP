@@ -35,7 +35,7 @@ M.ROWS        = 20          -- table rows in a post; the attached file has the r
 M.MAX_ATTACH  = 1024 * 1024
 
 -- Relative to the server's working directory. Tests point these at scratch.
-M.paths = { root = '', data = 'Resources/Server/RaceManager/Data' }
+M.paths = { root = '', data = 'Resources/Server/PhoenixRM Server/Data' }
 
 -- Process calls, as a table so the tests can stand in for them.
 M.sys = { popen = io.popen, execute = os.execute }
@@ -303,6 +303,8 @@ function M.build.race(data)
 
   local winner = final[1].finishTime and final[1].status ~= 'dsq' and final[1] or nil
   local rows = {}
+  -- Room for a penalty note when one is shown (the cell is cut at its width).
+  local timeW = 10
   for i, rec in ipairs(final) do
     local pos, time
     if rec.status == 'dsq' then
@@ -313,10 +315,17 @@ function M.build.race(data)
       if down > 0 then
         time = '+' .. down .. (down == 1 and ' lap' or ' laps')
       elseif winner and rec ~= winner then
-        local gap = rec.finishTime - winner.finishTime
+        -- On the classified time: the flag plus any checkpoint-skip penalty,
+        -- which is what put the order in this order.
+        local gap = (rec.finishTime + (rec.penaltySeconds or 0))
+          - (winner.finishTime + (winner.penaltySeconds or 0))
         time = '+' .. (gap >= 60 and host.fmtLap(gap) or string.format('%.3f', gap))
       else
-        time = host.fmtLap(rec.finishTime)
+        time = host.fmtLap(rec.finishTime + (rec.penaltySeconds or 0))
+      end
+      if (rec.penaltySeconds or 0) > 0 then
+        time = time .. string.format(' (+%.1fs pen)', rec.penaltySeconds)
+        timeW = 22
       end
     else
       pos, time = 'DNF', 'DNF'
@@ -326,7 +335,7 @@ function M.build.race(data)
 
   local lines = { string.format('%s \u{00B7} %s \u{00B7} %d driver%s', where(trackName()),
     host.raceLength(), #final, #final == 1 and '' or 's') }
-  lines[#lines + 1] = grid({ 'Pos', 'Driver', 'Best', 'Time' }, rows, { 4, 18, 9, 10 })
+  lines[#lines + 1] = grid({ 'Pos', 'Driver', 'Best', 'Time' }, rows, { 4, 18, 9, timeW })
   lines[#lines + 1] = more(rows, data)
 
   local fields = {}

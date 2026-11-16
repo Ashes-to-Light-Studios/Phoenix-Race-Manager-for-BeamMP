@@ -27,7 +27,7 @@ so a late copy cannot replace a newer one.
 
 ## What the server keeps
 
-Everything durable lives beside the plugin in `Resources/Server/RaceManager/`,
+Everything durable lives beside the plugin in `Resources/Server/PhoenixRM Server/`,
 written as JSON on every change through one small codec in `main.lua` (the
 network payloads use BeamMP's `Util.JsonEncode`; persistence gets its own strict
 one so the headless tests exercise the real file format).
@@ -92,8 +92,8 @@ a service manager. See [Switching maps](REFERENCE.md#switching-maps).
   `Start-Process`, which hands it none of the server's sockets.
 - **The zip is read in plain Lua**: SHA-256 against the digest GitHub lists,
   CRC-32 per entry and inflate, about a second for a release, because many Linux
-  hosts have no `unzip`. It installs only `Client/RaceManager.zip` and top-level
-  `Server/RaceManager/*.lua`, and refuses a release with any other path rather
+  hosts have no `unzip`. It installs only `Client/PhoenixRM Client.zip` and top-level
+  `Server/PhoenixRM Server/*.lua` (and the LICENSE beside them), and refuses a release with any other path rather
   than install half of one. The package workflow fails a release that has one.
 - **Its state rides each admin's own `RM_Update`** (`prmUpdate`, from
   `broadcastState(pid)`), not an event of its own. A client binds its server

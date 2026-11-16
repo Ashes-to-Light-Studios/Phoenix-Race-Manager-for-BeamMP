@@ -158,7 +158,7 @@ local function check(cond, msg)
   if not cond then fails = fails + 1; print('FAIL: ' .. msg) end
 end
 
-local ROSTER = 'Resources/Server/RaceManager/Data/roster.json'
+local ROSTER = 'Resources/Server/PhoenixRM Server/Data/roster.json'
 local function readRoster()
   local f = io.open(ROSTER, 'r')
   if not f then return nil end
@@ -203,7 +203,7 @@ local function connRow(pid)
   end
 end
 local function cupTotal(entryId)
-  local f = io.open('Resources/Server/RaceManager/Data/cup.json', 'r')
+  local f = io.open('Resources/Server/PhoenixRM Server/Data/cup.json', 'r')
   if not f then return nil end
   local okp, data = pcall(jsonDecode, f:read('*a'))
   f:close()
@@ -258,7 +258,7 @@ end
 local function lastResults()
   local path = nil
   for _, m in ipairs(chatLog) do
-    local p = m:match('(Resources/Server/RaceManager/Data/results/[%w%-_%.]+%.txt)')
+    local p = m:match('(Resources/Server/PhoenixRM Server/Data/results/[%w%-_%.]+%.txt)')
     if p then path = p end
   end
   if not path then return '' end

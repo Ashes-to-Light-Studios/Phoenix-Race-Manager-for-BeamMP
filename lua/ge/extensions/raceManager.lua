@@ -32,6 +32,9 @@ local M = {}
 -- One table, not a local apiece: the top level is near Lua's 200-local limit,
 -- and going over stops the file compiling, with no error in game.
 local TUNE = {
+  -- Most sectors a layout may define. The server caps it too (sector_test
+  -- holds the two together).
+  MAX_SECTORS = 20,
   DEFAULT_WIDTH = 20,    -- meters across the gate (lateral span)
   MIN_WIDTH = 2,
   MAX_WIDTH = 120,
@@ -134,6 +137,29 @@ local TUNE = {
   RESET_FACE_STILL  = 3.0,
   RESET_FACE_TURNS  = 3,
   PROGRESS_EVERY = 0.3,   -- seconds between live-position reports
+  -- CHECKPOINT SKIPS. A frame whose segment is longer than this many meters is
+  -- a teleport (a reset to the last checkpoint, a recovery, a vehicle switch),
+  -- never a skip: it can cut straight through gates. Racing speed is well under
+  -- a meter a frame.
+  SKIP_MAX_STEP = 30,
+  -- Seconds after one of our own resets during which no skip is detected: a
+  -- recovery can place the car over several frames.
+  SKIP_RESET_QUIET = 0.5,
+  -- THE LIFT-OFF: throttle INPUT at or under this is off; a car under this
+  -- speed (m/s) is not serving it (the countdown pauses); throttle on for
+  -- longer than the grace restarts the lift at its full length.
+  LIFT_MAX_THROTTLE = 0.05,
+  LIFT_MIN_SPEED    = 5,
+  LIFT_BLIP_GRACE   = 0.25,
+  -- How often the vehicle VM is asked for the throttle while a lift is owed,
+  -- how stale an answer may be before the countdown pauses, and how often the
+  -- HUD line is redrawn as it counts down.
+  LIFT_POLL_EVERY   = 0.1,
+  LIFT_STALE        = 1.0,
+  LIFT_HUD_EVERY    = 0.25,
+  -- A lift reported served that the server has not taken off our row within
+  -- this many seconds was refused: count it owed again.
+  LIFT_ACK_WAIT     = 5.0,
   -- Meters before the S/F line the white flag shows: waved on the approach. Not
   -- off the progress report, which is 12 m between samples at 90 mph.
   WHITE_FLAG_AT = 50,
@@ -195,7 +221,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.23.4'
+local RM_BUILD = '0.25.0'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -228,6 +254,33 @@ local session = {
   --   lappingAhead  the car close ahead is a lap or more down.
   beingLapped  = false,
   lappingAhead = false,
+  -- Off our own row too: the cars we passed under caution and have not given
+  -- back (names), or nil.
+  ucPassed     = nil,
+  -- CHECKPOINT SKIPS. The rules, mirrored from RM_Update (cpSkip): detection
+  -- runs only while `enabled`, and looks `maxGates` gates past the armed one.
+  cpSkip = {
+    enabled = false, warnings = 1, type = 'time',
+    penaltySec = 5, liftSec = 3, liftWindow = 30, maxGates = 2,
+  },
+  -- This lap had a skip on it: RM_Lap says so and the server times nothing.
+  lapCut      = false,
+  -- Has this car cleared a gate since GO? Until it has, the S/F line is never a
+  -- skip target: a grid behind the line drives over it first.
+  gateCleared = false,
+  -- Teleport guard after one of our own resets: frames, and a time on localTime.
+  skipQuietFrames = 0,
+  skipQuietUntil  = -1,
+  -- Our own row's tallies as last seen (nil reads 0), so a CHANGE is what
+  -- raises a notice: warnings spent, penalty seconds, lifts owed.
+  cpRow = { warn = 0, pen = 0, lift = 0, window = nil },
+  -- THE LIFT-OFF being served (lift.update): the throttle and speed off the
+  -- last poll, the countdown, and lifts sent served the row does not show yet.
+  lift = {
+    left = 0, overFor = 0, restarted = false, active = false,
+    throttle = nil, speed = 0, at = -1, pollLeft = 0, paused = false,
+    sent = 0, sentAge = 0,
+  },
   -- A restart is called and the green falls as the leader reaches the line.
   restartPending = false,
   -- The heat program: a heat can run its own distance (effectiveLapTarget).
@@ -302,6 +355,12 @@ local track = {
   -- The gate an out lap arms first, by number (branch.firstGate). Past 1 for a
   -- grid part way round. Travels with the layout.
   firstCheckpoint = 1,
+  -- SECTORS, defined by the admin: { from = a, to = b }, each end a checkpoint
+  -- number or 0 for the start/finish line. 0 rather than the line's number,
+  -- because the line is whichever gate is LAST and moves as gates are added.
+  -- Empty: every checkpoint closes a sector of its own, as before sectors
+  -- could be defined. Travels with the layout.
+  sectors = {},
   -- Size given to newly placed gates, and the layout's stored default for any
   -- gate without an override of its own.
   checkpointWidth  = TUNE.DEFAULT_WIDTH,
@@ -632,14 +691,97 @@ local practice = { on = false, layout = nil, lapTarget = 0, lapsDone = 0,
 --   prevLap      the last TIMED lap, which the lap delta is measured against
 --   bestSector   [n] = fastest time seen for sector n this session
 --   sectors      [n] = this lap's sector times, for the readout
-local timing = { sectorStart = 0, prevLap = nil, bestSector = {}, sectors = {} }
+--   passed       [gate] = localTime this car last crossed that gate, the line
+--                as 0; a defined sector runs from one of these to the next.
+local timing = { sectorStart = 0, prevLap = nil, bestSector = {}, sectors = {},
+                 passed = {} }
 
--- Wiped on every session change.
+-- Wiped on every session change. Starting the clock is crossing the line.
 local function timingReset()
   timing.sectorStart = localTime
   timing.prevLap     = nil
   timing.bestSector  = {}
   timing.sectors     = {}
+  timing.passed      = { [0] = localTime }
+end
+
+-- A gate number as a sector end: the line is 0, whatever its number. So is
+-- anything past the route, which is where a reference to the old line lands
+-- when the last gate is taken away.
+function timing.gateKey(n)
+  n = math.floor(tonumber(n) or 0)
+  if n <= 0 or n >= #track.route then return 0 end
+  return n
+end
+
+-- A layout's sectors as they arrive, kept only where both ends name a gate on
+-- the route now loaded (the server checks the same on save).
+function timing.unbundleSectors(raw)
+  local out = {}
+  if type(raw) ~= 'table' then return out end
+  local n = #track.route
+  for _, sec in ipairs(raw) do
+    local from = type(sec) == 'table' and tonumber(sec.from)
+    local to   = type(sec) == 'table' and tonumber(sec.to)
+    if from and to then
+      from, to = math.floor(from), math.floor(to)
+      if from >= 0 and to >= 0 and from < n and to < n and from ~= to then
+        out[#out + 1] = { from = from, to = to }
+      end
+    end
+  end
+  return out
+end
+
+-- The sectors for a save, each end as the server checks it (the line is 0).
+-- Returns nil and the number of a sector that starts and ends at one gate,
+-- which times nothing and would be refused.
+function timing.bundleSectors()
+  if #track.sectors == 0 then return nil end
+  local out = {}
+  for i, sec in ipairs(track.sectors) do
+    local from, to = timing.gateKey(sec.from), timing.gateKey(sec.to)
+    if from == to then return nil, i end
+    out[i] = { from = from, to = to }
+  end
+  return out
+end
+
+-- A checkpoint is going away. A sector starting or ending there moves to the
+-- gate before it; CP 1's goes to the line, which IS the gate before it.
+function timing.sectorsLoseGate(index)
+  for _, sec in ipairs(track.sectors) do
+    if sec.from == index then sec.from = index - 1 end
+    if sec.to == index then sec.to = index - 1 end
+  end
+end
+
+-- A checkpoint moved in the order: sector ends follow the gate they name,
+-- the way the first checkpoint does. The line (0) stays the line.
+function timing.sectorsReorder(from, to)
+  local lo, hi, step = math.min(from, to), math.max(from, to), (from < to) and -1 or 1
+  local function moved(v)
+    if v == 0 then return 0 end
+    if v == from then return to end
+    if v >= lo and v <= hi then return v + step end
+    return v
+  end
+  for _, sec in ipairs(track.sectors) do
+    sec.from, sec.to = moved(sec.from), moved(sec.to)
+  end
+end
+
+-- One sector done: hold its time against this driver's best for that sector.
+function timing.closeSector(n, count, t)
+  if not (t > 0) then return end
+  timing.sectors[n] = t
+  local best = timing.bestSector[n]
+  local delta = best and (t - best) or nil
+  if not best or t < best then timing.bestSector[n] = t end
+  guihooks.trigger('RaceManagerSector', {
+    sector = n, count = count, time = t,
+    delta = delta, best = not best or t <= timing.bestSector[n],
+  })
 end
 
 -- Seconds until the next live-position report.
@@ -1048,6 +1190,11 @@ function edit.fingerprint()
   fold(branch.list)
   fold(props.list)
   n = (n * 31 + (track.firstCheckpoint or 1)) % 2147483647
+  n = (n * 31 + #track.sectors) % 2147483647
+  for i = 1, #track.sectors do
+    local sec = track.sectors[i]
+    n = (n * 31 + (sec.from or 0) * 1000 + (sec.to or 0)) % 2147483647
+  end
   return n
 end
 
@@ -1139,6 +1286,8 @@ local function pushRouteState()
     branchSlot   = branch.editSlot,
     gridOffLine  = branch.gridIsOff(),
     firstCheckpoint = branch.firstGate(),
+    sectors      = track.sectors,
+    maxSectors   = TUNE.MAX_SECTORS,
     -- A generated grid the spacing sliders may move; hand-placed is left alone.
     gridGenerated = branch.gridTool.generated,
     gridSpacing   = branch.gridTool.spacing,
@@ -1163,6 +1312,7 @@ local HUD_ICON = {
   vehicle = 'directions_car', spectate = 'visibility', resetsout = 'block',
   pit = 'build', finish = 'emoji_events', grid = 'grid_on',
   session = 'timer', joker = 'alt_route', derby = 'warning', stage = 'traffic',
+  penalty = 'gavel', lift = 'gavel',
 }
 
 -- Ten seconds: read at racing speed, out of the corner of an eye.
@@ -1186,6 +1336,8 @@ local HUD_NOTICE = {
   flag = true, session = true, spectate = true, resetsout = true,
   vehicle = true, joker = true, finish = true, grid = true,
   pit = true, derby = true,
+  -- Checkpoint skips: a warning, a penalty, a lift to serve or served.
+  penalty = true,
 }
 
 local function pushNotice(kind, msg, extra)
@@ -1295,6 +1447,11 @@ local sticky = {
 -- What the HUD should hold now, or nil: the one a driver must act on first.
 local function stickyMessage()
   if not sessionRunning() or session.spectatorLock then return nil end
+  -- A RED OUTRANKS ALL OF THEM. Laid over a caution or a restart, the lines
+  -- below would tell a stopped field to race back, hold station or get ready.
+  if session.raceFlag == 'red' then
+    return 'red', 'RED FLAG - stop where you are and wait.'
+  end
   if session.greenReady then
     return 'ready', 'GET READY: hold position until the green flag falls.'
   end
@@ -1307,9 +1464,19 @@ local function stickyMessage()
   if session.cautionPending then
     return 'caution', 'CAUTION - race back to the line. Positions lock as you complete this lap.'
   end
+  -- A pass under yellow to undo: more urgent than holding station, and the
+  -- server keeps it on our row until the place is back.
+  if session.caution and session.ucPassed then
+    return 'ucpass', 'GIVE THE PLACE BACK to ' .. session.ucPassed
+      .. ': you passed under caution, and it does not count.'
+  end
   if session.caution then
     return 'caution', 'CAUTION - hold position, no overtaking. Places are frozen.'
   end
+  -- A LIFT-OFF owed for a skipped checkpoint, under everything above (it is
+  -- only served under green anyway). It counts down, so stickyUpdate builds
+  -- its text when it redraws it, not here every frame.
+  if session.lift.active then return 'lift', nil end
   return nil
 end
 
@@ -1327,6 +1494,14 @@ local function stickyUpdate(dt)
   sticky.left = sticky.left - dt
   sticky.due  = sticky.due - dt
   local lapsShown = (session.localLap or 0) - sticky.lap
+  -- A lift never expires: it lasts until it is served or turned into time.
+  -- It counts down, in a category of its own so no flag flash is overdrawn.
+  if key == 'lift' then
+    if sticky.due > 0 then return end
+    sticky.due = TUNE.LIFT_HUD_EVERY
+    hudMessage('lift', session.lift.hudText(), TUNE.LIFT_HUD_EVERY + 0.75)
+    return
+  end
   if sticky.left <= 0 or lapsShown > sticky.LAPS then return end
   if sticky.due > 0 then return end
   sticky.due = sticky.REFRESH
@@ -1350,6 +1525,11 @@ local function resetLapTracking()
   session.jokerTaken   = false
   session.jokerLapUsed = nil
   session.resetsUsed   = 0
+  -- Checkpoint skips: a clean lap, no gate cleared yet, no lift being served.
+  session.lapCut       = false
+  session.gateCleared  = false
+  session.lift.active  = false
+  session.lift.sent, session.lift.sentAge = 0, 0
   lastGate     = nil
   lastGateBack = false
   block.noticeLeft = 0   -- a fresh session may report its first blocked attempt at once
@@ -1408,6 +1588,8 @@ local function clearTrackState(reason)
   branch.gridOffLine = false
   branch.editSlot    = 1
   track.firstCheckpoint = 1
+  -- Sectors name checkpoints by number: they go with the route.
+  track.sectors = {}
   pushRouteState()
   log('I', 'raceManager', 'Track state cleared (' .. tostring(reason or 'local') .. ')')
 end
@@ -1449,7 +1631,9 @@ local function onLapCompleted()
     -- best. nil on the first timed lap rather than a false 0.000.
     local delta = timing.prevLap and (lapTime - timing.prevLap) or nil
     timing.prevLap = lapTime
-    guihooks.trigger('RaceManagerLapDone', { lapTime = lapTime, lap = n, delta = delta })
+    guihooks.trigger('RaceManagerLapDone', { lapTime = lapTime, lap = n, delta = delta,
+      -- A checkpoint was skipped: shown, but it counts for nothing.
+      cut = session.lapCut or nil })
   end
 
   -- ONE report for every lap, out lap included: the server decides what it
@@ -1471,7 +1655,9 @@ local function onLapCompleted()
   if not sessionRunning() then return end
   local outLap = onOutLap()
   if inMultiplayer() then
-    TriggerServerEvent('RM_Lap', jsonEncode({ lapTime = lapTime }))
+    -- `cut`: a checkpoint was skipped on it, so its time sets nothing. Left out
+    -- (nil) on a clean lap, which is every lap with the rule off.
+    TriggerServerEvent('RM_Lap', jsonEncode({ lapTime = lapTime, cut = session.lapCut or nil }))
   end
   if outLap then
     -- No time for an untimed lap; say that timing has started instead.
@@ -1488,6 +1674,8 @@ local function onLapCompleted()
   end
   session.localLap = session.localLap + 1
   session.lapStart = localTime
+  -- A new lap starts clean.
+  session.lapCut = false
   -- New sectors. The stamp is not reset: the crossing already moved it.
   timing.sectors = {}
 end
@@ -1584,6 +1772,86 @@ function branch.crossedAt(i, p0, p1)
   return nil, false
 end
 
+-- ---------------------------------------------------------------------------
+-- CHECKPOINT SKIPS (a track cut), seen here because only this side has the car.
+-- The armed gate is tested first, exactly as before; only when it was NOT
+-- crossed, and the rule is on, are the next maxGates slots looked at. Forward
+-- crossings only, the first hit wins, and never past the S/F line, which can be
+-- landed on but never skipped. The server rules on what it costs.
+-- ---------------------------------------------------------------------------
+-- branch.crossedAt, FORWARD ONLY. A gate driven against its heading is a shared
+-- corner, a head-on oval's other lane, or a car going back for a gate it
+-- missed: never a cut. Allocation-free, like the frame it runs in.
+function branch.crossedForwardAt(i, p0, p1)
+  local wp = track.route[i]
+  if wp then
+    local crossed, backwards = segmentCrossesGate(wp, p0, p1)
+    if crossed and not backwards then return wp end
+  end
+  local alts = branch.bySlot[i]
+  if alts then
+    for k = 1, #alts do
+      local crossed, backwards = segmentCrossesGate(alts[k], p0, p1)
+      if crossed and not backwards then return alts[k] end
+    end
+  end
+  return nil
+end
+
+-- May this frame's movement be read as a skip? Racing or qualifying with the
+-- rule on, past the out lap (which covers a grid off the line and the pace
+-- lap), in the session, and not a teleport: our own reset a moment ago, or a
+-- segment longer than any frame at racing speed.
+function branch.skipWatch(prev, pos)
+  if not session.cpSkip.enabled then return false end
+  if session.phase ~= 'racing' and session.phase ~= 'qualifying' then return false end
+  if practice.on or session.spectatorLock or onOutLap() then return false end
+  if session.skipQuietFrames > 0 or localTime < session.skipQuietUntil then return false end
+  local dx, dy, dz = pos.x - prev.x, pos.y - prev.y, pos.z - prev.z
+  local m = TUNE.SKIP_MAX_STEP
+  return dx * dx + dy * dy + dz * dz <= m * m
+end
+
+-- The gate this segment skipped ahead to, and its slot, or nil.
+function branch.skipAhead(prev, pos)
+  local n = #track.route
+  local last = session.armedWp + session.cpSkip.maxGates
+  if last > n then last = n end
+  for j = session.armedWp + 1, last do
+    -- The line is no target until this car has cleared a gate: a grid behind
+    -- it drives over the line first, and that was never a skip.
+    if j < n or session.gateCleared then
+      local wp = branch.crossedForwardAt(j, prev, pos)
+      if wp then return wp, j end
+    end
+  end
+  return nil
+end
+
+-- Our car was just moved by something other than driving (a reset, a spawn, a
+-- vehicle switch): no skip for the next frames or SKIP_RESET_QUIET seconds,
+-- whichever is longer. The armed-gate test is left alone.
+function branch.skipQuiet()
+  session.skipQuietFrames = 2
+  session.skipQuietUntil  = localTime + TUNE.SKIP_RESET_QUIET
+end
+
+-- Tell the server, BEFORE the lap the skip may complete is reported: it rules
+-- on its own lap count, and a finished car is no longer on track. Qualifying
+-- has no penalty, so the driver hears it here.
+function branch.reportSkip(from, to, skipped)
+  if inMultiplayer() then
+    TriggerServerEvent('RM_CheckpointSkip', jsonEncode({
+      lap = session.localLap, from = from, to = to, skipped = skipped,
+    }))
+  end
+  if session.phase == 'qualifying' then
+    pushNotice('penalty', 'CHECKPOINT SKIPPED', { sub = 'This lap will not be timed' })
+  end
+  log('I', 'raceManager', string.format('Checkpoint skip on lap %d: armed on %d, crossed %d (%d skipped)',
+    session.localLap, from, to, skipped))
+end
+
 -- The gate for slot i nearest this position: the one this car is driving
 -- towards on a branched slot (head-on fields rank by it).
 function branch.nearestAt(i, pos)
@@ -1634,6 +1902,20 @@ local function checkGates()
     -- slot 1 just runs a longer out lap.
     local wp, backwards = branch.crossedAt(session.armedWp, session.prevPos, pos)
     local crossed = wp ~= nil
+    -- A CHECKPOINT SKIP, only when the armed gate was missed (branch.skipWatch).
+    -- It is then a crossing of the gate it reached, so the car is not left
+    -- armed on the one it cut past.
+    local skipped = 0
+    if not crossed and branch.skipWatch(session.prevPos, pos) then
+      local j
+      wp, j = branch.skipAhead(session.prevPos, pos)
+      if wp then
+        crossed, backwards, skipped = true, false, j - session.armedWp
+      end
+    end
+    -- The reset guard counts frames as well as time: a long frame must not
+    -- outrun it.
+    if session.skipQuietFrames > 0 then session.skipQuietFrames = session.skipQuietFrames - 1 end
 
     if crossed then
       lastGate     = wp   -- the "Last Checkpoint" reset mode respawns here
@@ -1644,26 +1926,48 @@ local function checkGates()
       end
       -- Back on the racing line: the pit lane is behind us however we left it.
       if pit.inLane then pit.leaveLane('cleared a checkpoint') end
+      session.gateCleared = true
+      -- A skip moves the armed gate to the one crossed, and marks the lap.
+      local skipFrom = session.armedWp
+      if skipped > 0 then
+        session.armedWp = skipFrom + skipped
+        session.lapCut  = true
+      end
 
-      -- SECTOR CLOSED (sector number = gate number). Taken before onLapCompleted
-      -- moves lapStart. The out lap is stamped but never scored.
+      -- SECTOR CLOSED. Taken before onLapCompleted moves lapStart. The out lap
+      -- is stamped but never scored. Not on a backwards crossing either: it
+      -- clears the gate but is no time anybody drove, and would poison the best.
+      -- Nor across a skip: the stretch cut was not driven.
       do
         local n = session.armedWp
-        local sectorTime = localTime - timing.sectorStart
-        timing.sectorStart = localTime
-        -- Not on a backwards crossing: it clears the gate but is no time anybody
-        -- drove, and would poison the best.
-        if sectorTime > 0 and not backwards and not onOutLap() then
-          timing.sectors[n] = sectorTime
-          local best = timing.bestSector[n]
-          local delta = best and (sectorTime - best) or nil
-          if not best or sectorTime < best then timing.bestSector[n] = sectorTime end
-          guihooks.trigger('RaceManagerSector', {
-            sector = n, count = #track.route, time = sectorTime,
-            delta = delta, best = not best or sectorTime <= timing.bestSector[n],
-          })
+        local scored = not backwards and not onOutLap() and skipped == 0
+        local defined = track.sectors
+        if #defined > 0 then
+          -- THE ADMIN'S SECTORS. Each one ending at this gate closes, timed from
+          -- this car's last crossing of the gate it starts at. Closed before
+          -- this crossing is stamped, so one ending where the next begins times
+          -- both. One whose start was never crossed (an out lap begun past it)
+          -- has no time to give.
+          local key = timing.gateKey(n)
+          for i = 1, #defined do
+            local from, to = timing.gateKey(defined[i].from), timing.gateKey(defined[i].to)
+            local t0 = timing.passed[from]
+            if to == key and from ~= to and t0 and scored then
+              timing.closeSector(i, #defined, localTime - t0)
+            end
+          end
+          -- Gates cut past were not crossed this lap: a sector starting at one
+          -- has nothing to be timed from (last lap's stamp would time a lap).
+          for k = skipFrom, n - 1 do timing.passed[timing.gateKey(k)] = nil end
+          timing.passed[key] = localTime
+        else
+          -- None defined: every checkpoint closes one (sector number = gate).
+          local sectorTime = localTime - timing.sectorStart
+          if scored then timing.closeSector(n, #track.route, sectorTime) end
         end
+        timing.sectorStart = localTime
       end
+      if skipped > 0 then branch.reportSkip(skipFrom, session.armedWp, skipped) end
       if session.armedWp >= #track.route then
         onLapCompleted()
         session.armedWp = 1
@@ -1684,6 +1988,168 @@ local function checkGates()
   else
     session.prevPos = { x = pos.x, y = pos.y, z = pos.z }
   end
+end
+
+-- ---------------------------------------------------------------------------
+-- THE LIFT-OFF PENALTY (checkpoint skips)
+-- ---------------------------------------------------------------------------
+-- Told and monitored, not enforced: the server puts `liftOwed` on our row, and
+-- this counts each unit (liftSec seconds) down while the driver is off the
+-- throttle at racing speed under green, then reports it served. The server
+-- turns what is not served in time into seconds. The throttle INPUT is read in
+-- the vehicle VM (keyboard, pad and wheel alike), ten times a second and only
+-- while a lift is owed. A per-frame path: no allocation outside the poll.
+
+-- Runs in the vehicle VM. `rmLift`, not a short name: tests/scope_test.lua
+-- scans this string as code. A level-one long string on purpose:
+-- tests/garage_test.lua lifts the first level-two one out of this file, and
+-- that must stay the vehicle digest.
+session.lift.PROBE = [=[
+  pcall(function ()
+    local rmLift = electrics and electrics.values and electrics.values.throttle_input
+    if type(rmLift) ~= 'number' and type(input) == 'table' then rmLift = input.throttle end
+    if type(rmLift) ~= 'number' then rmLift = -1 end
+    obj:queueGameEngineLua('raceManager.onLiftThrottle(' .. string.format('%.3f', rmLift) .. ')')
+  end)
+]=]
+
+-- Lifts owed that this client has not already reported served.
+function session.lift.owed()
+  return (session.cpRow.lift or 0) - session.lift.sent
+end
+
+function session.lift.update(dt)
+  local L = session.lift
+  -- A served lift the server never took off our row was refused: owed again.
+  if L.sent > 0 then
+    L.sentAge = L.sentAge + dt
+    if L.sentAge > TUNE.LIFT_ACK_WAIT then L.sent, L.sentAge = 0, 0 end
+  end
+  if L.owed() <= 0 or session.phase ~= 'racing' or session.spectatorLock then
+    L.active = false
+    return
+  end
+  local full = session.cpSkip.liftSec
+  if not L.active then
+    L.active, L.left, L.overFor, L.restarted, L.paused = true, full, 0, false, false
+    L.pollLeft, L.throttle, L.at = 0, nil, -1
+  end
+  -- The poll: the VM answers through M.onLiftThrottle. Speed is read here.
+  L.pollLeft = L.pollLeft - dt
+  if L.pollLeft <= 0 then
+    L.pollLeft = TUNE.LIFT_POLL_EVERY
+    local veh = ownVehicle()
+    if veh then
+      pcall(veh.queueLuaCommand, veh, L.PROBE)
+      -- A vec3 may be a table or FFI data: read its fields, never its type.
+      local ok, v = pcall(veh.getVelocity, veh)
+      if ok and v then
+        local x, y, z = tonumber(v.x) or 0, tonumber(v.y) or 0, tonumber(v.z) or 0
+        L.speed = math.sqrt(x * x + y * y + z * z)
+      end
+    end
+  end
+  -- PAUSED, keeping what is left: neutralised, held (pit stall, grid), below
+  -- racing speed, or no fresh throttle reading.
+  L.paused = session.caution or session.cautionPending or session.restartPending
+    or session.pacing or session.raceFlag == 'red'
+    or pit.active or session.gridFrozen or holdWanted ~= nil
+    or L.throttle == nil or localTime - L.at > TUNE.LIFT_STALE
+    or L.speed < TUNE.LIFT_MIN_SPEED
+  if L.paused then return end
+  if L.throttle <= TUNE.LIFT_MAX_THROTTLE then
+    L.overFor, L.restarted = 0, false
+    L.left = L.left - dt
+    if L.left <= 0 then
+      -- SERVED. The next unit, if one is owed, starts on the next frame.
+      L.active = false
+      L.sent, L.sentAge = L.sent + 1, 0
+      if inMultiplayer() then
+        TriggerServerEvent('RM_LiftServed', jsonEncode({ lap = session.localLap }))
+      end
+      pushNotice('penalty', 'LIFT SERVED - carry on')
+      log('I', 'raceManager', 'Lift-off penalty served')
+    end
+  else
+    -- A blip is forgiven; held on, the lift starts again from the top.
+    L.overFor = L.overFor + dt
+    if L.overFor > TUNE.LIFT_BLIP_GRACE then
+      if L.left < full then L.restarted = true end
+      L.left = full
+    end
+  end
+end
+
+-- The HUD line (stickyUpdate), built only when it is redrawn.
+function session.lift.hudText()
+  local L = session.lift
+  local more = L.owed() - 1
+  local tail = more > 0 and string.format(' (%d more after this)', more) or ''
+  if L.restarted then
+    return string.format('THROTTLE ON - lift restarted (%.1fs)%s', L.left, tail)
+  end
+  return string.format('LIFT OFF THE THROTTLE: %.1fs%s%s', math.max(L.left, 0),
+    L.paused and ' (paused)' or '', tail)
+end
+
+-- What `n` penalised skips cost, as the server says it ('+5.0s', 'lift 3.0s').
+function session.cpRow.cost(n)
+  local cs = session.cpSkip
+  local timePart = string.format('+%.1fs', n * cs.penaltySec)
+  local liftPart = n == 1 and string.format('lift %.1fs', cs.liftSec)
+    or string.format('lift %d x %.1fs', n, cs.liftSec)
+  if cs.type == 'lift' then return liftPart end
+  if cs.type == 'liftAndTime' then return timePart .. ' and ' .. liftPart end
+  return timePart
+end
+
+-- OUR ROW'S TALLIES CHANGED: the server ruled on a skip, or turned a lift into
+-- time. The notice is worked out from what moved, in the server's words, so it
+-- reaches a driver with no chat open. A lift served was said as it was served.
+-- Values going DOWN are a new session (or served lifts): no notice.
+function session.cpRow.apply(w, p, l, win)
+  local cr, cs, L = session.cpRow, session.cpSkip, session.lift
+  local dw, dp, dl = w - cr.warn, p - cr.pen, l - cr.lift
+  -- Served lifts the server has taken off: that many of ours are acknowledged.
+  if dl < 0 and L.sent > 0 then
+    L.sent, L.sentAge = math.max(0, L.sent + dl), 0
+  end
+  cr.warn, cr.pen, cr.lift, cr.window = w, p, l, win
+  if session.phase ~= 'racing' or dw < 0 or dp < 0 then return end
+  local msg
+  if dl < 0 and dp > 0 and dw == 0 then
+    msg = string.format('Lift not served: +%.1fs penalty', dp)
+  else
+    -- Checkpoints penalised by this ruling.
+    local n = cs.type == 'time' and math.floor(dp / cs.penaltySec + 0.5) or math.max(dl, 0)
+    if dw > 0 and n > 0 then
+      msg = string.format('Track Cut: last warning used, %s for %d more checkpoint%s',
+        cr.cost(n), n, n == 1 and '' or 's')
+    elseif dw > 0 then
+      msg = string.format('Track Cut Warning (%d/%d) - next skip: %s', w, cs.warnings, cr.cost(1))
+    elseif n > 0 then
+      local head = n == 1 and 'Checkpoint skipped' or (n .. ' checkpoints skipped')
+      local tail = cs.warnings > 0 and ' (warnings used up)' or ''
+      local lift = n == 1 and string.format('%.1fs', cs.liftSec)
+        or string.format('%d x %.1fs', n, cs.liftSec)
+      if cs.type == 'lift' then
+        msg = string.format('%s: LIFT OFF THE THROTTLE for %s within %ds%s', head, lift,
+          math.floor(cs.liftWindow), tail)
+      elseif cs.type == 'liftAndTime' then
+        msg = string.format('%s: +%.1fs and LIFT OFF for %s%s', head, n * cs.penaltySec, lift, tail)
+      else
+        msg = string.format('%s: +%.1fs penalty%s', head, n * cs.penaltySec, tail)
+      end
+    end
+  end
+  if msg then pushNotice('penalty', msg) end
+end
+
+-- The vehicle VM's answer to the poll: throttle input 0..1, or -1 unknown.
+function M.onLiftThrottle(v)
+  v = tonumber(v)
+  if not v or v < 0 then return end
+  session.lift.throttle, session.lift.at = v, localTime
 end
 
 -- ---------------------------------------------------------------------------
@@ -2895,8 +3361,8 @@ function M.setGarageEnforce(enabled)
   end
 end
 
--- Which half of the signature the server matches on: 'parts' (tuning and paint
--- free) or 'strict' (parts plus tuning).
+-- How much of a car the server matches: 'model' (the model alone; parts and
+-- tuning free), 'parts' (tuning and paint free) or 'strict' (parts plus tuning).
 function M.setGarageMode(mode)
   if inMultiplayer() then
     TriggerServerEvent('RM_SetGarageMode', jsonEncode({ mode = tostring(mode or '') }))
@@ -4173,6 +4639,10 @@ function M.onVehicleResetted(vehId)
   if not isOwnVehicle(vehId) then return end
   local veh = ownVehicle()
   if not veh or vehicleId(veh) ~= vehId then return end
+  -- EVERY reset of ours moves the car in a frame or few (a repair, a recovery,
+  -- the last checkpoint, our own restore), and that segment can cut through
+  -- gates: no checkpoint skip is read from it.
+  branch.skipQuiet()
   -- Our own teleport's echo: never counted, blocked or reported.
   if isSelfTeleportEcho() then
     -- ...but it reloaded the VM and dropped the freeze: put a wanted hold back
@@ -4319,6 +4789,8 @@ end
 function M.onVehicleSpawned(vehId)
   -- A new car re-declares its configuration, shortly (not knowable yet).
   armVehicleConfigReport()
+  -- Our car appearing somewhere is no checkpoint skip.
+  if isOwnVehicle(vehId) then branch.skipQuiet() end
   -- A car appearing under a field-wide ghost is ghosted now, not at the next
   -- sweep: a mass respawn is exactly when cars appear.
   if next(ghost.field) ~= nil and not isOwnVehicle(vehId) then
@@ -4351,6 +4823,12 @@ end
 
 -- BeamNG hook: a vehicle is removed. Id-keyed state is dropped: ids are REUSED,
 -- and the next car would inherit a ghost (or the belief it is ghosted).
+-- BeamNG hook: the player switched cars. The next frame's segment runs from
+-- one car to the other, which is no checkpoint skip.
+function M.onVehicleSwitched()
+  branch.skipQuiet()
+end
+
 function M.onVehicleDestroyed(vehId)
   if vehId == nil then return end
   if ownVehId == vehId then ownVehId = nil end
@@ -5918,6 +6396,7 @@ function M.onUpdate(dt)
   stickyUpdate(dt)          -- conditions held on the HUD: pace lap, caution, restart
   joinRequestUpdate(dt)     -- deferred state request after joining a server
   checkGates()
+  session.lift.update(dt)   -- a lift-off penalty being served (checkpoint skips)
   lapTimerUpdate(dt)        -- live lap clock for this driver's own HUD
   whiteFlagWatch()          -- the last-lap flag, waved on the approach
   reportProgress(dt)        -- live position telemetry (distance to next gate)
@@ -6549,6 +7028,57 @@ function M.setFirstCheckpoint(slot)
   log('I', 'raceManager', 'Out lap starts at checkpoint ' .. slot)
 end
 
+-- --- Sectors ------------------------------------------------------------------
+-- Stretches of the lap timed on their own, named by the gates they run between
+-- (0 is the line). Display only: nothing is scored by them. Every edit forgets
+-- this driver's bests, which belonged to the sectors as they were.
+function timing.sectorEnd(v)
+  v = math.floor(tonumber(v) or 0)
+  if v < 0 or v >= #track.route then v = 0 end
+  return v
+end
+
+-- A new sector starts where the last one ends and runs to the next gate, so
+-- adding them one after another walks round the lap.
+function M.addSector()
+  if #track.route < 2 then
+    guihooks.trigger('RaceManagerEditorMsg', { msg = 'Place the main route first' })
+    return
+  end
+  if #track.sectors >= TUNE.MAX_SECTORS then
+    guihooks.trigger('RaceManagerEditorMsg', {
+      msg = 'A layout has at most ' .. TUNE.MAX_SECTORS .. ' sectors',
+    })
+    return
+  end
+  local last = track.sectors[#track.sectors]
+  local from = last and timing.gateKey(last.to) or 0
+  track.sectors[#track.sectors + 1] = { from = from, to = timing.sectorEnd(from + 1) }
+  timing.bestSector = {}
+  pushRouteState()
+  log('I', 'raceManager', 'Sector ' .. #track.sectors .. ' added')
+end
+
+-- Either end, or both; nil leaves that end where it is.
+function M.setSector(index, from, to)
+  local sec = track.sectors[math.floor(tonumber(index) or 0)]
+  if not sec then return end
+  if from ~= nil then sec.from = timing.sectorEnd(from) end
+  if to ~= nil then sec.to = timing.sectorEnd(to) end
+  timing.bestSector = {}
+  pushRouteState()
+end
+
+-- The ones after it close up and take the numbers down by one.
+function M.removeSector(index)
+  index = math.floor(tonumber(index) or 0)
+  if not track.sectors[index] then return end
+  table.remove(track.sectors, index)
+  timing.bestSector = {}
+  pushRouteState()
+  log('I', 'raceManager', 'Sector ' .. index .. ' removed')
+end
+
 -- Re-point a placed branch gate at another checkpoint (two on one is fine).
 function M.setBranchGateSlot(index, slot)
   index = math.floor(tonumber(index) or 0)
@@ -6817,6 +7347,11 @@ function branch.shiftSlots(from, delta)
   -- The out lap's first checkpoint is addressed by number too.
   local f = track.firstCheckpoint or 1
   if f > 1 and f >= from then track.firstCheckpoint = math.max(f + delta, 1) end
+  -- And the ends of the sectors. The line (0) is not a number that moves.
+  for _, sec in ipairs(track.sectors) do
+    if sec.from > 0 and sec.from >= from then sec.from = math.max(sec.from + delta, 0) end
+    if sec.to > 0 and sec.to >= from then sec.to = math.max(sec.to + delta, 0) end
+  end
 end
 
 -- Drop the branch gates of a checkpoint that is going away.
@@ -6841,6 +7376,7 @@ function M.removeCheckpoint(index)
   table.remove(list, index)
   if edit.target == 'main' then
     local dropped = branch.dropSlot(index)
+    timing.sectorsLoseGate(index)
     branch.shiftSlots(index + 1, -1)
     branch.rebuild()
     if dropped > 0 then
@@ -6921,6 +7457,7 @@ function M.reorderCheckpoint(from, to)
       if f == from then track.firstCheckpoint = to
       elseif f >= lo and f <= hi then track.firstCheckpoint = f + step end
     end
+    timing.sectorsReorder(from, to)
     branch.rebuild()
   end
   pushRouteState()
@@ -7599,6 +8136,11 @@ function M.saveLayout(name, confirmDrop)
     end
     if #alts == 0 then alts = nil end
   end
+  local secs, badSector = timing.bundleSectors()
+  if badSector then
+    editorMsg('Save failed: sector ' .. badSector .. ' starts and ends at the same gate')
+    return
+  end
   local payload = jsonEncode({
     name        = name,
     width       = clampWidth(track.checkpointWidth),
@@ -7612,6 +8154,8 @@ function M.saveLayout(name, confirmDrop)
     gridOffLine    = branch.gridIsOff(),
     -- nil for CP 1, so a layout that never set it saves as it did.
     firstCheckpoint = branch.firstGate() > 1 and branch.firstGate() or nil,
+    -- nil with none defined, so a layout without them saves as it did.
+    sectors        = secs,
     pits           = bundle(track.pitRoute, 'pit stall') or {},
     -- Empty tables, not nil, so a re-save never drops the lane's gates.
     pitEntry       = bundle(track.pitEntry, 'pit entry') or {},
@@ -7836,6 +8380,7 @@ for _, name in ipairs({
   'moveStartPosition', 'removeStartPosition',
   'generateStartPositions', 'respaceGrid', 'flipStartPositions',
   'setBranchSlot', 'setBranchGateSlot', 'removeBranchGate', 'setFirstCheckpoint',
+  'addSector', 'setSector', 'removeSector',
   'nudgeTurn', 'nudgeLift', 'nudgeDelete',
 }) do
   local inner = M[name]
@@ -7891,6 +8436,22 @@ local function onServerUpdate(rawData)
   session.caution = data.caution == true
   session.cautionPending = data.cautionPending == true
   session.restartPending = data.restartPending == true
+  -- Checkpoint skips: the rules (detection reads them every frame). A server
+  -- that sends none has no such rule: off.
+  do
+    local cs, r = session.cpSkip, data.cpSkip
+    if type(r) == 'table' then
+      cs.enabled  = r.enabled == true
+      cs.warnings = math.max(0, math.floor(tonumber(r.warnings) or cs.warnings))
+      if r.type == 'time' or r.type == 'lift' or r.type == 'liftAndTime' then cs.type = r.type end
+      cs.penaltySec = math.max(0.5, tonumber(r.penaltySec) or cs.penaltySec)
+      cs.liftSec    = math.max(0.5, tonumber(r.liftSec) or cs.liftSec)
+      cs.liftWindow = tonumber(r.liftWindow) or cs.liftWindow
+      cs.maxGates   = math.min(math.max(math.floor(tonumber(r.maxGates) or cs.maxGates), 1), 5)
+    else
+      cs.enabled = false
+    end
+  end
   if type(data.cautionLaps) == 'number' then session.cautionLaps = data.cautionLaps end
   -- The heat program: only what the lap target needs.
   session.heatCount   = tonumber(data.heatCount) or 0
@@ -7907,8 +8468,13 @@ local function onServerUpdate(rawData)
       pushNotice('flag', 'RED FLAG',
         { sub = 'Stop where you are and wait', color = 'red' })
     elseif session.raceFlag == 'yellow' then
-      pushNotice('flag', 'YELLOW FLAG',
-        { sub = 'Caution: race back to the line', color = 'yellow' })
+      -- Three yellows, three instructions. A caution frozen at the call is
+      -- official in the same update, so it must not be told to race back.
+      pushNotice('flag', 'YELLOW FLAG', {
+        sub = session.cautionPending and 'Caution: race back to the line'
+          or session.caution and 'Caution: positions frozen, hold your place'
+          or 'Hazard on track, take care',
+        color = 'yellow' })
     else
       pushNotice('flag', 'GREEN FLAG', { sub = 'Racing', color = 'green' })
     end
@@ -7926,13 +8492,17 @@ local function onServerUpdate(rawData)
       { still = true, color = 'yellow' })
   end
   -- Three edges, three instructions, in the order a driver meets them.
+  -- Called under a red, the red still stands: the caution comes when it lifts.
+  local underRed = session.raceFlag == 'red'
   if session.cautionPending and not wasPending then
-    pushNotice('flag', 'CAUTION - RACE BACK TO THE LINE',
-      { sub = 'Positions lock as you complete this lap', color = 'yellow' })
+    pushNotice('flag', underRed and 'CAUTION CALLED UNDER THE RED' or 'CAUTION - RACE BACK TO THE LINE',
+      { sub = underRed and 'Stay stopped. Race back to the line when the red is lifted'
+          or 'Positions lock as you complete this lap', color = 'yellow' })
   end
   if session.caution and not wasCaution then
-    pushNotice('flag', 'CAUTION',
-      { sub = 'Hold position, no overtaking - places are frozen', color = 'yellow' })
+    pushNotice('flag', underRed and 'CAUTION CALLED UNDER THE RED' or 'CAUTION',
+      { sub = underRed and 'Stay stopped. Positions are frozen where you stand'
+          or 'Hold position, no overtaking - places are frozen', color = 'yellow' })
   elseif session.restartPending and not wasRestart then
     -- The green is coming, at the line.
     pushNotice('flag', 'RESTART THIS LAP',
@@ -8018,31 +8588,50 @@ local function onServerUpdate(rawData)
   local myId = localServerId()
   local wasLapped  = session.beingLapped
   local wasLapping = session.lappingAhead
+  local wasPassed  = session.ucPassed
   session.beingLapped, session.lappingAhead = false, false
+  session.ucPassed = nil
   session.myHeat = nil
   -- Our status and slot, for the Ready button ('called': the grid waits on us).
   local wasStatus = session.myStatus
   session.myStatus, session.myGridPos = nil, nil
+  -- Checkpoint-skip tallies off our row; nil is 0 (the server leaves zeros out).
+  local rowWarn, rowPen, rowLift, rowWindow = 0, 0, 0, nil
   if myId and type(data.drivers) == 'table' then
     for _, d in ipairs(data.drivers) do
       if tonumber(d.id) == myId then
         session.myStatus  = d.status
         session.myGridPos = tonumber(d.gridPos)
+        rowWarn   = tonumber(d.checkpointWarningsUsed) or 0
+        rowPen    = tonumber(d.penaltySeconds) or 0
+        rowLift   = tonumber(d.liftOwed) or 0
+        rowWindow = tonumber(d.liftWindowLeft)
         isBystander = d.bystander == true
         -- The blue flag rides on the row: a fact about one driver.
         session.beingLapped  = d.blue == true
         session.lappingAhead = d.lapping == true
+        session.ucPassed     = type(d.ucPassed) == 'string' and d.ucPassed or nil
         session.myHeat       = tonumber(d.heat)
         break
       end
     end
   end
+  -- A warning, a penalty or a lift turned into time: told as the row changes.
+  session.cpRow.apply(rowWarn, rowPen, rowLift, rowWindow)
   -- Told on the edge: the header shows it, but a driver about to be caught is
   -- watching the road.
   if session.beingLapped and not wasLapped and sessionRunning() then
     pushNotice('flag', 'BLUE FLAG',
       { sub = 'Faster car a lap up behind you - let them by', color = 'blue' })
     if M.lightsMoment then M.lightsMoment('blue') end
+  end
+  -- Passed under caution: told on the edge, and again for each new car. The
+  -- sticky line holds it until the place is back.
+  if session.ucPassed and session.ucPassed ~= wasPassed and sessionRunning() then
+    pushNotice('flag', 'GIVE THE PLACE BACK',
+      { sub = session.raceFlag == 'red'
+          and ('You passed ' .. session.ucPassed .. ' - give it back when the red is lifted')
+          or  ('You passed ' .. session.ucPassed .. ' under caution'), color = 'yellow' })
   end
   -- The other half is a heads-up, not a flag: on the strip.
   if session.lappingAhead and not wasLapping and sessionRunning() then
@@ -8111,6 +8700,14 @@ local function onServerUpdate(rawData)
   data.driverFlag = driverFlag()
   data.myStatus   = session.myStatus
   data.myGridPos  = session.myGridPos
+  -- Our own checkpoint-skip state for the header readout, nil when clean.
+  do
+    local cr, L = session.cpRow, session.lift
+    data.myCpSkip = (cr.warn > 0 or cr.pen > 0 or cr.lift > 0) and {
+      warn = cr.warn, pen = cr.pen, lift = cr.lift, window = cr.window,
+      liftLeft = L.active and math.max(L.left, 0) or nil,
+    } or nil
+  end
   guihooks.trigger('RaceManagerUpdate', data)
   if M.lightsSync then M.lightsSync() end
 end
@@ -8260,7 +8857,10 @@ local function onForceSpectate(rawData)
   if source ~= 'derby' and not flags.checkered then
     flags.checkered = true
     local place = tonumber(data.place)
-    local placed = (place and place > 0) and ('You placed ' .. ordinal(place)) or nil
+    -- With a penalty on our time a car still out can finish inside it, so the
+    -- place is only provisional until they are home.
+    local placed = (place and place > 0) and ('You placed ' .. ordinal(place)
+      .. (data.provisional and ' (provisional: penalty applied)' or '')) or nil
     if flags.checkeredSeen then
       -- The flag was waved on the approach: say only the placing.
       if placed then
@@ -8522,6 +9122,8 @@ local function onApplyLayout(rawData)
   branch.gridOffLine = data.gridOffLine == true
   -- Clamped where it is read (branch.firstGate); absent is CP 1.
   track.firstCheckpoint = math.floor(tonumber(data.firstCheckpoint) or 1)
+  -- After the route, which they are checked against. Absent is none.
+  track.sectors = timing.unbundleSectors(data.sectors)
   track.checkpointWidth  = clampWidth(data.width or track.checkpointWidth)
   -- The layout's default is migrated the same way, or new gates stand twice
   -- as tall as the loaded ones.
@@ -8560,7 +9162,7 @@ local function onSaveHeld(rawData)
     joker = 'joker gates', pits = 'pit stalls',
     pitEntry = 'pit entry gates', pitExit = 'pit exit gates',
     startPositions = 'start positions', branches = 'branch gates',
-    markers = 'direction markers', props = 'props',
+    markers = 'direction markers', props = 'props', sectors = 'sectors',
   }
   local parts = {}
   for key, n in pairs(lost) do
@@ -8757,6 +9359,28 @@ function M.setResetMode(mode)
   end
 end
 
+-- Checkpoint skips, every rule in one event: on/off, warnings before a
+-- penalty, the penalty ('time' | 'lift' | 'liftAndTime'), its seconds, the
+-- lift's length and the window to serve it in. The server clamps them all.
+function M.setCheckpointSkip(enabled, warnings, ptype, penaltySec, liftSec, liftWindow)
+  local cs = session.cpSkip
+  local payload = {
+    enabled    = enabled == true,
+    warnings   = math.floor(tonumber(warnings) or cs.warnings),
+    type       = (ptype == 'lift' or ptype == 'liftAndTime') and ptype or 'time',
+    penaltySec = tonumber(penaltySec) or cs.penaltySec,
+    liftSec    = tonumber(liftSec) or cs.liftSec,
+    liftWindow = math.floor(tonumber(liftWindow) or cs.liftWindow),
+  }
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetCheckpointSkip', jsonEncode(payload))
+  else
+    cs.enabled, cs.warnings, cs.type = payload.enabled, payload.warnings, payload.type
+    cs.penaltySec, cs.liftSec, cs.liftWindow = payload.penaltySec, payload.liftSec, payload.liftWindow
+    pushRouteState()
+  end
+end
+
 -- The pace lap: the race is started with Start Race, released under yellow.
 function M.setPaceLap(enabled)
   enabled = enabled and true or false
@@ -8888,6 +9512,14 @@ end
 function M.setLuckyDog(enabled)
   if inMultiplayer() then
     TriggerServerEvent('RM_SetLuckyDog', jsonEncode({ enabled = enabled == true }))
+  end
+end
+
+-- How the next caution freezes the order: 'line' or 'call'.
+function M.setCautionMode(mode)
+  if mode ~= 'line' and mode ~= 'call' then return end
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetCautionMode', jsonEncode({ mode = mode }))
   end
 end
 
@@ -9310,6 +9942,13 @@ local function resetToIdle(reason)
   session.restartPending  = false
   session.beingLapped     = false
   session.lappingAhead    = false
+  session.ucPassed        = nil
+  -- Checkpoint skips: the next server says whether it has the rule.
+  session.cpSkip.enabled  = false
+  session.lapCut          = false
+  session.cpRow.warn, session.cpRow.pen, session.cpRow.lift, session.cpRow.window = 0, 0, 0, nil
+  session.lift.active     = false
+  session.lift.sent, session.lift.sentAge = 0, 0
   session.heatCount       = 0
   session.heatCurrent     = 0
   session.heatLaps        = 0

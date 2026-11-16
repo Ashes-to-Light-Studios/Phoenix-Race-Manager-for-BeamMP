@@ -260,11 +260,12 @@ local CLIENT = zipOf({
 local NEW_MAIN = "-- new main\nlocal RM_BUILD = '9.9.9'\nreturn RM_BUILD\n"
 local function releaseZip(extra, mainSrc, client)
   local list = {
-    { 'LICENSE', 'MIT' }, { 'Client/', '' }, { 'Client/RaceManager.zip', client or CLIENT },
-    { 'Server/', '' }, { 'Server/RaceManager/', '' },
-    { 'Server/RaceManager/main.lua', mainSrc or NEW_MAIN },
-    { 'Server/RaceManager/maps.lua', '-- new maps\nreturn {}\n' },
-    { 'Server/RaceManager/update.lua', '-- new update\nreturn {}\n' },
+    { 'Client/', '' }, { 'Client/PhoenixRM Client.zip', client or CLIENT },
+    { 'Server/', '' }, { 'Server/PhoenixRM Server/', '' },
+    { 'Server/PhoenixRM Server/LICENSE', 'MIT' },
+    { 'Server/PhoenixRM Server/main.lua', mainSrc or NEW_MAIN },
+    { 'Server/PhoenixRM Server/maps.lua', '-- new maps\nreturn {}\n' },
+    { 'Server/PhoenixRM Server/update.lua', '-- new update\nreturn {}\n' },
   }
   for _, e in ipairs(extra or {}) do list[#list + 1] = e end
   return zipOf(list)
@@ -273,13 +274,20 @@ do
   local files = update.unpackRelease(releaseZip(), '9.9.9')
   check(files and files.client == CLIENT and files.server['main.lua'] == NEW_MAIN
     and files.server['update.lua'] and not files.server.LICENSE, 'the client zip and the plugin files')
+  check(files and files.license == 'MIT', 'and the LICENSE, which travels inside the server folder')
+  -- A root file (as releases before 0.24.0 had) is still not installed.
+  local rooted = update.unpackRelease(releaseZip({ { 'LICENSE', 'MIT' } }), '9.9.9')
+  check(rooted and rooted.client == CLIENT, 'a file at the root is left out, not refused')
   local function refusal(zip, version, want, what)
     local f, why = update.unpackRelease(zip, version or '9.9.9')
     check(f == nil and type(why) == 'string' and why:find(want), what .. ' (' .. tostring(why) .. ')')
   end
-  refusal(releaseZip({ { 'Server/RaceManager/Data/config.json', '{}' } }), nil, 'by hand',
+  refusal(releaseZip({ { 'Server/PhoenixRM Server/Data/config.json', '{}' } }), nil, 'by hand',
     'a file it does not know where to put stops the update: never half a release, never Data')
-  refusal(releaseZip({ { 'Server/RaceManager/lib/x.lua', '' } }), nil, 'by hand', 'and so does a nested module')
+  refusal(releaseZip({ { 'Server/PhoenixRM Server/lib/x.lua', '' } }), nil, 'by hand', 'and so does a nested module')
+  -- The layout before the rename is not half-installed under the new names.
+  refusal(zipOf({ { 'Client/RaceManager.zip', CLIENT }, { 'Server/RaceManager/main.lua', NEW_MAIN } }),
+    nil, 'by hand', 'a release in the old RaceManager folders is left for a hand install')
   refusal(releaseZip(), '9.9.8', 'build 9.9.9', 'a zip whose main.lua is another build')
   refusal(releaseZip(nil, "\nlocal RM_BUILD = '9.9.9'\nlocal x = = 1\n"), nil, 'compile',
     'a main.lua that does not compile')
@@ -314,7 +322,7 @@ local function read(p)
 end
 local function exists(p) return read(p) ~= nil end
 
-local PLUGIN = root .. '/Resources/Server/RaceManager'
+local PLUGIN = root .. '/Resources/Server/PhoenixRM Server'
 local OLD = {
   client = 'OLD CLIENT ZIP',
   main   = "-- old main\nlocal RM_BUILD = '0.21.0'\n",
@@ -326,7 +334,7 @@ local function freshServer()
   mkdir(root .. '/Resources/Client')
   mkdir(PLUGIN .. '/Data/results')
   write(root .. '/ServerConfig.toml', 'Port = 30814\r\nMap = "/levels/gridmap_v2/info.json"\r\n')
-  write(root .. '/Resources/Client/RaceManager.zip', OLD.client)
+  write(root .. '/Resources/Client/PhoenixRM Client.zip', OLD.client)
   write(root .. '/Resources/Client/othermod.zip', 'SOMEONE ELSE')
   write(PLUGIN .. '/main.lua', OLD.main)
   write(PLUGIN .. '/maps.lua', OLD.maps)
@@ -336,17 +344,17 @@ local function freshServer()
   write(PLUGIN .. '/Data/results/race.txt', 'P1 somebody')
 end
 local function untouched()
-  return read(root .. '/Resources/Client/RaceManager.zip') == OLD.client
+  return read(root .. '/Resources/Client/PhoenixRM Client.zip') == OLD.client
     and read(PLUGIN .. '/main.lua') == OLD.main and read(PLUGIN .. '/maps.lua') == OLD.maps
     and read(PLUGIN .. '/stale.lua') == OLD.stale
 end
 freshServer()
 
 update.paths.root = root
-update.paths.plugin = 'Resources/Server/RaceManager'
-update.paths.data = 'Resources/Server/RaceManager/Data'
+update.paths.plugin = 'Resources/Server/PhoenixRM Server'
+update.paths.data = 'Resources/Server/PhoenixRM Server/Data'
 maps.paths.root = root
-maps.paths.data = 'Resources/Server/RaceManager/Data'
+maps.paths.data = 'Resources/Server/PhoenixRM Server/Data'
 
 local spawned, exited = {}, 0
 update.sys = {
@@ -534,7 +542,7 @@ check(RM_Update_onPlayerAuth() ~= nil, 'and joining is refused until the server 
 tick(update.SETTLE)
 check(exited == 1, 'then the server stops')
 check(#spawned == 2 and spawned[2]:find('relaunch', 1, true), 'after the helper that restarts it')
-check(read(root .. '/Resources/Client/RaceManager.zip') == CLIENT
+check(read(root .. '/Resources/Client/PhoenixRM Client.zip') == CLIENT
   and read(PLUGIN .. '/main.lua') == NEW_MAIN and read(PLUGIN .. '/update.lua') == '-- new update\nreturn {}\n',
   'the client zip and the plugin are the new release')
 check(not exists(PLUGIN .. '/stale.lua'), 'a module the release no longer has is gone: BeamMP would run it')
@@ -544,9 +552,10 @@ check(read(root .. '/Resources/Client/othermod.zip') == 'SOMEONE ELSE'
   'other mods and everything in Data are left alone')
 local rec = read(PLUGIN .. '/Data/update/last.json') or ''
 local attic = rec:match('"attic": "([^"]+)"')
-check(attic and read(root .. '/' .. attic .. '/Client/RaceManager.zip') == OLD.client
-  and read(root .. '/' .. attic .. '/Server/RaceManager/main.lua') == OLD.main
-  and read(root .. '/' .. attic .. '/Server/RaceManager/stale.lua') == OLD.stale,
+check(read(PLUGIN .. '/LICENSE') == 'MIT', 'the LICENSE is installed beside the plugin')
+check(attic and read(root .. '/' .. attic .. '/Client/PhoenixRM Client.zip') == OLD.client
+  and read(root .. '/' .. attic .. '/Server/PhoenixRM Server/main.lua') == OLD.main
+  and read(root .. '/' .. attic .. '/Server/PhoenixRM Server/stale.lua') == OLD.stale,
   'the replaced files are in the attic, the removed one too')
 
 -- The restart, simulated: the new plugin boots.
@@ -645,7 +654,7 @@ else os.execute('rmdir "' .. PLUGIN .. '/update.lua"') end
 
 -- A release this updater cannot place is refused before anyone is kicked.
 reboot()
-local odd = releaseZip({ { 'Server/RaceManager/README.md', 'hi' } })
+local odd = releaseZip({ { 'Server/PhoenixRM Server/README.md', 'hi' } })
 newRelease('9.9.9', odd)
 RM_onUpdateStart(ADMIN, '{"version":"9.9.9"}')
 finishJob(0, odd)

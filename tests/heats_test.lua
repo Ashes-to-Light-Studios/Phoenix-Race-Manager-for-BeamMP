@@ -268,7 +268,7 @@ check(driver(other).transferred == nil, 'and no transfer out of it')
 do
   local path = nil
   for _, m in ipairs(chatLog) do
-    local p = m:match('(Resources/Server/RaceManager/Data/results/[%w%-_%./]+%.txt)')
+    local p = m:match('(Resources/Server/PhoenixRM Server/Data/results/[%w%-_%./]+%.txt)')
     if p then path = p end
   end
   check(path ~= nil, 'heat 1 wrote a results file')
@@ -580,7 +580,7 @@ end
 seconds(7)
 
 do
-  local f = io.open('Resources/Server/RaceManager/Data/cup.json', 'r')
+  local f = io.open('Resources/Server/PhoenixRM Server/Data/cup.json', 'r')
   local text = f and f:read('*a') or ''
   if f then f:close() end
   check(text ~= '', 'the cup was written to disk')

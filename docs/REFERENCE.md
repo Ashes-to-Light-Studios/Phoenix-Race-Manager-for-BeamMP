@@ -11,7 +11,7 @@ The [README](../README.md) has the short version.
 
 The **Track Layouts** panel at the bottom of the editor stores named
 checkpoint configurations **on the BeamMP server** in
-`Resources/Server/RaceManager/layouts.json`, so they survive server restarts
+`Resources/Server/PhoenixRM Server/layouts.json`, so they survive server restarts
 and can be prepped days before an event:
 
 - **Save As New** bundles the currently placed gates (positions, headings,
@@ -145,7 +145,7 @@ on disconnect, and by **Log out**.
 > one in the moderator box, and the people who already have it drop to the
 > narrower tier without being sent anything new.
 
-Both passwords live in `Resources/Server/RaceManager/Data/config.json` and
+Both passwords live in `Resources/Server/PhoenixRM Server/Data/config.json` and
 survive a restart.
 
 You never have to log in just to watch: close the login bar with **✕** and the
@@ -780,7 +780,7 @@ closes:
 
 | Switch | Default | Keeps |
 |---|---|---|
-| **On the server** | off | A file in `Resources/Server/RaceManager/Data/results/`, named `results_<date>_<time>.txt` (`derby_results_…`, `drag_results_…`). Chat announces the path |
+| **On the server** | off | A file in `Resources/Server/PhoenixRM Server/Data/results/`, named `results_<date>_<time>.txt` (`derby_results_…`, `drag_results_…`). Chat announces the path |
 | **On admins' PCs** | off | A copy to every admin and moderator logged in, saved in `settings/raceManager/results/` in their BeamNG user folder. **My Results** opens it |
 
 [Posting to Discord](#posting-results-to-discord) is its own row, and attaches
@@ -934,7 +934,7 @@ all key on the BeamMP player id exactly as before - an alias is never used as a
 lookup, so renaming somebody mid-session moves nothing but the text on screen.
 
 **Names are saved on the server.** Every name an admin sets is written to
-`Resources/Server/RaceManager/Data/roster.json` as a **saved driver** - an id,
+`Resources/Server/PhoenixRM Server/Data/roster.json` as a **saved driver** - an id,
 the name, the BeamMP name that connection was using at the time and, for a
 player logged in to BeamMP, their account id. They live through Start Quali,
 Generate Grid, a whole race, **Reset**, a second race after that, and the server
@@ -1156,6 +1156,144 @@ recognized as the mod's own doing and never counted, blocked or reported.
 And because the reset key repeats while it is held, the block is applied to
 every press but the notice, the console line and the server report are limited
 to one a second.
+
+### Checkpoint skips (track cuts)
+
+**Checkpoint skips** (admin only, under **Race ▾ → Rules**, beside **Max
+resets** and **Reset mode**) is off as shipped. Off, a
+driver who cuts the track and crosses a checkpoint ahead of the one they are
+due (CP 1 straight to CP 3) gets nothing for it: the car stays armed on the gate
+it missed until it drives back through it, exactly as it always has.
+
+Switched on, the cut is seen. The car is moved on past the gate it actually
+crossed, so it is not left stuck, and the skip costs a **warning**, then the
+**penalty** you chose:
+
+| Penalty | What a penalised skip costs |
+|---------|-----------------------------|
+| **Time** | Seconds added to the driver's race time. Shown on the board, and counted in the final classification |
+| **Lift** | The driver is told to lift off the throttle for a few seconds, then carry on racing. Not served within the serve window, or still owed at the flag, it becomes the seconds instead |
+| **Lift + time** | Both: the seconds at once, and a lift to serve as well (an unserved lift adds its seconds on top) |
+
+| Setting | `config.json` key | Default | Range |
+|---------|-------------------|---------|-------|
+| Checkpoint skips | `enableCheckpointSkipPenalty` | `false` | on / off |
+| Warnings | `checkpointSkipWarningsAllowed` | `1` | 0-99. `0` penalises the first skip |
+| Penalty | `checkpointSkipPenaltyType` | `"time"` | `"time"`, `"lift"`, `"liftAndTime"` |
+| Penalty per skip / If not served (s) | `checkpointSkipPenaltySeconds` | `5` | 0.5-300, in steps of 0.5 |
+| Lift (s) | `checkpointSkipLiftSeconds` | `3` | 0.5-30, in steps of 0.5 |
+| Serve within (s) | `checkpointSkipLiftWindow` | `30` | 5-300 seconds of green-flag running |
+| (not in the panel) | `checkpointSkipMaxGates` | `2` | 1-5: how far ahead, in gates, a crossing still counts as a skip |
+
+The `config.json` values are what the server starts with; the panel changes
+them for the night. Like every regulation they are locked once a countdown or
+session starts, and the server clamps every value and rounds the half-second
+ones. The line under the setting says the rule in words, for example
+`1 warning, then +5.0s per skipped checkpoint` or
+`1 warning, then lift 3.0s (serve within 30s or +5.0s)`.
+
+**What counts as a skip.** Only the gate a car is due is ever tested, so a
+skip is looked for only when that gate was *not* crossed this frame: the next
+`checkpointSkipMaxGates` gates are tested, and the first one crossed is where
+the car lands. Two gates skipped at once is two skips.
+
+- **Forward crossings only.** A gate driven against its direction never counts
+  as a skip, which keeps figure-8 crossovers, shared straights, head-on ovals
+  and the other lane's gates out of it. On a layout with branch gates the panel
+  says so: *gates crossed against their direction are not checked for skips*.
+- **The start/finish line can be landed on, never skipped**, so there is no wrap
+  into the next lap. Cutting the last corner into the line is one skip; it
+  completes the lap, which is a cut lap.
+- **A grid behind the line** drives over the line straight after GO. Until a
+  car has cleared its first gate of the session, the line is never a skip.
+- **Never on an out lap**: qualifying's, a grid off the line, or the pace lap.
+- **Never a reset or a teleport.** A reset in place, a reset to the last
+  checkpoint, a recovery, a respawn or a vehicle switch can move the car
+  through a gate in one frame: no skip is read for half a second after one of
+  your own resets, or from any frame that moved the car more than 30 m.
+- **Never the joker route or the pit lane**, which are not checkpoints.
+- Spinning, reversing, or going back through a gate already cleared does
+  nothing: gates behind the one due are never tested.
+
+**Warnings first, then the penalty.** Each skip uses a warning while any are
+left. Once they are gone every skipped checkpoint is penalised. A cut that
+skips two gates with one warning left uses the warning on the first and
+penalises the second.
+
+**What the driver is told** (on the HUD, and in chat), and what race control
+gets:
+
+| Case | Driver sees |
+|------|-------------|
+| A warning | `Track Cut Warning (1/2) - next skip: +5.0s` (or `- next skip: lift 3.0s`) |
+| The last warning and a penalty in one cut | `Track Cut: last warning used, +5.0s for 1 more checkpoint` |
+| Time penalty | `Checkpoint skipped: +5.0s penalty (warnings used up)`, or `2 checkpoints skipped: +10.0s penalty ...` |
+| Lift penalty | `Checkpoint skipped: LIFT OFF THE THROTTLE for 3.0s within 30s (warnings used up)` |
+| Lift + time | `Checkpoint skipped: +5.0s and LIFT OFF for 3.0s (warnings used up)` |
+| Lift served | `LIFT SERVED - carry on` |
+| Lift not served | `Lift not served: +5.0s penalty` |
+
+Race control (every logged-in admin and moderator, and the console) gets one
+line each time: `[RaceManager] Race control: Alice skipped CP 2 on lap 3:
+warning 1/2`, `... +5.0s`, `... lift 3.0s owed`, `Alice lift served`,
+`Alice lift converted to +5.0s`.
+
+**Serving a lift.** While a lift is owed the HUD holds
+`LIFT OFF THE THROTTLE: 3.0s`, counting down while it is being served. It does
+not time out like the other HUD lines: it stays until the lift is served or
+turned into time.
+
+- The countdown runs while the throttle is off (5% or less), the car is doing
+  at least 5 m/s, the race is green, and the car is not held (a pit stop, the
+  grid hold).
+- Back on the throttle for more than a quarter of a second starts that lift
+  again from the top, and the line says `THROTTLE ON - lift restarted (3.0s)`.
+  A blip shorter than that is forgiven.
+- Below 5 m/s, or under a caution, a caution called, a red flag, the pace lap
+  or a restart, the countdown pauses and keeps what is left.
+- Two lifts owed are served one after the other.
+
+The throttle read is the driver's **input**, before the car's own aids, so a
+keyboard, a pad and a wheel are all treated the same. The lift is told and
+watched, not enforced: nothing cuts the throttle for the driver.
+
+The serve window counts green-flag running only: it pauses under a caution, a
+caution called, a red flag and the pace lap. Each new penalty starts the window
+again. When it runs out, every lift still owed becomes `penalty seconds` each.
+A lift still owed when the car takes the flag is turned into time at once,
+before its place is worked out. A car that retires (DNF or DSQ) has its owed
+lift dropped; its warnings and seconds stay in the results.
+
+**Cut laps.** A lap with a skip on it still counts toward the distance, but its
+time is not used: no best lap, no fastest lap, no qualifying time and so no lap
+record, even when the skip only cost a warning. The driver's lap readout marks
+it `CUT`.
+
+**Qualifying.** Skips are still detected, so nobody is left stuck, and the lap
+is not timed (it still counts as one of the laps allowed). There are no
+warnings, penalties or lifts in qualifying.
+
+**Point-to-point stages** follow the same rules. The finish is the last gate,
+and a skip that lands on it finishes the stage.
+
+**Classification.** Between cars that finished on the same number of laps,
+the order is the flag **plus** the penalty seconds. Laps completed still decide
+first, so a penalty never puts a car behind one that completed fewer laps.
+Penalties are left out of the order on the road, the gaps, the intervals and
+the blue flag, which describe the race as it is being driven. A driver home
+with a penalty is told their place as provisional
+(`You placed 2nd (provisional: penalty applied)`), because a car still out can
+finish inside the penalty. Cup points, heat transfers, awards and Discord all
+take the same final order.
+
+**On the board and in the results.** Next to a driver's name the board shows
+`+5.0s` for a time penalty, `LIFT` while a lift is owed, and `W 1/2` once a
+warning has been used; your own header shows `CUTS` with the same. The results
+file states the rule under the header, gives each penalised car's race time as
+the corrected time with `(+5.0s pen)` beside it, and adds a **Track cuts**
+column: skips, warnings used, penalty seconds, lifts served, converted or owed,
+and cut laps. Qualifying's lines note laps that were cut. The Discord post uses
+the corrected times too.
 
 ### Fastest lap
 
@@ -1463,8 +1601,20 @@ still racing:
 
 ### Caution and restart
 
-A **full-course yellow** called mid-race, and **the field races back to the
-line**. Press **Caution** while a race is running and:
+A **full-course yellow** called mid-race that **freezes the running order**.
+There are two rules for *when* it freezes, set under **Caution** in Race
+settings:
+
+- **Race back to the line** (the default): the field races back, and each car's
+  place locks as it completes the leader's lap. Described step by step below.
+- **Freeze at the call**: the order is frozen where the field is the moment
+  Caution is pressed, with no racing back. See
+  [Freezing at the call](#freezing-at-the-call).
+
+Either way, **a pass under the yellow never counts**, and it is shown: see
+[Passes under caution](#passes-under-caution).
+
+Under **Race back to the line**, press **Caution** while a race is running and:
 
 1. The flag goes yellow and the field is told, in chat and on screen, to **race
    back to the line**. Nothing is frozen yet: on the road the race is still on,
@@ -1497,6 +1647,65 @@ It is **not** a ruling on any individual overtake. Nobody is penalised and no
 incident is judged &mdash; the board simply stops re-sorting once you are past
 the line. A marshal who can see the incident is still better at judging it than a
 distance comparison.
+
+#### Freezing at the call
+
+For leagues that do not race back. With **Caution** set to **Freeze at the
+call**, pressing Caution makes it official at once:
+
+- The board is frozen in the running order of that instant: laps, then
+  checkpoints, then distance to the next checkpoint.
+- A car is a lap down if the leader has already gone past it on the road. One
+  more lap on the leader's counter is not enough.
+- The field is told positions are frozen and to hold their place. Nobody is
+  told to race back.
+- The free pass, if it is on, goes out straight away, because the whole field
+  is locked at the call.
+- Laps under the caution count from the leader's next crossing.
+
+The snapshot is only as exact as the last position reports, which each car
+sends about three times a second. Two cars side by side at the moment of the
+call are ordered as they last reported. That is the price of not racing back.
+
+The rule can be changed at any time **except while a caution is out**. A caution
+runs under the rule it was called under until the green. It is a runtime
+setting like the free pass. To make it the server's default, set
+`"cautionMode": "call"` (or `"line"`) in
+`Resources/Server/PhoenixRM Server/Data/config.json`.
+
+#### Passes under caution
+
+The server cannot slow a car or block a pass: it has no physics access, and
+taking control of a driver's car would be worse than the pass. What it does
+is make sure a pass gains nothing, and make sure everyone knows about it.
+
+- **While the yellow is out, a pass does not count.** The board holds the
+  frozen order whatever happens on the road.
+- **Every pass is spotted.** Under caution, each car locked behind another is
+  compared with it on the road. Getting ahead by more than 5 m and staying
+  there for a second is a pass. The margin and the wait stop two cars running
+  side by side from being reported as passes.
+- **The driver is told to give it back**: a **GIVE THE PLACE BACK** notice,
+  a line on the HUD that stays until they do, and a chat message.
+- **Race control is told**: every logged-in admin and moderator gets a chat
+  line naming who passed whom and on which lap. The board marks the passer
+  **⚠ owes a place**, and a **Passed under caution** list under the race
+  controls shows every pass this race.
+- **Dropping back behind the car is giving it back.** The driver, race control
+  and the list all say so.
+- **Only real race passes count.** Cars are compared by race distance, so a
+  lead-lap car going by a backmarker, or a backmarker getting ahead on the road,
+  is no pass. The free pass car is never reported, because it is meant to drop
+  to the tail of the lead lap.
+- **Passes while racing back to the line are the rule, not a pass.** Under
+  Race back to the line, a car is only watched once its own place has locked.
+
+**At the green the board goes back to the road**, so a place taken under the
+yellow and never given back is a place kept. Nothing takes it away
+automatically, because there are no penalties to give. Instead, race control
+is told about every pass still owed as the green falls, and **the results file
+lists every pass under caution**, marked *given back* or *NOT given back*, so
+a steward can rule on it afterwards.
 
 #### The free pass ("lucky dog")
 
@@ -1543,6 +1752,18 @@ Some details worth knowing:
   goes back to its caution rather than being waved off the instant the wreck is
   moved. A red also holds the restart: a leader who rolls the last few meters to
   the line under one does not start the race by arriving.
+- **A caution called while a red is out leaves the red out.** The clock stays
+  stopped and the field is told to stay stopped. Lifting the red is what puts
+  the race under the caution: racing back to the line, or frozen where the
+  field stood when it was called. (Pressing Caution under a red used to lift the
+  red without saying so.)
+- **Passes are watched under a red too.** A car that drives past a stopped field
+  while a red is out over a caution is reported like any other pass under
+  caution, marked *under the red flag*. The driver is told to stay stopped and
+  give the place back once the red is lifted.
+- **Under a red, the HUD line says RED FLAG - stop where you are.** It takes
+  priority over every caution instruction, so a stopped field is never told to
+  race back, get ready for a restart or give a place back while the red is out.
 - **The Green flag button is still the restart** where it is reachable (a chat
   command, an older panel), so a green called by hand can never leave the race
   running with the order frozen and nothing to unfreeze it.
@@ -1557,16 +1778,22 @@ Some details worth knowing:
   board is a list of best times, so there is no running order to freeze.
 - **Not during the pace lap.** The field is already under yellow with a green to
   come, which is what a caution would be asking for.
-- The results file records **how many cautions there were and how many laps ran
-  under them**. A race with four yellows in it used to read exactly like a clean
-  one, which makes a lap chart impossible to explain afterwards.
+- The results file records **how many cautions there were, how many laps ran
+  under them in all, and under which rule**, followed by every pass made under
+  them. A race with four yellows in it used to read exactly like a clean one,
+  which makes a lap chart impossible to explain afterwards.
+- **A green before the leader makes a caution official withdraws it.** Nothing
+  was frozen and no lap ran under it, so it is not counted. Lifting a red over
+  a caution still being raced back to returns to that caution, not to green.
+- **The Yellow flag button is not a caution.** It tells the field there is a
+  hazard and to take care. It freezes nothing and asks nobody to race back.
 
 ### Where the server keeps its data
 
 **Code and data are two folders**, not two filename conventions in one:
 
 ```
-Resources/Server/RaceManager/
+Resources/Server/PhoenixRM Server/
     main.lua  derby.lua  ...     the plugin. REPLACED by every deploy.
     Data/                        everything the server owns. Never written by a release.
         Race Layout/<map>.json   every race on that map
@@ -1659,15 +1886,15 @@ python tools/import_scenarii.py ~/Downloads/scenarii          # write import/
 
 It writes `import/Race Layout/<map>.json` and `import/Derby Arena/<map>.json`
 &mdash; the same two folders the server reads, so the output can be copied
-straight into `Resources/Server/RaceManager/` &mdash; plus `import/INDEX.md`
+straight into `Resources/Server/PhoenixRM Server/Data/` &mdash; plus `import/INDEX.md`
 listing every race with its gate count and any caveat.
 
 **Nothing is installed.** Those folders are every track an admin has ever built,
 so the copy is left to a human.
 
 **`--merge PATH` folds an existing store in first.** PATH can be a flat
-`layouts.json`, a `derbyArenas.json`, or a whole `Resources/Server/RaceManager`
-folder. **A duplicate name renames the IMPORT, never what you built**: the server
+`layouts.json`, a `derbyArenas.json`, or a whole `Resources/Server/PhoenixRM Server`
+folder (or `Resources/Server/RaceManager`, from before 0.24.0). **A duplicate name renames the IMPORT, never what you built**: the server
 resolves a layout by name within a map, so two tracks called "Race" on one map is
 one quietly shadowing the other. A colliding import becomes `Race (2)`, `Race (3)`
 and so on, and every rename is printed as it happens.
@@ -2241,8 +2468,47 @@ rows of three.
 
 Every placed gate and grid slot also has **✕** (delete just this one),
 **+ Before** (insert at your car) and **▲ ▼** (reorder). Editing the main route
-renumbers the branch gates with it; deleting a checkpoint drops the branch gates
-that belonged to it, and says so.
+renumbers the branch gates and sectors with it; deleting a checkpoint drops the
+branch gates that belonged to it, and says so.
+
+### Sectors
+
+A **sector** is a stretch of the lap timed on its own. A sector is not a
+checkpoint: you name the two gates it runs between, so a circuit with thirty
+checkpoints can have three sectors, for example **S1** from the start/finish to
+**CP 3**, **S2** from **CP 3** to **CP 6**, and **S3** from **CP 6** back to the
+line.
+
+On the editor's **Main** tab, under **Sectors**:
+
+- **+ Add Sector** adds one that starts where the last one ends. Set its two
+  ends with the pickers, and remove it with **✕**. The ones after it move up a
+  number. A layout can have up to 20 sectors.
+- Each end is a checkpoint or the **Start/finish** (**Start** or **Finish** on a
+  point-to-point stage). An end on the line stays on the line when you place
+  more gates after it, because the last gate is always the line.
+- The gate list shows where each sector ends and starts, such as
+  `S1 ends · S2 starts`.
+- Sectors are saved with the layout and reach every driver with it.
+
+**What drivers see:** when a car crosses a sector's end gate, that driver gets
+**S2 0:21.4** beside the lap time, with the gap to their own best for that
+sector. Green is quicker, and a personal best is drawn purple. The time runs
+from that car's last crossing of the sector's start gate, so sectors can meet,
+overlap, or run across the line into the next lap. Sector times are display only
+and score nothing. The out lap is not timed.
+
+**With no sectors defined, every checkpoint closes a sector of its own**,
+numbered by the gate. Layouts saved before sectors existed keep working this way.
+
+- A sector that starts and ends at the same gate times nothing. The editor
+  flags it, and the layout will not save until you fix it.
+- Inserting, deleting or reordering checkpoints keeps each end on the same gate.
+  An end on a deleted checkpoint moves to the gate before it.
+- Sectors cannot be changed while a session is running.
+- The server refuses a save whose sectors do not fit the route. Saving over a
+  layout that has sectors with none (from an older client, say) is held for
+  the admin to confirm, like every other section.
 
 ### Vehicle & setup locking (the Garage List)
 
@@ -2252,23 +2518,31 @@ The **Garage** panel (admin only) locks the session down to approved cars:
    The client fingerprints it (jbeam model + every part in the part config +
    every tuning variable) and sends it to the server.
 2. Repeat to build a Garage List of allowed cars. The list persists in
-   `Resources/Server/RaceManager/garage.json` across restarts.
+   `Resources/Server/PhoenixRM Server/garage.json` across restarts.
 3. Pick what a capture **Locks** (below), then flip the toggle to **Enforcing**.
 
 ### What a capture locks
 
 | Mode | Model | Parts | Tuning | Paint |
 |---|---|---|---|---|
+| **Model** | locked | free | free | free |
 | **Parts** (default) | locked | locked | free | free |
 | **Strict** | locked | locked | locked | free |
 
-Paint is not matched under either mode: it has never been part of the
-signature.
+Paint is not matched under any mode: it has never been part of the signature.
+
+**Model** is for a series that chooses the car and leaves the build to the
+drivers: any parts and any tune of an approved model are allowed, and only a
+different vehicle is refused. Capture one of each model you want to allow.
+Further entries of the same model change nothing under Model. The first one
+on the list gives the car its class and name.
 
 One switch for the whole session, not per entry. **Several allowed builds of
-the same car - a choice of engine, a choice of gearbox - is not a third mode**;
-it is several entries under **Parts**, one per build. Capture each variant you
-want to permit.
+the same car (a choice of engine, a choice of gearbox) are several entries
+under Parts**, one per build. Capture each variant you want to permit.
+
+A Garage Set remembers its mode, and sets in different modes cannot be added
+together, because the two would rule the same cars differently.
 
 Refusals name the mode in force, so a driver is told whether the thing to undo
 is a part swap or a tune.
@@ -2298,7 +2572,7 @@ there if you like; delete the `name` to go back to the label.
 
 A night that runs two series should not mean whitelisting both fields between
 them. A **set** is the approved list saved under a name, in
-`Resources/Server/RaceManager/Data/Garage/`, one file per set.
+`Resources/Server/PhoenixRM Server/Data/Garage/`, one file per set.
 
 - **Save Current** writes the list above under the name you type, along with
   whether it is Parts or Strict. That mode is part of the series and comes back
@@ -2767,7 +3041,7 @@ Everything except ending the cup:
 | Server restart | ✅ |
 | **End Cup** | ❌ - this is the only thing that clears them |
 
-Cup state lives in `Resources/Server/RaceManager/cup.json`, written on every
+Cup state lives in `Resources/Server/PhoenixRM Server/cup.json`, written on every
 change. It is deliberately **not** in the `results/` folder, because
 [Clear Results Cache](#step-7--results) deletes everything there.
 
@@ -3177,14 +3451,34 @@ when it does (see [Game hosts](#game-hosts)). The **Updates** row on the
 
 Tracks, results and settings in `Data/` are kept, and players get the new
 version as they rejoin. If a release removes a file from
-`Resources/Server/RaceManager/`, delete it there too: BeamMP runs every `.lua`
-in that folder. On your own machine, `PRM-Setup.exe` (Windows) or
+`Resources/Server/PhoenixRM Server/`, delete it there too: BeamMP runs every
+`.lua` in that folder.
+
+**From 0.23.x or older, the folders are renamed.** Until 0.24.0 the plugin was
+`Resources/Server/PhoenixRM Server/` and the client mod `Resources/Client/PhoenixRM Client.zip`;
+they are now `Resources/Server/PhoenixRM Server/` (which also holds the
+LICENSE) and `Resources/Client/PhoenixRM Client.zip`, so a server owner can see
+what is installed. Unzipped over an old install, both copies are there at the
+first start, and BeamMP loads every plugin folder and sends players every client
+zip. So the new plugin, as it starts:
+
+- moves the old `Data` folder (tracks, cup, garage, settings, results) into
+  `Resources/Server/PhoenixRM Server/Data`, if that has none yet;
+- moves the old plugin's `.lua` files and `RaceManager.zip` to
+  `_attic/PhoenixRM-rename_<date>/`;
+- tells the console, and every admin who logs in, to **restart the server
+  once**, because that start ran both copies.
+
+The installers do the same before the server starts, so no restart is needed
+after them. **Update and restart** from the game cannot make this jump: the
+updater in 0.23.x and older does not know the new folders and refuses the
+release, changing nothing. Update by hand or with an installer once. On your own machine, `PRM-Setup.exe` (Windows) or
 `PRM-Install.sh` (Linux) does all of this and keeps the old files in `_attic/`.
 
 ### Updating from the game
 
 On a server you run on your own machine, set `"onlineFeatures": true` in
-`Resources/Server/RaceManager/Data/config.json` and restart it. Then, when the
+`Resources/Server/PhoenixRM Server/Data/config.json` and restart it. Then, when the
 server starts, it asks GitHub for the newest Phoenix Race Manager release, once,
 in the background. If that release is newer than the one the server runs:
 
@@ -3209,7 +3503,7 @@ button, because nothing in the game can undo it.
 3. Everyone is disconnected, with a message to rejoin in about a minute. New
    joins are turned away until the restart.
 4. The files it replaces are copied to `_attic/update-<old>-to-<new>_<date>/`
-   in the server folder, then `Resources/Client/RaceManager.zip` and the plugin's
+   in the server folder, then `Resources/Client/PhoenixRM Client.zip` and the plugin's
    `.lua` files are replaced. A plugin file the new release no longer has is
    moved out too, because BeamMP runs every `.lua` in the folder. If any file
    cannot be written, every file is put back and the server keeps running.
@@ -3413,7 +3707,7 @@ post runs curl in a process of its own, so a slow answer never holds up the
 server.
 
 **Turning it off for good.** Remove the webhook. Deleting
-`Resources/Server/RaceManager/discord.lua` also turns it off, but the next
+`Resources/Server/PhoenixRM Server/discord.lua` also turns it off, but the next
 update puts the file back, still off until a webhook is set.
 
 ## Drag racing (parallel game mode)
@@ -3611,7 +3905,7 @@ appears when a ladder is built and stays until it is cleared.
 
 ### What survives a restart
 
-The ladder is written to `Resources/Server/RaceManager/Data/dragLadder.json` on
+The ladder is written to `Resources/Server/PhoenixRM Server/Data/dragLadder.json` on
 every change and comes back at boot. A tournament is an evening, not a session,
 and losing four rounds of it to a restart means running the whole thing again.
 
@@ -3806,7 +4100,7 @@ derby mode, and derby controls are not shown anywhere else - see
    (**Overwrite** puts an edited arena back under its own name): the boundary
    polygon, both timers, the reset limit *and* the starting grid are stored on
    the server in
-   `Resources/Server/RaceManager/derbyArenas.json`, tagged with the hosted map,
+   `Resources/Server/PhoenixRM Server/derbyArenas.json`, tagged with the hosted map,
    so a prepped arena survives a restart. **Load Arena** here, or a click on it
    under **Arenas** in the **Layouts ▾** menu, pushes it to every connected client
    at once; **✕** deletes it. Loading is refused while a derby is running - the

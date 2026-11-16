@@ -46,7 +46,7 @@ local function check(cond, msg)
   if not cond then fails = fails + 1; print('FAIL: ' .. msg) end
 end
 
-local FILE = 'Resources/Server/RaceManager/Data/Lap Records/gridmap_v2.json'
+local FILE = 'Resources/Server/PhoenixRM Server/Data/Lap Records/gridmap_v2.json'
 
 local function read(p)
   local f = io.open(p, 'r')

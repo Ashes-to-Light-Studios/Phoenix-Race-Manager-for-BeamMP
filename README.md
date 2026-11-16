@@ -42,7 +42,7 @@ curl -fsSLO https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-B
 [Releases](../../releases), upload it into the server's `Resources/` folder and
 extract it there.
 
-Then start the server, or restart it. BeamMP pushes `RaceManager.zip` to everyone
+Then start the server, or restart it. BeamMP pushes `PhoenixRM Client.zip` to everyone
 who joins, so **players install nothing by hand**.
 
 Both installers stop if the server is running, keep anything they replace in
@@ -55,10 +55,18 @@ the server, upload the zip into `Resources/` and extract it there over the old
 files, delete the zip and start the server. Your tracks, results and settings
 are kept.
 
+**From 0.23.x or older, the folders are renamed** to `Resources/Client/PhoenixRM
+Client.zip` and `Resources/Server/PhoenixRM Server/`, so you can see what is
+installed. The installers move the old ones across. Updating by hand, the first
+start moves your data from `Resources/Server/PhoenixRM Server/Data` into the new
+folder and the old copy to `_attic/`, then asks you to **restart once**, because
+that start ran both. Update and restart from the game cannot make this jump;
+use the zip or an installer once.
+
 **Updating from the game** is off as shipped, because some game hosts cut a
 server off the internet when it goes online by itself and every player who
 joins is kicked. On a server you run on your own machine, set
-`"onlineFeatures": true` in `Resources/Server/RaceManager/Data/config.json`:
+`"onlineFeatures": true` in `Resources/Server/PhoenixRM Server/Data/config.json`:
 the server then looks for a newer release at each start, and **Update and
 restart** on the **Admin** tab installs it. See [Updating from the Admin
 tab](docs/REFERENCE.md#updating-from-the-admin-tab).
@@ -67,7 +75,7 @@ Building from source instead? `python3 tools/deploy.py` writes the package and
 installs both halves onto a BeamMP server it finds, backing up whatever it
 replaces and leaving your saved layouts and results alone. Add `--dry-run` to see
 what it would do first. The client zip is always
-called `RaceManager.zip`, with no version in the name, so an update overwrites
+called `PhoenixRM Client.zip`, with no version in the name, so an update overwrites
 the old one instead of leaving two copies side by side.
 
 **Three things to get right:**
@@ -204,7 +212,7 @@ pace lap at any time if the field never makes it round.
 **7. Results.** At the flag the server builds a results file, ready for league
 standings, with the cup round it just banked appended if a cup is running. You
 choose where it goes on the **Admin** panel's **Save results** row: **On the
-server** (`Resources/Server/RaceManager/Data/results/`, with the path announced
+server** (`Resources/Server/PhoenixRM Server/Data/results/`, with the path announced
 in chat) and **On admins' PCs**. **Both are off until you turn them on**, so do
 that before the first race you want to keep. Discord is its own row.
 **Reset** clears the session for the next one.
@@ -221,16 +229,18 @@ expect without touching any of it.
 | Feature | What it gives you |
 |---|---|
 | **[Vehicle reset limits](docs/REFERENCE.md#vehicle-reset-limits)** | Cap resets per driver per session. Past the allowance the reset key genuinely stops working. Can respawn at the last checkpoint instead of in place. |
+| **[Checkpoint skips](docs/REFERENCE.md#checkpoint-skips-track-cuts)** | Optional track-cut rule. A driver who crosses a checkpoint ahead of the one they are due is moved on instead of left stuck, gets a set number of warnings, then a penalty: seconds on their race time, a lift off the throttle for a few seconds, or both. Penalties count in the final classification and the results file; a cut lap sets no time. |
 | **[Reset ghosting](docs/REFERENCE.md#reset-ghosting)** | A driver who resets is intangible for a few seconds rather than reappearing solid in the racing line. Collisions return only once the space around them is provably clear. |
 | **[Branch gates](docs/REFERENCE.md#branch-gates-two-ways-through-a-checkpoint)** | Give a checkpoint a second gate and either one clears it. Split lanes and head-on "suicide" ovals, scored together on one leaderboard, with nothing to assign anyone to. |
+| **[Sectors](docs/REFERENCE.md#sectors)** | Define a track's sectors, such as S1 from the line to CP 3 and S2 from CP 3 to CP 6, and drivers are timed on those instead of on every checkpoint. Each sector time shows against the driver's own best for it. |
 | **[Mouse track editing](docs/REFERENCE.md#tutorial-running-a-race-night)** | **✋ Place** mode: click, drag and scroll to move and turn gates from free cam, ctrl+click to place new ones. Works on props, grid slots and derby arenas too. Driving to a gate still works and still builds the track. |
-| **[Caution and restart](docs/REFERENCE.md#caution-and-restart)** | A full-course yellow the field **races back to the line** for: the leader's crossing sets the lap, everyone locks their place as they complete it, and lapped cars go to the bottom in their own order. Optional free pass. The restart is called and falls at the line, and can be waved off. |
+| **[Caution and restart](docs/REFERENCE.md#caution-and-restart)** | A full-course yellow that freezes the running order. By default the field **races back to the line**: the leader's crossing sets the lap, everyone locks their place as they complete it, and lapped cars go to the bottom in their own order. Or **freeze at the call**, where the field stands. Passes under yellow never count, and are shown to the driver and race control and listed in the results. Optional free pass. The restart is called and falls at the line, and can be waved off. |
 | **[Multi-class racing](docs/REFERENCE.md#multi-class-racing)** | Two car types on one grid, scored as two races. Tag a class on each Garage List entry and every driver in that car is in it: a Class column with per-class positions on the board, and a section per class in the results file. The overall order is unchanged. |
 | **[The blue flag](docs/REFERENCE.md#the-blue-flag)** | Lapped traffic gets signalled instead of only displayed: the backmarker is shown blue when a car a lap up closes on them, and the car doing the lapping is told there is one ahead. Measured on the road rather than off the timing sheet, which are different orders once anybody is lapped. |
 | **[Heats and transfers](docs/REFERENCE.md#heats-and-transfers)** | Run the night as heats into a feature, with a lap count of their own. The field is split by a serpentine draw off qualifying, the top N from each heat transfer, and the feature grid is built from the results &mdash; winners on the front row, interleaved by heat. |
 | **[Pace lap](docs/REFERENCE.md#pace-lap)** | Start the race behind a pace car instead of from the lights: released under yellow, one formation lap at 50 MPH or 80 KMH, GET READY and a green at a random point as the pole-sitter returns to the line. The formation lap is not scored and does not count against the distance. |
 | **[Rallycross joker laps](docs/REFERENCE.md#rallycross-joker-laps)** | A second gate route that must be taken exactly once per race. Lap 1 is closed, and the server disqualifies anyone who missed it or took it twice. |
-| **[Garage List](docs/REFERENCE.md#vehicle--setup-locking-the-garage-list)** | Lock the session to exact cars *and* exact tunes. Anything else is deleted on spawn and the driver is told why. Give each entry a [name to show](docs/REFERENCE.md#car-names) without changing what it matches. |
+| **[Garage List](docs/REFERENCE.md#vehicle--setup-locking-the-garage-list)** | Lock the session to the approved models only, to exact parts, or to exact parts *and* tunes. Anything else is deleted on spawn and the driver is told why. Give each entry a [name to show](docs/REFERENCE.md#car-names) without changing what it matches. |
 | **[Cup points](docs/REFERENCE.md#cup-points)** | Championship points across several events: races, derbies or both. Scoring presets, qualifying points and bonuses, and standings that survive a server restart. |
 | **[Nametag display names](docs/REFERENCE.md#display-names-on-the-beammp-nametag)** | Optionally append a driver's display name to the tag over their car. Uses BeamMP's own suffix API, so only the text changes -- fade, color and occlusion stay BeamMP's. |
 | **[Display names](docs/REFERENCE.md#display-names)** | Give `Guest_4471` a readable name for the leaderboard and the results file. Saved on the server. |
