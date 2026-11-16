@@ -1,6 +1,8 @@
 -- Race Manager: UPDATES FROM GITHUB, as its own module.
 --
--- At startup the server asks GitHub for the newest release, in the background.
+-- OFF UNLESS THE OWNER SAID SO: nothing here reaches the network without
+-- onlineFeatures in config.json (see M.online). With it, at startup the server
+-- asks GitHub for the newest release, in the background.
 -- A newer one is offered to the admins: the panel asks, and the Admin tab has
 -- Update and restart, which downloads the release zip, checks it, swaps the
 -- files in and restarts the server through maps.lua, the way a map switch does.
@@ -121,6 +123,16 @@ local function cfg(key, fallback)
   if v == nil then return fallback end
   return v
 end
+
+-- A game host (Pterodactyl, 0.23.3) cut a server off the internet after its
+-- startup check, BeamMP's own player login included, so every join was refused
+-- until a restart. No sign tells such a host apart, so the network is used only
+-- when the owner turned onlineFeatures on in config.json, which the panel
+-- cannot change.
+function M.online() return cfg('onlineFeatures', false) == true end
+function M.checks() return M.online() and cfg('updateCheck', true) ~= false end
+
+M.OFF = 'In-game updates are off on this server (onlineFeatures in config.json)'
 
 -- ---------------------------------------------------------------------------
 -- Text, versions and the release
@@ -698,6 +710,8 @@ local timerOn, timerOff
 
 -- { name, purpose, url, api, seconds, out, onDone }; onDone(path) or onDone(nil, why).
 local function startJob(job)
+  -- The one door to the network: every check and download comes through here.
+  if not M.online() then return false, M.OFF end
   if M.job then return false, 'still waiting on GitHub from before' end
   local cwd = M.cwd()
   if not cwd then return false, 'could not tell which folder the server runs in' end
@@ -773,7 +787,11 @@ function M.snapshot(pid)
   local busy = host.busy()
   return {
     current    = host.RM_BUILD,
-    enabled    = cfg('updateCheck', true) ~= false,
+    online     = M.online(),
+    enabled    = M.checks(),
+    -- For updating by hand. The repo is checked: it is shown as a link.
+    releases   = M.validRepo(cfg('updateRepo', M.REPO))
+      and ('https://github.com/' .. cfg('updateRepo', M.REPO) .. '/releases/latest') or nil,
     checking   = M.job ~= nil and M.job.name == 'check' or M.pendingCheck,
     checkedAt  = r.at,
     checkError = r.error,
@@ -876,6 +894,7 @@ end
 -- One request to the GitHub API. Unauthenticated, so GitHub allows 60 an hour
 -- from one address: once a boot, and on an admin's request.
 function M.startCheck(why)
+  if not M.online() then return false, M.OFF end
   if cfg('updateCheck', true) == false then return false, 'update checks are off' end
   local repo = cfg('updateRepo', M.REPO)
   if not M.validRepo(repo) then
@@ -950,6 +969,7 @@ end
 
 function M.start(pid, raw)
   if not host.requireFull(pid) then return end
+  if not M.online() then return tell(pid, M.OFF .. '. Update by hand: see the Updates row.') end
   local ok, data = pcall(host.jsonParse, raw or '')
   local want = ok and type(data) == 'table' and data.version or nil
   local rel = M.release.latest
@@ -1165,6 +1185,7 @@ end
 
 -- An admin logging in on a server that has been up for days gets a fresh look.
 function M.onLogin()
+  if not M.checks() then return end
   if M.job or M.pendingCheck or M.state.phase ~= 'idle' then return end
   local r = M.release
   if r.at and os.time() - r.at < M.RECHECK then return end
@@ -1206,9 +1227,12 @@ function M.warm()
   end
   -- A hot reload while the tool is about to restart this server: ask nothing.
   if M.state.phase == 'restarting' then return end
-  if cfg('updateCheck', true) ~= false then
+  if M.checks() then
     M.pendingCheck = true
     timerOn()
+  elseif not M.online() then
+    print('[RaceManager] ' .. M.OFF .. '. To update, upload the release zip: '
+      .. 'see the Updates row on the Admin tab')
   end
 end
 

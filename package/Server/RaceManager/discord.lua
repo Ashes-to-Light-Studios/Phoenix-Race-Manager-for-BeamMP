@@ -1,10 +1,11 @@
 -- Race Manager: DISCORD, an optional add-on that posts results to a channel
 -- through a webhook.
 --
--- OFF UNTIL A WEBHOOK IS SET, from the Admin tab or in Data/discord.json. With
--- none, nothing here starts a process or touches the network. Deleting this
--- file turns it off as well: main.lua loads it with pcall and nothing else
--- depends on it.
+-- OFF UNTIL THE OWNER TURNS onlineFeatures ON in config.json (see M.online),
+-- and then until a webhook is set, from the Admin tab or in Data/discord.json.
+-- Until both, nothing here starts a process or touches the network. Deleting
+-- this file turns it off as well: main.lua loads it with pcall and nothing
+-- else depends on it.
 --
 -- NOTHING GLOBAL AT FILE SCOPE. BeamMP runs every .lua in the plugin folder on
 -- its own too, so the RM_Discord* handlers are installed by init().
@@ -44,6 +45,13 @@ local DEFAULT_POST = { race = true, quali = false, derby = true, drag = true }
 
 local COLOR = { race = 0xF39C12, quali = 0x3498DB, derby = 0xE74C3C, drag = 0x2ECC71,
                 test = 0x95A5A6 }
+
+-- A game host cut a server off the internet after it fetched on its own, every
+-- join refused until a restart (update.lua, M.online). A post is the same curl.
+function M.online()
+  return host ~= nil and host.CFG ~= nil and host.CFG.onlineFeatures == true
+end
+M.OFF = 'Discord posts are off on this server (onlineFeatures in config.json)'
 
 M.queue  = {}
 M.job    = nil   -- the post curl is sending
@@ -585,6 +593,8 @@ local function finish(job, ok, why)
 end
 
 local function start(job, webhook)
+  -- The one door to the network: every post comes through here.
+  if not M.online() then return finish(job, false, M.OFF) end
   local cwd = M.cwd()
   if not cwd then return finish(job, false, 'could not tell which folder the server runs in') end
   local dir = jobDir()
@@ -678,6 +688,11 @@ function M.tick()
   if M.job then return poll() end
   local job = M.queue[1]
   if not job then return timerOff() end
+  if not M.online() then
+    M.queue = {}
+    timerOff()
+    return push()
+  end
   if os.time() < (job.notBefore or 0) then return end
   table.remove(M.queue, 1)
   local cfg = M.config()
@@ -719,6 +734,7 @@ end
 -- From main.lua, derby.lua and drag.lua as each session closes: `kind` is
 -- race, quali, derby or drag; `data` what that kind's builder reads.
 function M.post(kind, data)
+  if not M.online() then return false end
   local cfg = M.config()
   if not cfg.webhook or not cfg.post[kind] then return false end
   data = data or {}
@@ -738,6 +754,7 @@ end
 function M.snapshot(pid)
   local cfg, ok = M.config()
   return {
+    online     = M.online(),
     configured = cfg.webhook ~= nil,
     hint       = M.hint(cfg.webhook),
     thread     = cfg.webhook and cfg.webhook:find('thread_id=', 1, true) ~= nil or nil,
@@ -767,6 +784,7 @@ end
 -- The admin tier's: the webhook speaks for the server in public.
 function M.set(pid, raw)
   if not host.requireFull(pid) then return end
+  if not M.online() then return refuse(pid, M.OFF .. '.') end
   local data = decode(raw)
   local cfg, ok = M.config()
   if not ok then
@@ -807,6 +825,7 @@ end
 
 function M.test(pid)
   if not host.requireFull(pid) then return end
+  if not M.online() then return refuse(pid, M.OFF .. '.') end
   local cfg = M.config()
   if not cfg.webhook then return refuse(pid, 'Set a webhook first.') end
   local built = M.build.test({ post = cfg.post, who = MP.GetPlayerName(pid) })
@@ -816,6 +835,7 @@ end
 -- Either tier: it sends what already failed to send, nothing new.
 function M.retry(pid)
   if not host.requireAuth(pid) then return end
+  if not M.online() then return refuse(pid, M.OFF .. '.') end
   local job = M.failed
   if not job or M.job == job then return push() end
   M.failed = nil
@@ -830,7 +850,9 @@ function M.warm()
   local listed, found = pcall(host.listDirectory, at(dir))
   for _, name in ipairs(listed and found or {}) do os.remove(at(dir .. '/' .. name)) end
   local cfg = M.config()
-  if cfg.webhook then
+  if cfg.webhook and not M.online() then
+    print('[RaceManager] ' .. M.OFF .. ', so webhook ' .. M.hint(cfg.webhook) .. ' gets nothing')
+  elseif cfg.webhook then
     local on = {}
     for _, k in ipairs(M.KINDS) do if cfg.post[k] then on[#on + 1] = k end end
     print('[RaceManager] Discord: posting ' .. (#on > 0 and table.concat(on, ', ') or 'nothing')
