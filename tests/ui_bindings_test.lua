@@ -2927,6 +2927,52 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- EVERY NAME A TEMPLATE EXPRESSION READS EXISTS ON THE SCOPE
+-- ---------------------------------------------------------------------------
+-- An Angular expression that reads a name nobody set does not error: it reads
+-- undefined and carries on. `!waypoints.length` (the scope's list is
+-- routeWaypoints) was therefore always true, and the "+ Branch Gate" button sat
+-- greyed out on every track, so no branch gate could be placed from the panel.
+-- Every bare name in a condition, handler, class or {{ }} must be assigned as
+-- $scope.<name> in app.js, or be an ng-repeat / ng-init local.
+do
+  local defined = {}
+  for id in js:gmatch('%$scope%.([%a_$][%w_$]*)%s*=[^=]') do defined[id] = true end
+  local locals = { ['true'] = true, ['false'] = true, ['null'] = true,
+                   ['undefined'] = true, ['$index'] = true, ['$first'] = true,
+                   ['$last'] = true, ['$event'] = true }
+  for rep in html:gmatch('ng%-repeat%s*=%s*"([^"]+)"') do
+    local lhs = rep:match('^%s*(.-)%s+in%s')
+    if lhs then
+      for id in lhs:gmatch('[%a_$][%w_$]*') do locals[id] = true end
+    end
+  end
+  for init in html:gmatch('ng%-init%s*=%s*"([^"]+)"') do
+    for id in init:gmatch('([%a_$][%w_$]*)%s*=[^=]') do locals[id] = true end
+  end
+  local exprs = 0
+  local function check(kind, expr)
+    exprs = exprs + 1
+    -- Entities decoded, strings emptied, and filters (`| number:1`) dropped:
+    -- a filter name is not a scope read.
+    local bare = expr:gsub('&amp;', '&'):gsub('&lt;', '<'):gsub('&gt;', '>')
+                     :gsub("'[^']*'", "''"):gsub('|%s*[%a_$][%w_$]*', '')
+    for id in ('(' .. bare):gmatch('[^%w_$.]([%a_$][%w_$]*)') do
+      expect(locals[id] or defined[id],
+        kind .. '="' .. expr .. '" reads `' .. id .. '`, which app.js never '
+          .. 'sets on $scope: Angular reads it as undefined without a word')
+    end
+  end
+  for _, attr in ipairs({ 'if', 'show', 'hide', 'click', 'class', 'disabled' }) do
+    for expr in html:gmatch('ng%-' .. attr .. '%s*=%s*"([^"]+)"') do
+      check('ng-' .. attr, expr)
+    end
+  end
+  for expr in html:gmatch('{{(.-)}}') do check('{{ }}', expr) end
+  expect(exprs > 500, 'found the template expressions to check (' .. exprs .. ')')
+end
+
+-- ---------------------------------------------------------------------------
 -- THE PRM LOGO
 -- ---------------------------------------------------------------------------
 -- The splash names its image by path. A renamed or missing file is no error in

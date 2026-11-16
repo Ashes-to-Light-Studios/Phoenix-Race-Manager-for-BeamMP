@@ -2251,7 +2251,7 @@
       <button class="rm-btn rm-btn-grid" ng-if="editorTarget === 'prop'" ng-click="editorAdd()"
               title="Place it a few meters in front of your car, facing the way you face">+ {{ propLabelOf(propKind) }} Ahead</button>
       <button class="rm-btn rm-btn-grid"  ng-click="editorAdd()" ng-if="editorTarget !== 'prop'"
-              ng-disabled="editorTarget === 'branch' && !waypoints.length">+ {{ editorTarget === 'joker' ? 'Joker Gate' : (editorTarget === 'start' ? 'Place Start Position' : (editorTarget === 'pit' ? 'Place Pit Stall' : (editorTarget === 'pitEntry' ? 'Place Pit Entry' : (editorTarget === 'pitExit' ? 'Place Pit Exit' : (editorTarget === 'branch' ? ('Branch Gate for CP ' + branchSlot) : (editorTarget === 'marker' ? ('Marker ' + markerGlyph(markerKind)) : 'Checkpoint')))))) }} Here</button>
+              ng-disabled="editorTarget === 'branch' && !routeWaypoints.length">+ {{ editorTarget === 'joker' ? 'Joker Gate' : (editorTarget === 'start' ? 'Place Start Position' : (editorTarget === 'pit' ? 'Place Pit Stall' : (editorTarget === 'pitEntry' ? 'Place Pit Entry' : (editorTarget === 'pitExit' ? 'Place Pit Exit' : (editorTarget === 'branch' ? ('Branch Gate for CP ' + branchSlot) : (editorTarget === 'marker' ? ('Marker ' + markerGlyph(markerKind)) : 'Checkpoint')))))) }} Here</button>
       <button class="rm-btn"              ng-click="editorUndo()"  ng-disabled="!editorWaypoints().length">Undo</button>
       <button class="rm-btn rm-btn-end"   ng-click="editorClear()" ng-disabled="!editorWaypoints().length">Clear</button>
       <button class="rm-btn" ng-click="editorToggleVisualize()">{{ visualize ? 'Hide' : 'Show' }} Gates</button>
