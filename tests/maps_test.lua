@@ -310,7 +310,7 @@ check(next(dropped) == nil, 'and nobody was disconnected')
 -- 6a. Display names
 -- ---------------------------------------------------------------------------
 do
-  local NAMES = root .. '/Resources/Server/RaceManager/Data/mapNames.json'
+  local NAMES = root .. '/Resources/Server/PhoenixRM Server/Data/mapNames.json'
   local function entry(name)
     for _, e in ipairs(last('RM_Maps', -1).list or {}) do
       if e.name == name then return e end
@@ -394,7 +394,7 @@ dropped = {}
 RM_Map_onPlayerAuth()
 maps.warm()
 check(maps.last and maps.last.ok and maps.last.to == 'crandon', 'after the restart the switch reads as done')
-check(not exists(root .. '/Resources/Server/RaceManager/Data/mapSwitch.json'), 'and the record is cleared')
+check(not exists(root .. '/Resources/Server/PhoenixRM Server/Data/mapSwitch.json'), 'and the record is cleared')
 
 -- ---------------------------------------------------------------------------
 -- 8. A failed move puts everything back
@@ -421,7 +421,7 @@ check(maps.state.method == 'relaunch', 'auto, and not under the Management Tool:
 tick(maps.COUNTDOWN + maps.SETTLE)
 check(exited == 1, 'exit() is called once the files are in place')
 check(#spawned == 1 and spawned[1]:find('relaunch', 1, true), 'after the helper was started')
-local script = read(root .. '/Resources/Server/RaceManager/Data/'
+local script = read(root .. '/Resources/Server/PhoenixRM Server/Data/'
   .. (IS_WINDOWS and 'relaunch.cmd' or 'relaunch.sh')) or ''
 check(script:find('4242', 1, true) ~= nil, 'the helper waits on this server\'s PID')
 check(script:find(':30814 ', 1, true) ~= nil, 'and on its UDP port: a new server that cannot bind it shuts down')
@@ -440,8 +440,8 @@ check(read(root .. '/ServerConfig.toml'):find('Map = "/levels/gridmap_v2/info.js
 maps.state = { phase = 'idle' }
 maps.ticking = false
 maps.warm()
-check(not exists(root .. '/Resources/Server/RaceManager/Data/relaunch.cmd')
-  and not exists(root .. '/Resources/Server/RaceManager/Data/relaunch.sh'),
+check(not exists(root .. '/Resources/Server/PhoenixRM Server/Data/relaunch.cmd')
+  and not exists(root .. '/Resources/Server/PhoenixRM Server/Data/relaunch.sh'),
   'the next boot deletes the helper')
 
 -- ---------------------------------------------------------------------------

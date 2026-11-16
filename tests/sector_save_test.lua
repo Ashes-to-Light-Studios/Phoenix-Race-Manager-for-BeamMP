@@ -16,7 +16,7 @@ local function check(cond, msg)
 end
 
 -- A map of its own, so a run starts from no layouts and leaves the others be.
-local MAP_FILE = 'Resources/Server/RaceManager/Data/Race Layout/sector_test.json'
+local MAP_FILE = 'Resources/Server/PhoenixRM Server/Data/Race Layout/sector_test.json'
 os.remove(MAP_FILE)
 
 local applied, held, lastChat = nil, nil, nil

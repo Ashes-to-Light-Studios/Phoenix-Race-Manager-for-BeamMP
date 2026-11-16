@@ -26,9 +26,9 @@ for f in tests/*.lua; do lua "$f" || echo "FAILED: $f"; done
 
 ## What the script guarantees
 
-- **It writes exactly two paths**: `Resources/Client/RaceManager.zip` and
-  `Resources/Server/RaceManager/main.lua`.
-- **Everything else under `Resources/Server/RaceManager/` is live data the
+- **It writes exactly two paths**: `Resources/Client/PhoenixRM Client.zip` and
+  `Resources/Server/PhoenixRM Server/main.lua`.
+- **Everything else under `Resources/Server/PhoenixRM Server/` is live data the
   server owns** and is never touched: `layouts.json` is every track the admin
   has built, plus `cup.json`, `roster.json`, `garage.json`, `derbyArenas.json`
   and `results/`.

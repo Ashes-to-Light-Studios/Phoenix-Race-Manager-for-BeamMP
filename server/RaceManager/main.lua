@@ -1526,6 +1526,9 @@ function RM_onLogin(pid, rawData)
     MP.TriggerClientEvent(pid, 'RM_LoginResult', Util.JsonEncode({
       success = true, role = role,
     }))
+    -- An older install found beside this one at boot: until a restart, two
+    -- copies are running, and the admin is the one who can restart.
+    if race.oldInstallNote then MP.SendChatMessage(pid, race.oldInstallNote) end
     -- The layout list is privilege-dependent (drivers see only practice-approved
     -- ones), so a login resends it: nothing else would.
     -- Through the global handler: sendLayoutList is declared far below and would
@@ -1670,7 +1673,9 @@ end
 -- CODE AND DATA IN TWO FOLDERS: the .lua files in SERVER_DIR are replaced by
 -- every deploy; everything the server owns (tracks, cup, roster, garage,
 -- settings, results) lives under DATA_DIR and is never written by a release.
-local SERVER_DIR  = 'Resources/Server/RaceManager'
+-- "PhoenixRM Server" since 0.24.0, beside "PhoenixRM Client.zip", so an owner
+-- can see what is installed; it was RaceManager (race.adoptOldInstall).
+local SERVER_DIR  = 'Resources/Server/PhoenixRM Server'
 local DATA_DIR    = SERVER_DIR .. '/Data'
 local RESULTS_DIR = DATA_DIR .. '/results'
 
@@ -5065,21 +5070,25 @@ local function migrateToDataFolder()
   end
   makeDirectory(DATA_DIR)
   local moved = 0
-  for _, name in ipairs({ 'config.json', 'cup.json', 'roster.json', 'garage.json',
-                          'layouts.json', 'derbyArenas.json' }) do
-    if copyFile(SERVER_DIR .. '/' .. name, DATA_DIR .. '/' .. name) then
-      moved = moved + 1
+  -- The plugin's own folder, or the one it had before the rename: a server
+  -- that never had a Data/ folder kept its files beside the old main.lua.
+  for _, folder in ipairs({ SERVER_DIR, 'Resources/Server/RaceManager' }) do
+    for _, name in ipairs({ 'config.json', 'cup.json', 'roster.json', 'garage.json',
+                            'layouts.json', 'derbyArenas.json' }) do
+      if copyFile(folder .. '/' .. name, DATA_DIR .. '/' .. name) then
+        moved = moved + 1
+      end
     end
-  end
-  -- The flat folders (tracks, arenas, results), file by file.
-  for _, sub in ipairs({ 'Race Layout', 'Derby Arena', 'results' }) do
-    local from = SERVER_DIR .. '/' .. sub
-    local names = listDirectory(from)
-    if #names > 0 then
-      makeDirectory(DATA_DIR .. '/' .. sub)
-      for _, name in ipairs(names) do
-        if copyFile(from .. '/' .. name, DATA_DIR .. '/' .. sub .. '/' .. name) then
-          moved = moved + 1
+    -- The flat folders (tracks, arenas, results), file by file.
+    for _, sub in ipairs({ 'Race Layout', 'Derby Arena', 'results' }) do
+      local from = folder .. '/' .. sub
+      local names = listDirectory(from)
+      if #names > 0 then
+        makeDirectory(DATA_DIR .. '/' .. sub)
+        for _, name in ipairs(names) do
+          if copyFile(from .. '/' .. name, DATA_DIR .. '/' .. sub .. '/' .. name) then
+            moved = moved + 1
+          end
         end
       end
     end
@@ -5089,6 +5098,112 @@ local function migrateToDataFolder()
       .. 'originals are kept as a backup and are no longer read.', moved, DATA_DIR))
   else
     print('[RaceManager] Created ' .. DATA_DIR .. '/ (nothing to migrate)')
+  end
+end
+
+-- THE RENAME (0.24.0). The plugin was Resources/Server/RaceManager and the
+-- client mod Resources/Client/RaceManager.zip; they are now "PhoenixRM Server"
+-- and "PhoenixRM Client.zip". The installers clean up behind themselves, but a
+-- release unzipped by hand over Resources/ leaves the old pair in place, and
+-- BeamMP loads EVERY plugin folder and sends players EVERY client zip: two Race
+-- Managers. So at boot, before anything is read:
+--   1. the old Data folder (tracks, cup, garage, settings, results) is MOVED
+--      here, whole, if this folder has none yet; if it cannot be moved, what
+--      Race Manager keeps is copied and the original stays as a backup;
+--   2. the old plugin's .lua files and the old client zip go to _attic/, so the
+--      next start loads one Race Manager. THIS start already loaded both, and
+--      listed the old zip for players, so the console and every admin who logs
+--      in are told to restart once (race.oldInstallNote).
+-- Only files that are Race Manager's are touched: the old main.lua must carry
+-- RM_BUILD and the [RaceManager] tag, and the old zip the client extension.
+function race.adoptOldInstall()
+  local OLD_DIR, OLD_CLIENT = 'Resources/Server/RaceManager', 'Resources/Client/RaceManager.zip'
+  -- nil for a missing file, and for a folder (which opens on Linux, then fails
+  -- to read).
+  local function readAll(path)
+    local f = io.open(path, 'rb')
+    if not f then return nil end
+    local ok, body = pcall(f.read, f, '*a')
+    f:close()
+    return ok and body or nil
+  end
+  local function writeAll(path, body)
+    local f = io.open(path, 'wb')
+    if not f then return false end
+    f:write(body)
+    f:close()
+    return true
+  end
+  local function isDir(path)
+    local probe = io.open(path .. '/.rm', 'a')
+    if not probe then return false end
+    probe:close()
+    removeFile(path .. '/.rm')
+    return true
+  end
+  -- A rename, or a copy and a delete where a rename is refused.
+  local function shiftFile(from, to)
+    if os.rename(from, to) then return true end
+    local body = readAll(from)
+    if not body or not writeAll(to, body) then return false end
+    removeFile(from)
+    return true
+  end
+  local done = {}
+
+  -- 1. The data.
+  if not isDir(DATA_DIR) and isDir(OLD_DIR .. '/Data') then
+    if os.rename(OLD_DIR .. '/Data', DATA_DIR) and isDir(DATA_DIR) then
+      done[#done + 1] = 'its Data folder (tracks, cup, garage, settings, results) was moved here'
+    else
+      makeDirectory(DATA_DIR)
+      local copied = 0
+      for _, sub in ipairs({ '', '/Race Layout', '/Derby Arena', '/Garage', '/Lap Records',
+                             '/results' }) do
+        local names = listDirectory(OLD_DIR .. '/Data' .. sub)
+        if #names > 0 then makeDirectory(DATA_DIR .. sub) end
+        for _, name in ipairs(names) do
+          local body = readAll(OLD_DIR .. '/Data' .. sub .. '/' .. name)
+          if body and writeAll(DATA_DIR .. sub .. '/' .. name, body) then copied = copied + 1 end
+        end
+      end
+      done[#done + 1] = copied .. ' data file(s) were copied here, the originals kept '
+        .. 'in ' .. OLD_DIR .. '/Data'
+    end
+  end
+
+  -- 2. The old code and client mod.
+  local attic = '_attic/PhoenixRM-rename_' .. os.date('%Y-%m-%d_%H-%M-%S')
+  local moved = 0
+  local oldMain = readAll(OLD_DIR .. '/main.lua')
+  if oldMain and oldMain:find('RM_BUILD', 1, true) and oldMain:find('[RaceManager]', 1, true) then
+    makeDirectory(attic .. '/Server/RaceManager')
+    for _, name in ipairs(listDirectory(OLD_DIR)) do
+      if name:lower():match('%.lua$')
+          and shiftFile(OLD_DIR .. '/' .. name, attic .. '/Server/RaceManager/' .. name) then
+        moved = moved + 1
+      end
+    end
+  end
+  local oldClient = readAll(OLD_CLIENT)
+  if oldClient and oldClient:find('lua/ge/extensions/raceManager.lua', 1, true) then
+    makeDirectory(attic .. '/Client')
+    if shiftFile(OLD_CLIENT, attic .. '/Client/RaceManager.zip') then moved = moved + 1 end
+  end
+  if moved > 0 then
+    done[#done + 1] = 'its plugin and client mod (' .. moved .. ' file(s)) were moved to ' .. attic
+  end
+
+  if #done == 0 then return end
+  local msg = '[RaceManager] Found the older install in ' .. OLD_DIR .. ': '
+    .. table.concat(done, '; ') .. '.'
+  if moved > 0 then
+    -- Told to every admin at login until the restart clears it.
+    race.oldInstallNote = msg .. ' It was loaded beside this one at this start, so '
+      .. 'RESTART THE SERVER once to run only Phoenix Race Manager.'
+    print(race.oldInstallNote)
+  else
+    print(msg)
   end
 end
 
@@ -9270,7 +9385,9 @@ function RM_onPlayerDisconnect(pid)
 end
 
 function onInit()
-  -- The data folder first: the settings are in it.
+  -- An install from before the rename first (its Data folder comes across),
+  -- then the data folder: the settings are in it.
+  race.adoptOldInstall()
   migrateToDataFolder()
   -- Then the settings, pushed into the race table seeded at load
   -- (applyConfigToRace).

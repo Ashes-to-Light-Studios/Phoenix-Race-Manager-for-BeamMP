@@ -12,12 +12,15 @@ Run from the repo root. Exit code is non-zero if anything failed.
 
 Two rules this script will not break, because both have cost real work:
 
-  * It writes Resources/Client/RaceManager.zip and the plugin's .lua files,
-    and NOTHING ELSE. The .lua set is discovered from server/RaceManager rather
-    than listed, so a new module cannot be left behind.
+  * It writes "Resources/Client/PhoenixRM Client.zip" and the plugin's .lua
+    files in "Resources/Server/PhoenixRM Server", and NOTHING ELSE. The .lua set
+    is discovered from server/RaceManager rather than listed, so a new module
+    cannot be left behind. (Before 0.24.0 the two were RaceManager.zip and
+    Resources/Server/RaceManager; the plugin takes an old install over itself
+    when it starts, data included.)
 
     THE SERVER'S OWN DATA NOW LIVES IN ITS OWN FOLDER, Resources/Server/
-    RaceManager/Data/: the tracks you have built, the championship, the roster,
+    PhoenixRM Server/Data/: the tracks you have built, the championship, the roster,
     the garage, the settings and the results. This script has never written
     anything in there and now it could not do so by accident either -- code and
     data are two folders rather than two filename conventions in one.
@@ -87,6 +90,10 @@ def server_files():
     found.sort(key=lambda f: (f != SERVER_PLUGIN, f))
     return found
 RELEASE_NAME = 'RaceManager-v0.24.0.zip'
+# What the two halves are called on a server and in a release (0.24.0 on), so
+# an owner can see what is installed. The server half holds the LICENSE too.
+CLIENT_ZIP = 'PhoenixRM Client.zip'
+SERVER_FOLDER = 'PhoenixRM Server'
 
 # Loose Race Manager files that collect in a server root from hand-installs.
 # Other mods' files are never in this list: tidying somebody else's install is
@@ -132,20 +139,29 @@ def build(write=True, package=False):
     server_lua = server_files()
     os.makedirs('dist', exist_ok=True)
     release = os.path.join('dist', RELEASE_NAME)
+    plugin_dir = 'package/Server/' + SERVER_FOLDER
     if write and package:
+        # package/ IS the release: the workflow zips it as it stands, so a file
+        # left from the old layout would ship. Cleared, then written.
+        for stale in ('package/Client', 'package/Server'):
+            if os.path.isdir(stale):
+                shutil.rmtree(stale)
+        if os.path.exists('package/LICENSE'):
+            os.remove('package/LICENSE')
         os.makedirs('package/Client', exist_ok=True)
-        os.makedirs('package/Server/RaceManager', exist_ok=True)
-        with open('package/Client/RaceManager.zip', 'wb') as f:
+        os.makedirs(plugin_dir, exist_ok=True)
+        with open('package/Client/' + CLIENT_ZIP, 'wb') as f:
             f.write(client)
         for f in server_lua:
-            shutil.copyfile(f, 'package/Server/RaceManager/' + os.path.basename(f))
+            shutil.copyfile(f, plugin_dir + '/' + os.path.basename(f))
+        shutil.copyfile('LICENSE', plugin_dir + '/LICENSE')
     if write:
         os.makedirs('dist', exist_ok=True)
         with zipfile.ZipFile(release, 'w', zipfile.ZIP_DEFLATED) as z:
-            z.write('LICENSE', 'LICENSE')
-            z.writestr('Client/RaceManager.zip', client)
+            z.writestr('Client/' + CLIENT_ZIP, client)
             for f in server_lua:
-                z.write(f, 'Server/RaceManager/' + os.path.basename(f))
+                z.write(f, 'Server/' + SERVER_FOLDER + '/' + os.path.basename(f))
+            z.write('LICENSE', 'Server/' + SERVER_FOLDER + '/LICENSE')
         print('built %s (%d bytes) from %d client files'
               % (release, os.path.getsize(release), len(files)))
     else:
@@ -209,7 +225,7 @@ def rival_plugins(server):
         return out
     for name in sorted(os.listdir(base)):
         d = os.path.join(base, name)
-        if name == 'RaceManager' or not os.path.isdir(d):
+        if name == SERVER_FOLDER or not os.path.isdir(d):
             continue
         main = os.path.join(d, 'main.lua')
         if not os.path.isfile(main):
@@ -239,11 +255,11 @@ def deploy(server, client, dry_run=False, force=False, running=False):
     stamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     backup = os.path.join(server, '_attic', 'deploy-' + stamp)
     targets = [
-        (client, os.path.join(server, 'Resources', 'Client', 'RaceManager.zip')),
+        (client, os.path.join(server, 'Resources', 'Client', CLIENT_ZIP)),
     ]
     for f in server_files():
         targets.append((open(f, 'rb').read(),
-                        os.path.join(server, 'Resources', 'Server', 'RaceManager',
+                        os.path.join(server, 'Resources', 'Server', SERVER_FOLDER,
                                      os.path.basename(f))))
 
     ok = True

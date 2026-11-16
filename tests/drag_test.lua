@@ -939,7 +939,7 @@ for _, e in ipairs(lastDrag.entrants) do if e.status == 'in' then beforeIn = bef
 -- disk. Read it back the way the boot path does and check the tournament is
 -- all there: the entrants with their records, the rounds with their results,
 -- and the cursor pointing at the pass that was next.
-local f = io.open('Resources/Server/RaceManager/Data/dragLadder.json', 'r')
+local f = io.open('Resources/Server/PhoenixRM Server/Data/dragLadder.json', 'r')
 check(f ~= nil, 'the ladder was written to disk')
 if f then
   local text = f:read('*a')

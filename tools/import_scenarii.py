@@ -13,15 +13,15 @@ Writes, under --out (default `import/`), the two folders the server reads:
 
 That IS the server's own layout store -- since the per-map migration these two
 folders are what it loads -- so the output can be copied straight into
-Resources/Server/RaceManager/ once you have looked at it.
+Resources/Server/PhoenixRM Server/Data/ once you have looked at it.
 
 NOTHING IS INSTALLED ANYWAY. These folders are every track an admin has ever
 built, so this writes them somewhere else and leaves the copy to a human.
 
     --merge PATH    fold an existing store in FIRST, so imports never displace
                     anything you built. PATH may be a flat layouts.json, a
-                    derbyArenas.json, or a Resources/Server/RaceManager folder
-                    holding any of them.
+                    derbyArenas.json, or a server's "PhoenixRM Server" (or,
+                    before 0.24.0, RaceManager) folder holding any of them.
 
 DUPLICATE NAMES ARE KEPT, BOTH OF THEM. The server matches a layout by name
 within a map, so two tracks called "Race" on one map is one track that quietly
@@ -372,8 +372,8 @@ def main():
                     help="say what would be converted and write nothing")
     ap.add_argument("--merge", metavar="PATH",
                     help="fold an existing store in first: a layouts.json, a "
-                         "derbyArenas.json, or a Resources/Server/RaceManager "
-                         "folder. Imports go second, so a duplicate name "
+                         "derbyArenas.json, or a server's PhoenixRM Server "
+                         "(before 0.24.0, RaceManager) folder. Imports go second, so a duplicate name "
                          "renames the IMPORT and never what you built.")
     args = ap.parse_args()
 

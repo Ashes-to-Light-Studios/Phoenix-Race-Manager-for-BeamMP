@@ -11,7 +11,7 @@ The [README](../README.md) has the short version.
 
 The **Track Layouts** panel at the bottom of the editor stores named
 checkpoint configurations **on the BeamMP server** in
-`Resources/Server/RaceManager/layouts.json`, so they survive server restarts
+`Resources/Server/PhoenixRM Server/layouts.json`, so they survive server restarts
 and can be prepped days before an event:
 
 - **Save As New** bundles the currently placed gates (positions, headings,
@@ -144,7 +144,7 @@ on disconnect, and by **Log out**.
 > one in the moderator box, and the people who already have it drop to the
 > narrower tier without being sent anything new.
 
-Both passwords live in `Resources/Server/RaceManager/Data/config.json` and
+Both passwords live in `Resources/Server/PhoenixRM Server/Data/config.json` and
 survive a restart.
 
 You never have to log in just to watch: close the login bar with **✕** and the
@@ -770,7 +770,7 @@ closes:
 
 | Switch | Default | Keeps |
 |---|---|---|
-| **On the server** | off | A file in `Resources/Server/RaceManager/Data/results/`, named `results_<date>_<time>.txt` (`derby_results_…`, `drag_results_…`). Chat announces the path |
+| **On the server** | off | A file in `Resources/Server/PhoenixRM Server/Data/results/`, named `results_<date>_<time>.txt` (`derby_results_…`, `drag_results_…`). Chat announces the path |
 | **On admins' PCs** | off | A copy to every admin and moderator logged in, saved in `settings/raceManager/results/` in their BeamNG user folder. **My Results** opens it |
 
 [Posting to Discord](#posting-results-to-discord) is its own row, and attaches
@@ -924,7 +924,7 @@ all key on the BeamMP player id exactly as before - an alias is never used as a
 lookup, so renaming somebody mid-session moves nothing but the text on screen.
 
 **Names are saved on the server.** Every name an admin sets is written to
-`Resources/Server/RaceManager/Data/roster.json` as a **saved driver** - an id,
+`Resources/Server/PhoenixRM Server/Data/roster.json` as a **saved driver** - an id,
 the name, the BeamMP name that connection was using at the time and, for a
 player logged in to BeamMP, their account id. They live through Start Quali,
 Generate Grid, a whole race, **Reset**, a second race after that, and the server
@@ -1523,7 +1523,7 @@ The rule can be changed at any time **except while a caution is out**. A caution
 runs under the rule it was called under until the green. It is a runtime
 setting like the free pass. To make it the server's default, set
 `"cautionMode": "call"` (or `"line"`) in
-`Resources/Server/RaceManager/Data/config.json`.
+`Resources/Server/PhoenixRM Server/Data/config.json`.
 
 #### Passes under caution
 
@@ -1645,7 +1645,7 @@ Some details worth knowing:
 **Code and data are two folders**, not two filename conventions in one:
 
 ```
-Resources/Server/RaceManager/
+Resources/Server/PhoenixRM Server/
     main.lua  derby.lua  ...     the plugin. REPLACED by every deploy.
     Data/                        everything the server owns. Never written by a release.
         Race Layout/<map>.json   every race on that map
@@ -1738,15 +1738,15 @@ python tools/import_scenarii.py ~/Downloads/scenarii          # write import/
 
 It writes `import/Race Layout/<map>.json` and `import/Derby Arena/<map>.json`
 &mdash; the same two folders the server reads, so the output can be copied
-straight into `Resources/Server/RaceManager/` &mdash; plus `import/INDEX.md`
+straight into `Resources/Server/PhoenixRM Server/Data/` &mdash; plus `import/INDEX.md`
 listing every race with its gate count and any caveat.
 
 **Nothing is installed.** Those folders are every track an admin has ever built,
 so the copy is left to a human.
 
 **`--merge PATH` folds an existing store in first.** PATH can be a flat
-`layouts.json`, a `derbyArenas.json`, or a whole `Resources/Server/RaceManager`
-folder. **A duplicate name renames the IMPORT, never what you built**: the server
+`layouts.json`, a `derbyArenas.json`, or a whole `Resources/Server/PhoenixRM Server`
+folder (or `Resources/Server/RaceManager`, from before 0.24.0). **A duplicate name renames the IMPORT, never what you built**: the server
 resolves a layout by name within a map, so two tracks called "Race" on one map is
 one quietly shadowing the other. A colliding import becomes `Race (2)`, `Race (3)`
 and so on, and every rename is printed as it happens.
@@ -2369,7 +2369,7 @@ The **Garage** panel (admin only) locks the session down to approved cars:
    The client fingerprints it (jbeam model + every part in the part config +
    every tuning variable) and sends it to the server.
 2. Repeat to build a Garage List of allowed cars. The list persists in
-   `Resources/Server/RaceManager/garage.json` across restarts.
+   `Resources/Server/PhoenixRM Server/garage.json` across restarts.
 3. Pick what a capture **Locks** (below), then flip the toggle to **Enforcing**.
 
 ### What a capture locks
@@ -2423,7 +2423,7 @@ there if you like; delete the `name` to go back to the label.
 
 A night that runs two series should not mean whitelisting both fields between
 them. A **set** is the approved list saved under a name, in
-`Resources/Server/RaceManager/Data/Garage/`, one file per set.
+`Resources/Server/PhoenixRM Server/Data/Garage/`, one file per set.
 
 - **Save Current** writes the list above under the name you type, along with
   whether it is Parts or Strict. That mode is part of the series and comes back
@@ -2892,7 +2892,7 @@ Everything except ending the cup:
 | Server restart | ✅ |
 | **End Cup** | ❌ - this is the only thing that clears them |
 
-Cup state lives in `Resources/Server/RaceManager/cup.json`, written on every
+Cup state lives in `Resources/Server/PhoenixRM Server/cup.json`, written on every
 change. It is deliberately **not** in the `results/` folder, because
 [Clear Results Cache](#step-7--results) deletes everything there.
 
@@ -3301,14 +3301,34 @@ when it does (see [Game hosts](#game-hosts)). The **Updates** row on the
 
 Tracks, results and settings in `Data/` are kept, and players get the new
 version as they rejoin. If a release removes a file from
-`Resources/Server/RaceManager/`, delete it there too: BeamMP runs every `.lua`
-in that folder. On your own machine, `PRM-Setup.exe` (Windows) or
+`Resources/Server/PhoenixRM Server/`, delete it there too: BeamMP runs every
+`.lua` in that folder.
+
+**From 0.23.x or older, the folders are renamed.** Until 0.24.0 the plugin was
+`Resources/Server/PhoenixRM Server/` and the client mod `Resources/Client/PhoenixRM Client.zip`;
+they are now `Resources/Server/PhoenixRM Server/` (which also holds the
+LICENSE) and `Resources/Client/PhoenixRM Client.zip`, so a server owner can see
+what is installed. Unzipped over an old install, both copies are there at the
+first start, and BeamMP loads every plugin folder and sends players every client
+zip. So the new plugin, as it starts:
+
+- moves the old `Data` folder (tracks, cup, garage, settings, results) into
+  `Resources/Server/PhoenixRM Server/Data`, if that has none yet;
+- moves the old plugin's `.lua` files and `RaceManager.zip` to
+  `_attic/PhoenixRM-rename_<date>/`;
+- tells the console, and every admin who logs in, to **restart the server
+  once**, because that start ran both copies.
+
+The installers do the same before the server starts, so no restart is needed
+after them. **Update and restart** from the game cannot make this jump: the
+updater in 0.23.x and older does not know the new folders and refuses the
+release, changing nothing. Update by hand or with an installer once. On your own machine, `PRM-Setup.exe` (Windows) or
 `PRM-Install.sh` (Linux) does all of this and keeps the old files in `_attic/`.
 
 ### Updating from the game
 
 On a server you run on your own machine, set `"onlineFeatures": true` in
-`Resources/Server/RaceManager/Data/config.json` and restart it. Then, when the
+`Resources/Server/PhoenixRM Server/Data/config.json` and restart it. Then, when the
 server starts, it asks GitHub for the newest Phoenix Race Manager release, once,
 in the background. If that release is newer than the one the server runs:
 
@@ -3333,7 +3353,7 @@ button, because nothing in the game can undo it.
 3. Everyone is disconnected, with a message to rejoin in about a minute. New
    joins are turned away until the restart.
 4. The files it replaces are copied to `_attic/update-<old>-to-<new>_<date>/`
-   in the server folder, then `Resources/Client/RaceManager.zip` and the plugin's
+   in the server folder, then `Resources/Client/PhoenixRM Client.zip` and the plugin's
    `.lua` files are replaced. A plugin file the new release no longer has is
    moved out too, because BeamMP runs every `.lua` in the folder. If any file
    cannot be written, every file is put back and the server keeps running.
@@ -3537,7 +3557,7 @@ post runs curl in a process of its own, so a slow answer never holds up the
 server.
 
 **Turning it off for good.** Remove the webhook. Deleting
-`Resources/Server/RaceManager/discord.lua` also turns it off, but the next
+`Resources/Server/PhoenixRM Server/discord.lua` also turns it off, but the next
 update puts the file back, still off until a webhook is set.
 
 ## Drag racing (parallel game mode)
@@ -3735,7 +3755,7 @@ appears when a ladder is built and stays until it is cleared.
 
 ### What survives a restart
 
-The ladder is written to `Resources/Server/RaceManager/Data/dragLadder.json` on
+The ladder is written to `Resources/Server/PhoenixRM Server/Data/dragLadder.json` on
 every change and comes back at boot. A tournament is an evening, not a session,
 and losing four rounds of it to a restart means running the whole thing again.
 
@@ -3922,7 +3942,7 @@ derby mode, and derby controls are not shown anywhere else - see
    in the **Saved Arenas** panel and press **Save Current Arena**: the boundary
    polygon, both timers, the reset limit *and* the starting grid are stored on
    the server in
-   `Resources/Server/RaceManager/derbyArenas.json`, tagged with the hosted map,
+   `Resources/Server/PhoenixRM Server/derbyArenas.json`, tagged with the hosted map,
    so a prepped arena survives a restart. **Load Arena** here, or a click on it
    under **Arenas** in the **Layouts** menu, pushes it to every connected client
    at once; **✕** deletes it. Loading is refused while a derby is running - the

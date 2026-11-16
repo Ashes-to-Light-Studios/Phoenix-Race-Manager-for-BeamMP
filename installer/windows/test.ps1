@@ -32,11 +32,11 @@ $expect = @{}
 $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $Zip).Path)
 try {
   foreach ($e in $archive.Entries) {
-    if ($e.FullName -match '^(Client/RaceManager\.zip|Server/RaceManager/[A-Za-z0-9_-]+\.lua)$') {
+    if ($e.FullName -match '^(Client/PhoenixRM Client\.zip|Server/PhoenixRM Server/([A-Za-z0-9_-]+\.lua|LICENSE))$') {
       $ms = New-Object System.IO.MemoryStream
       $s = $e.Open(); $s.CopyTo($ms); $s.Dispose()
       $expect[$e.FullName] = Hash $ms.ToArray()
-      if ($e.FullName -eq 'Server/RaceManager/main.lua') {
+      if ($e.FullName -eq 'Server/PhoenixRM Server/main.lua') {
         $version = [regex]::Match([System.Text.Encoding]::UTF8.GetString($ms.ToArray()), "(?m)^local RM_BUILD = '([^']+)'").Groups[1].Value
       }
     }
@@ -84,39 +84,46 @@ try {
   $log = Get-ChildItem -Path (Join-Path $fresh '_attic') -Recurse -Filter install.log | Select-Object -First 1
   Check ($null -ne $log -and $log.Directory.Name -like "install-none-to-$version*") 'and a log of what it did'
 
-  # --- An update over an old install ----------------------------------------
+  # --- An update over an install from before 0.24.0 --------------------------
+  # The plugin was Resources\Server\RaceManager and the client RaceManager.zip.
   $up = Join-Path $root 'update'
   NewServer $up $config
   $res = Join-Path $up 'Resources'
-  $plugin = Join-Path $res 'Server\RaceManager'
-  New-Item -ItemType Directory -Force -Path (Join-Path $plugin 'Data\results'), (Join-Path $res 'Client'),
+  $old = Join-Path $res 'Server\RaceManager'
+  $plugin = Join-Path $res 'Server\PhoenixRM Server'
+  New-Item -ItemType Directory -Force -Path (Join-Path $old 'Data\results'), (Join-Path $res 'Client'),
     (Join-Path $res 'Server\RaceManager_old'), (Join-Path $res 'Server\OtherPlugin') | Out-Null
-  Set-Content -LiteralPath (Join-Path $res 'Client\RaceManager.zip') -Value 'OLD CLIENT' -NoNewline
-  Set-Content -LiteralPath (Join-Path $plugin 'main.lua') -Value "-- old`nlocal RM_BUILD = '0.0.1'`n" -NoNewline
-  Set-Content -LiteralPath (Join-Path $plugin 'stale.lua') -Value '-- gone from the release' -NoNewline
-  Set-Content -LiteralPath (Join-Path $plugin 'Data\config.json') -Value '{"adminPassword": "theirs"}' -NoNewline
-  Set-Content -LiteralPath (Join-Path $plugin 'Data\results\race.txt') -Value 'P1 somebody' -NoNewline
+  ZipWith (Join-Path $res 'Client\RaceManager.zip') @('lua/ge/extensions/raceManager.lua', 'scripts/raceManager/modScript.lua')
+  Set-Content -LiteralPath (Join-Path $old 'main.lua') -Value "-- old`nlocal RM_BUILD = '0.0.1'`nprint('[RaceManager] loaded')`n" -NoNewline
+  Set-Content -LiteralPath (Join-Path $old 'maps.lua') -Value '-- an old module' -NoNewline
+  Set-Content -LiteralPath (Join-Path $old 'Data\config.json') -Value '{"adminPassword": "theirs"}' -NoNewline
+  Set-Content -LiteralPath (Join-Path $old 'Data\results\race.txt') -Value 'P1 somebody' -NoNewline
   Set-Content -LiteralPath (Join-Path $res 'Server\RaceManager_old\main.lua') -Value "local RM_BUILD = '0.0.0'`nprint('[RaceManager] loaded')" -NoNewline
   Set-Content -LiteralPath (Join-Path $res 'Server\OtherPlugin\main.lua') -Value "print('RM_ is not ours')" -NoNewline
   ZipWith (Join-Path $res 'Client\RaceManager-v0.19.0.zip') @('lua/ge/extensions/raceManager.lua', 'scripts/raceManager/modScript.lua')
   ZipWith (Join-Path $res 'Client\cars.zip') @('vehicles/buggy/buggy.jbeam')
-  Check ((Run $up) -eq 0) 'an old install updates'
-  Check (Installed $res) 'to every file the release has'
-  Check (-not (Test-Path -LiteralPath (Join-Path $plugin 'stale.lua'))) 'a plugin file the release no longer has is moved out'
+  Check ((Run $up) -eq 0) 'an install from before 0.24.0 updates'
+  Check (Installed $res) 'to every file the release has, under the new names'
   Check ((Get-Content -Raw -LiteralPath (Join-Path $plugin 'Data\config.json')) -eq '{"adminPassword": "theirs"}' -and
-    (Get-Content -Raw -LiteralPath (Join-Path $plugin 'Data\results\race.txt')) -eq 'P1 somebody') 'Data is left alone'
+    (Get-Content -Raw -LiteralPath (Join-Path $plugin 'Data\results\race.txt')) -eq 'P1 somebody') 'its Data is moved into PhoenixRM Server'
+  Check (-not (Test-Path -LiteralPath $old)) 'the old plugin folder is moved out: BeamMP would run it beside the new one'
+  Check (-not (Test-Path -LiteralPath (Join-Path $res 'Client\RaceManager.zip'))) 'and so is the old client zip: players would be sent both'
   Check (-not (Test-Path -LiteralPath (Join-Path $res 'Client\RaceManager-v0.19.0.zip'))) 'a second copy of the client is moved out'
   Check (-not (Test-Path -LiteralPath (Join-Path $res 'Server\RaceManager_old'))) 'and so is another Race Manager plugin'
   Check ((Test-Path -LiteralPath (Join-Path $res 'Client\cars.zip')) -and (Test-Path -LiteralPath (Join-Path $res 'Server\OtherPlugin\main.lua'))) 'other mods and plugins stay'
   $attic = Get-ChildItem -Path (Join-Path $up '_attic') -Directory | Where-Object Name -like 'install-0.0.1-to-*' | Select-Object -First 1
   Check ($null -ne $attic) 'the attic folder names both versions'
   if ($attic) {
-    Check ((Get-Content -Raw -LiteralPath (Join-Path $attic.FullName 'Client\RaceManager.zip')) -eq 'OLD CLIENT' -and
-      (Get-Content -Raw -LiteralPath (Join-Path $attic.FullName 'Server\RaceManager\stale.lua')) -eq '-- gone from the release' -and
+    Check ((Test-Path -LiteralPath (Join-Path $attic.FullName 'Client\RaceManager.zip')) -and
+      (Test-Path -LiteralPath (Join-Path $attic.FullName 'Server\RaceManager\main.lua')) -and
+      (Test-Path -LiteralPath (Join-Path $attic.FullName 'Server\RaceManager\maps.lua')) -and
       (Test-Path -LiteralPath (Join-Path $attic.FullName 'Client\RaceManager-v0.19.0.zip')) -and
       (Test-Path -LiteralPath (Join-Path $attic.FullName 'Server\RaceManager_old\main.lua'))) 'and holds everything it replaced or moved'
   }
+  Set-Content -LiteralPath (Join-Path $plugin 'stale.lua') -Value '-- gone from the release' -NoNewline
   Check ((Run $up) -eq 0) 'installing the same release again works'
+  Check (-not (Test-Path -LiteralPath (Join-Path $plugin 'stale.lua'))) 'a plugin file the release no longer has is moved out'
+  Check ((Get-Content -Raw -LiteralPath (Join-Path $plugin 'Data\results\race.txt')) -eq 'P1 somebody') 'and Data is left alone'
 
   # --- A renamed resources folder -------------------------------------------
   $renamed = Join-Path $root 'renamed'
@@ -139,15 +146,32 @@ try {
   $locked = Join-Path $root 'locked'
   NewServer $locked $config
   $lres = Join-Path $locked 'Resources'
-  New-Item -ItemType Directory -Force -Path (Join-Path $lres 'Server\RaceManager'), (Join-Path $lres 'Client') | Out-Null
-  Set-Content -LiteralPath (Join-Path $lres 'Client\RaceManager.zip') -Value 'OLD CLIENT' -NoNewline
-  Set-Content -LiteralPath (Join-Path $lres 'Server\RaceManager\main.lua') -Value "local RM_BUILD = '0.0.1'" -NoNewline
-  $ro = Join-Path $lres 'Server\RaceManager\maps.lua'
+  New-Item -ItemType Directory -Force -Path (Join-Path $lres 'Server\PhoenixRM Server'), (Join-Path $lres 'Client') | Out-Null
+  Set-Content -LiteralPath (Join-Path $lres 'Client\PhoenixRM Client.zip') -Value 'OLD CLIENT' -NoNewline
+  Set-Content -LiteralPath (Join-Path $lres 'Server\PhoenixRM Server\main.lua') -Value "local RM_BUILD = '0.0.1'" -NoNewline
+  $ro = Join-Path $lres 'Server\PhoenixRM Server\maps.lua'
   Set-Content -LiteralPath $ro -Value '-- old maps' -NoNewline
   (Get-Item -LiteralPath $ro).IsReadOnly = $true
   Check ((Run $locked) -eq 1) 'a file that cannot be written stops the install'
-  Check ((Get-Content -Raw -LiteralPath (Join-Path $lres 'Client\RaceManager.zip')) -eq 'OLD CLIENT' -and
-    (Get-Content -Raw -LiteralPath (Join-Path $lres 'Server\RaceManager\main.lua')) -eq "local RM_BUILD = '0.0.1'") 'and every file is put back'
+  Check ((Get-Content -Raw -LiteralPath (Join-Path $lres 'Client\PhoenixRM Client.zip')) -eq 'OLD CLIENT' -and
+    (Get-Content -Raw -LiteralPath (Join-Path $lres 'Server\PhoenixRM Server\main.lua')) -eq "local RM_BUILD = '0.0.1'") 'and every file is put back'
+
+  # --- A write that fails after the old Data was moved -------------------------
+  # The data goes back to the old folder with everything else.
+  $both = Join-Path $root 'locked old'
+  NewServer $both $config
+  $bres = Join-Path $both 'Resources'
+  $bold = Join-Path $bres 'Server\RaceManager'
+  New-Item -ItemType Directory -Force -Path (Join-Path $bold 'Data'), (Join-Path $bres 'Server\PhoenixRM Server'), (Join-Path $bres 'Client') | Out-Null
+  Set-Content -LiteralPath (Join-Path $bold 'main.lua') -Value "local RM_BUILD = '0.0.1'`nprint('[RaceManager] x')" -NoNewline
+  Set-Content -LiteralPath (Join-Path $bold 'Data\config.json') -Value '{}' -NoNewline
+  $bro = Join-Path $bres 'Server\PhoenixRM Server\maps.lua'
+  Set-Content -LiteralPath $bro -Value '-- old maps' -NoNewline
+  (Get-Item -LiteralPath $bro).IsReadOnly = $true
+  Check ((Run $both) -eq 1) 'a failed write stops an install over an old one too'
+  Check ((Test-Path -LiteralPath (Join-Path $bold 'Data\config.json')) -and
+    -not (Test-Path -LiteralPath (Join-Path $bres 'Server\PhoenixRM Server\Data'))) 'and its Data is put back in the old folder'
+  (Get-Item -LiteralPath $bro).IsReadOnly = $false
   (Get-Item -LiteralPath $ro).IsReadOnly = $false
 
   # --- Not a server ------------------------------------------------------------

@@ -249,7 +249,7 @@ seconds(20)
 lastChat = nil
 RM_onLap(1, '{"lapTime":50.0}'); RM_onLap(2, '{"lapTime":50.5}'); RM_onLap(3, '{"lapTime":51.0}')
 seconds(10)
-local path = lastChat and lastChat:match('(Resources/Server/RaceManager/Data/results/[%w%-_%.]+%.txt)')
+local path = lastChat and lastChat:match('(Resources/Server/PhoenixRM Server/Data/results/[%w%-_%.]+%.txt)')
 local f = path and io.open(path, 'r')
 local text = f and f:read('a') or ''
 if f then f:close() end

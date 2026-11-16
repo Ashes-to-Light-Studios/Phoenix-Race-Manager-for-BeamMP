@@ -310,7 +310,7 @@ lap(2); lap(3)
 -- And it cannot be inferred from the out-lap flag alone: a head-on grid's out
 -- lap comes OUT of the distance, a formation lap goes ON TOP of it.
 seconds(6)                            -- past the end-of-race hold (endDelay)
-local resultsPath = lastChat and lastChat:match('(Resources/[%w%-_%./]+%.txt)')
+local resultsPath = lastChat and lastChat:match('(Resources/[%w%-_%./ ]+%.txt)')
 check(resultsPath ~= nil, 'the finished race writes a results file')
 local rf = resultsPath and io.open(resultsPath, 'r')
 check(rf ~= nil, 'and it is on disk')
