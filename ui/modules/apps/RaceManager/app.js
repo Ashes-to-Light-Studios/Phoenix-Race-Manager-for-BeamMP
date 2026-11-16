@@ -153,6 +153,10 @@ angular.module('beamng.apps')
       $scope.branchSlot = 1;       // checkpoint the next placed branch gate belongs to
       $scope.gridOffLine = false;  // grid is away from the line, so an out lap is owed
       $scope.firstCheckpoint = 1;  // the gate an out lap arms first
+      // The layout's sectors: [{ from, to }], each a checkpoint number or 0 for
+      // the start/finish line. Empty: every checkpoint is a sector of its own.
+      $scope.sectors = [];
+      $scope.maxSectors = 20;      // the client's cap, pushed with the route
       $scope.hasBranches = false;  // mirrored from the server: any branch gates on this track?
       // Bound with ng-model from inside ng-if blocks, so every one of these has to
       // hang off an object: a bare primitive is shadowed on the child scope
@@ -2364,6 +2368,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (typeof data.branchSlot === 'number') { $scope.branchSlot = data.branchSlot; }
           $scope.gridOffLine = !!data.gridOffLine;
           $scope.firstCheckpoint = data.firstCheckpoint || 1;
+          // THROUGH toArray: an empty list arrives from Lua as {}.
+          $scope.sectors = toArray(data.sectors);
+          if (typeof data.maxSectors === 'number') { $scope.maxSectors = data.maxSectors; }
           // The spacing sliders are only offered while the generator owns a
           // block of slots; hand-placing, moving or dropping one lets go of it.
           $scope.gridGenerated = !!data.gridGenerated;
@@ -2503,6 +2510,72 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.pickFirstCheckpoint = function (s) {
         $scope.laneUi.menu = null;
         bngApi.engineLua('raceManager.setFirstCheckpoint(' + (parseInt(s, 10) || 1) + ')');
+      };
+      // ------------------------------------------------------------------
+      // Sectors (editor)
+      // ------------------------------------------------------------------
+      // A sector end as Lua reads it: the line is 0, and so is a number that
+      // has become the last gate (the line moved onto it).
+      function sectorKey(v) {
+        v = parseInt(v, 10) || 0;
+        return (v <= 0 || v >= $scope.routeWaypoints.length) ? 0 : v;
+      }
+      // In running order: a sector starts at the line or a checkpoint, and ends
+      // at a checkpoint or the line.
+      $scope.sectorStarts = function () {
+        var out = [0];
+        for (var i = 1; i < $scope.routeWaypoints.length; i++) { out.push(i); }
+        return out;
+      };
+      $scope.sectorEnds = function () {
+        var out = [];
+        for (var i = 1; i < $scope.routeWaypoints.length; i++) { out.push(i); }
+        out.push(0);
+        return out;
+      };
+      // The line is a start/finish on a circuit, and on a stage the start at
+      // one end and the finish at the other.
+      $scope.sectorFromName = function (v) {
+        if (sectorKey(v) === 0) { return $scope.pointToPoint ? 'Start' : 'Start/finish'; }
+        return 'CP ' + sectorKey(v);
+      };
+      $scope.sectorToName = function (v) {
+        if (sectorKey(v) === 0) { return $scope.pointToPoint ? 'Finish' : 'Start/finish'; }
+        return 'CP ' + sectorKey(v);
+      };
+      $scope.sectorEmpty = function (sec) {
+        return !!sec && sectorKey(sec.from) === sectorKey(sec.to);
+      };
+      $scope.sectorKeyOf = function (v) { return sectorKey(v); };
+      $scope.addSector = function () {
+        bngApi.engineLua('raceManager.addSector()');
+      };
+      $scope.removeSector = function (index) {
+        bngApi.engineLua('raceManager.removeSector(' + (parseInt(index, 10) || 0) + ')');
+      };
+      // One end at a time; Lua leaves the other where it is.
+      $scope.pickSectorEnd = function (index, which, v) {
+        $scope.laneUi.menu = null;
+        var n = parseInt(v, 10) || 0;
+        bngApi.engineLua('raceManager.setSector(' + (parseInt(index, 10) || 0) + ', '
+          + (which === 'from' ? n + ', nil' : 'nil, ' + n) + ')');
+      };
+      // What a row of the gate list says about sectors: the ones ending and
+      // starting at that gate. `gate` is its number; the last one is the line.
+      $scope.sectorBadge = function (gate) {
+        if (!$scope.sectors.length) { return ''; }
+        var key = sectorKey(gate === $scope.routeWaypoints.length ? 0 : gate);
+        var ends = [], starts = [];
+        for (var i = 0; i < $scope.sectors.length; i++) {
+          var sec = $scope.sectors[i];
+          if ($scope.sectorEmpty(sec)) { continue; }
+          if (sectorKey(sec.to) === key) { ends.push('S' + (i + 1)); }
+          if (sectorKey(sec.from) === key) { starts.push('S' + (i + 1)); }
+        }
+        var parts = [];
+        if (ends.length) { parts.push(ends.join(', ') + ' ends'); }
+        if (starts.length) { parts.push(starts.join(', ') + ' starts'); }
+        return parts.join(' · ');
       };
       // The last gate is the line, and the picker offers it by that name.
       $scope.checkpointName = function (s) {

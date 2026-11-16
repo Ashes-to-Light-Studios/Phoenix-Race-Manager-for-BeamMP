@@ -2292,6 +2292,66 @@
     </div>
     <div class="rm-editor-msg" ng-if="editorMsg">{{ editorMsg }}</div>
 
+    <!-- ===== Sectors: stretches of the lap, timed on their own =====
+         NOT CHECKPOINTS. A sector names the two gates it runs between, so a
+         track can have thirty gates and three sectors. Each driver's own
+         machine times them, against their best for that sector, exactly as the
+         per-checkpoint splits were; with none defined that is still what they
+         get. sIndex, not $index, inside the pickers: they repeat inside this
+         repeat, and the inner $index is the OPTION's. -->
+    <div class="rm-lanes rm-sectors" ng-if="editorTarget === 'main' && routeWaypoints.length > 1">
+      <div class="rm-lanes-row">
+        <span class="rm-sectors-title">Sectors</span>
+        <button class="rm-btn rm-btn-mini rm-btn-grid" ng-click="addSector()"
+                ng-disabled="!canEdit() || sectors.length >= maxSectors"
+                title="A new sector, starting where the last one ends. Set its two ends below.">+ Add Sector</button>
+        <span class="rm-route-tab-note" ng-if="!sectors.length">
+          None defined, so every checkpoint is a sector of its own.
+        </span>
+      </div>
+      <div class="rm-lanes-row" ng-repeat="sec in sectors track by $index" ng-init="sIndex = $index">
+        <span class="rm-sector-name">S{{ sIndex + 1 }}</span>
+        <div class="rm-layout-dropdown rm-lane-picker"
+             ng-class="{'rm-layout-dropdown-open': laneMenuOpen('secFrom' + sIndex)}">
+          <button type="button" class="rm-layout-trigger" ng-click="laneToggleMenu('secFrom' + sIndex)"
+                  ng-disabled="!canEdit()" title="The gate this sector's clock starts at">
+            <span class="rm-layout-trigger-label">{{ sectorFromName(sec.from) }}</span>
+            <span class="rm-layout-caret">▾</span>
+          </button>
+          <div class="rm-layout-menu" ng-if="laneMenuOpen('secFrom' + sIndex)">
+            <div class="rm-layout-option" ng-repeat="g in sectorStarts() track by g"
+                 ng-class="{'rm-layout-option-active': g === sectorKeyOf(sec.from)}"
+                 ng-click="pickSectorEnd(sIndex + 1, 'from', g)">{{ sectorFromName(g) }}</div>
+          </div>
+        </div>
+        <label class="rm-lane-label">to</label>
+        <div class="rm-layout-dropdown rm-lane-picker"
+             ng-class="{'rm-layout-dropdown-open': laneMenuOpen('secTo' + sIndex)}">
+          <button type="button" class="rm-layout-trigger" ng-click="laneToggleMenu('secTo' + sIndex)"
+                  ng-disabled="!canEdit()" title="The gate this sector's clock stops at">
+            <span class="rm-layout-trigger-label">{{ sectorToName(sec.to) }}</span>
+            <span class="rm-layout-caret">▾</span>
+          </button>
+          <div class="rm-layout-menu" ng-if="laneMenuOpen('secTo' + sIndex)">
+            <div class="rm-layout-option" ng-repeat="g in sectorEnds() track by g"
+                 ng-class="{'rm-layout-option-active': g === sectorKeyOf(sec.to)}"
+                 ng-click="pickSectorEnd(sIndex + 1, 'to', g)">{{ sectorToName(g) }}</div>
+          </div>
+        </div>
+        <button class="rm-btn rm-btn-mini rm-btn-end" ng-click="removeSector(sIndex + 1)"
+                ng-disabled="!canEdit()"
+                title="Delete this sector. The ones after it move up a number.">✕</button>
+        <span class="rm-route-tab-note rm-sector-bad" ng-if="sectorEmpty(sec)">
+          Starts and ends at the same gate, so it times nothing and the layout will not save.
+        </span>
+      </div>
+      <div class="rm-editor-hint" ng-if="!sectors.length">
+        Group checkpoints into sectors, such as <b>S1</b> from the start/finish to
+        <b>CP 3</b> and <b>S2</b> from <b>CP 3</b> to <b>CP 6</b>. Each driver sees each
+        sector's time against their own best for it. Sectors are saved with the layout.
+      </div>
+    </div>
+
     <!-- ===== Branch gates: the other ways through a checkpoint ===== -->
     <div class="rm-lanes" ng-if="editorTarget === 'branch'">
       <div class="rm-lanes-row">
@@ -2481,6 +2541,9 @@
                 title="Other gates that clear this checkpoint. Driving through any one of them counts.">
             ⤳ {{ slotBranchCount($index + 1) }} branch{{ slotBranchCount($index + 1) === 1 ? '' : 'es' }}
           </span>
+          <!-- Which sectors end and start here, so the list reads as the lap. -->
+          <span class="rm-editor-sector" ng-if="editorTarget === 'main' && sectorBadge($index + 1)"
+                title="Sectors whose clock stops or starts at this gate">{{ sectorBadge($index + 1) }}</span>
           <!-- Re-point a placed branch gate at a different checkpoint. Not
                ng-model: the branch gate list is rebuilt each digest, so a two-way
                binding into it would write to an array nobody reads. -->
@@ -5882,6 +5945,25 @@
   .rm-editor-lanes {
     font-size: 10px;
     color: #7fe6f7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Sectors: gold, a color no gate is drawn in, so a badge in the gate list is
+     never read as a kind of gate. */
+  .rm-sectors-title { font-size: 11px; font-weight: 700; color: #e6c86e; }
+  .rm-sector-name {
+    min-width: 24px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #e6c86e;
+  }
+  /* A gate name is short: the pickers stay compact instead of filling the row. */
+  .rm-sectors .rm-lane-picker { flex: 0 1 130px; }
+  .rm-sector-bad { color: #ff8a65; }
+  .rm-editor-sector {
+    font-size: 10px;
+    color: #e6c86e;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

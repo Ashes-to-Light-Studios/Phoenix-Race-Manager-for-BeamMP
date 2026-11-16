@@ -2230,8 +2230,47 @@ rows of three.
 
 Every placed gate and grid slot also has **✕** (delete just this one),
 **+ Before** (insert at your car) and **▲ ▼** (reorder). Editing the main route
-renumbers the branch gates with it; deleting a checkpoint drops the branch gates
-that belonged to it, and says so.
+renumbers the branch gates and sectors with it; deleting a checkpoint drops the
+branch gates that belonged to it, and says so.
+
+### Sectors
+
+A **sector** is a stretch of the lap timed on its own. A sector is not a
+checkpoint: you name the two gates it runs between, so a circuit with thirty
+checkpoints can have three sectors, for example **S1** from the start/finish to
+**CP 3**, **S2** from **CP 3** to **CP 6**, and **S3** from **CP 6** back to the
+line.
+
+On the editor's **Main** tab, under **Sectors**:
+
+- **+ Add Sector** adds one that starts where the last one ends. Set its two
+  ends with the pickers, and remove it with **✕**. The ones after it move up a
+  number. A layout can have up to 20 sectors.
+- Each end is a checkpoint or the **Start/finish** (**Start** or **Finish** on a
+  point-to-point stage). An end on the line stays on the line when you place
+  more gates after it, because the last gate is always the line.
+- The gate list shows where each sector ends and starts, such as
+  `S1 ends · S2 starts`.
+- Sectors are saved with the layout and reach every driver with it.
+
+**What drivers see:** when a car crosses a sector's end gate, that driver gets
+**S2 0:21.4** beside the lap time, with the gap to their own best for that
+sector. Green is quicker, and a personal best is drawn purple. The time runs
+from that car's last crossing of the sector's start gate, so sectors can meet,
+overlap, or run across the line into the next lap. Sector times are display only
+and score nothing. The out lap is not timed.
+
+**With no sectors defined, every checkpoint closes a sector of its own**,
+numbered by the gate. Layouts saved before sectors existed keep working this way.
+
+- A sector that starts and ends at the same gate times nothing. The editor
+  flags it, and the layout will not save until you fix it.
+- Inserting, deleting or reordering checkpoints keeps each end on the same gate.
+  An end on a deleted checkpoint moves to the gate before it.
+- Sectors cannot be changed while a session is running.
+- The server refuses a save whose sectors do not fit the route. Saving over a
+  layout that has sectors with none (from an older client, say) is held for
+  the admin to confirm, like every other section.
 
 ### Vehicle & setup locking (the Garage List)
 

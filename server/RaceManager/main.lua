@@ -5392,6 +5392,30 @@ sanitizeBranches = function (raw, slotCount)
   return out
 end
 
+-- Sectors: { from, to }, each a checkpoint number or 0 for the start/finish
+-- line, which is always the LAST checkpoint and so is never named by number.
+-- Display only (each client times its own), but rejected rather than repaired
+-- like branch gates: a sector moved to another corner is not the one saved.
+-- The cap mirrors TUNE.MAX_SECTORS on the client (sector_test compares them).
+function race.sanitizeSectors(raw, gateCount)
+  if raw == nil then return nil end
+  if type(raw) ~= 'table' then return false end
+  local MAX = 20
+  local out = {}
+  for i, sec in ipairs(raw) do
+    if type(sec) ~= 'table' or i > MAX then return false end
+    local from, to = tonumber(sec.from), tonumber(sec.to)
+    if not (from and to) then return false end
+    from, to = math.floor(from), math.floor(to)
+    if from < 0 or to < 0 or from >= gateCount or to >= gateCount or from == to then
+      return false
+    end
+    out[i] = { from = from, to = to }
+  end
+  if #out == 0 then return nil end
+  return out
+end
+
 -- Only layouts for the map this server is hosting now.
 local function layoutsForCurrentMap()
   local map = getCurrentMap()
@@ -5637,11 +5661,19 @@ function RM_onSaveLayout(pid, rawData)
     -- or it would be saved on a track that never runs an out lap.
     gridOffLine  = data.gridOffLine == true or (first ~= nil and starts ~= nil and #starts > 0),
     firstCheckpoint = first,
+    -- Optional sectors; false (malformed) is turned away just below.
+    sectors      = race.sanitizeSectors(data.sectors, #checkpoints),
   }
   -- A branch array sent but invalid rejects the save.
   if data.branches ~= nil and not entry.branches then
     print('[RaceManager] Save rejected: branch gates malformed '
       .. '(bad or out-of-range checkpoint number, or bad coordinates)')
+    return
+  end
+  if entry.sectors == false then
+    print('[RaceManager] Save rejected: sectors malformed (a checkpoint number '
+      .. 'out of range, one starting and ending at the same gate, or over 20)')
+    MP.SendChatMessage(pid, '[RaceManager] Save refused: the sectors do not fit this route.')
     return
   end
   -- THE SILENT-DROP GUARD: a save writes what the client holds, so a client path
@@ -5663,6 +5695,8 @@ function RM_onSaveLayout(pid, rawData)
     checkSection('markers',        had(existing.markers),        entry.markers and #entry.markers or 0)
     -- A client from before props sends none at all.
     checkSection('props',          had(existing.props),          entry.props and #entry.props or 0)
+    -- Nor from before sectors.
+    checkSection('sectors',        had(existing.sectors),        entry.sectors and #entry.sectors or 0)
     if next(lost) then
       local parts = {}
       for k, n in pairs(lost) do parts[#parts + 1] = n .. ' ' .. k end
