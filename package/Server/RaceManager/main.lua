@@ -121,6 +121,11 @@ local CFG = {
   mapVoting       = true,    -- drivers may call a map vote; admins always can
   mapVotePercent  = 60,      -- share of everyone connected who must vote yes
 
+  -- THE SERVER GOES ONLINE BY ITSELF only with this on: update checks, Update
+  -- and restart, Discord posts. Off as shipped and config.json only, never the
+  -- panel: a game host cut a server off the internet after its startup update
+  -- check, BeamMP's player login included, and nothing tells such a host apart.
+  onlineFeatures  = false,
   -- Updates from GitHub. See update.lua. false never contacts GitHub at all.
   updateCheck     = true,
   updateRepo      = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG',  -- owner/name
@@ -1126,7 +1131,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.23.3'
+local RM_BUILD = '0.23.4'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -1653,24 +1658,33 @@ local function ensureResultsDir()
   makeDirectory(RESULTS_DIR)
 end
 
--- The results folder as an absolute path, resolved ONCE (it shells out, and is
--- asked on every admin broadcast). nil rather than a guess.
+-- The results folder as an absolute path, resolved ONCE (on Windows it shells
+-- out, and is asked on every admin broadcast). nil rather than a guess.
 local resultsAbsPath = nil
 local resultsAbsAsked = false
 resultsFolderPath = function ()
   if resultsAbsAsked then return resultsAbsPath end
   resultsAbsAsked = true
-  local ok, pipe = pcall(io.popen, IS_WINDOWS and 'cd' or 'pwd')
-  if ok and pipe then
-    local cwd = pipe:read('*l')
-    pipe:close()
-    if type(cwd) == 'string' and cwd ~= '' then
-      cwd = cwd:gsub('%s+$', '')
-      -- Forward slashes; the backslash as a char code (one escape from a
-      -- string that does not compile).
-      resultsAbsPath = cwd:gsub(string.char(92), '/'):gsub('/$', '')
-        .. '/' .. RESULTS_DIR
+  local cwd
+  if IS_WINDOWS then
+    local ok, pipe = pcall(io.popen, 'cd')
+    if ok and pipe then
+      cwd = pipe:read('*l')
+      pipe:close()
     end
+  else
+    -- No pwd: a game host sees no process. The shell that started BeamMP left
+    -- PWD, trusted only with ServerConfig.toml in it (BeamMP can change folder).
+    local pwd = os.getenv('PWD')
+    local f = type(pwd) == 'string' and pwd ~= '' and io.open(pwd .. '/ServerConfig.toml', 'r')
+    if f then f:close(); cwd = pwd end
+  end
+  if type(cwd) == 'string' and cwd ~= '' then
+    cwd = cwd:gsub('%s+$', '')
+    -- Forward slashes; the backslash as a char code (one escape from a
+    -- string that does not compile).
+    resultsAbsPath = cwd:gsub(string.char(92), '/'):gsub('/$', '')
+      .. '/' .. RESULTS_DIR
   end
   print('[RaceManager] Results folder: ' .. tostring(resultsAbsPath or RESULTS_DIR))
   return resultsAbsPath
@@ -2072,7 +2086,8 @@ end
 function resultsOut.noteUnsaved(out, posted)
   if posted or (out and (out.path or (out.sent or 0) > 0)) then return end
   local msg = '[RaceManager] These results were not saved anywhere. To keep them, turn on '
-    .. 'Save results on the Admin panel (on the server, on admins\' PCs) or post them to Discord.'
+    .. 'Save results on the Admin panel (on the server, on admins\' PCs)'
+    .. (CFG.onlineFeatures and ' or post them to Discord.' or '.')
   for pid in pairs(authenticatedPlayers) do MP.SendChatMessage(pid, msg) end
   print('[RaceManager] Results not saved: Save results is off and nothing was posted to Discord')
 end
@@ -4918,6 +4933,7 @@ local function applyConfigTable(data)
   num('mapRestartGrace', 10, 3600)
   bool('mapVoting')
   num('mapVotePercent', 1, 100)
+  bool('onlineFeatures')
   bool('updateCheck')
   -- owner/name and nothing else: it becomes part of a URL a download job runs.
   if type(data.updateRepo) == 'string' then
@@ -5006,6 +5022,7 @@ local function configFileText()
     mapRestartGrace = CFG.mapRestartGrace,
     mapVoting       = CFG.mapVoting,
     mapVotePercent  = CFG.mapVotePercent,
+    onlineFeatures  = CFG.onlineFeatures,
     updateCheck     = CFG.updateCheck,
     updateRepo      = CFG.updateRepo,
   })
@@ -6973,7 +6990,7 @@ end)()
   end
   mod.paths.data = DATA_DIR
   mod.init({
-    RM_BUILD = RM_BUILD, race = race, players = players,
+    RM_BUILD = RM_BUILD, CFG = CFG, race = race, players = players,
     requireAuth = requireAuth, requireFull = auth.requireFull, isFull = auth.isFull,
     pushAdmins = function ()
       for pid in pairs(authenticatedPlayers) do broadcastState(pid) end
