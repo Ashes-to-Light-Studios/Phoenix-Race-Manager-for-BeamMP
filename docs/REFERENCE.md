@@ -87,7 +87,8 @@ because it starts from a standing grid (see [Step 5](#step-5--qualifying)).
 
 ### Step 1 - Open the app
 
-Join the BeamMP server, open the UI app menu, and add **Phoenix Race Manager (PRM)** (it's required, and
+Join the BeamMP server, open the HUD Apps list (**Pause menu → System → HUD
+Apps**; *UI Apps* before BeamNG v0.39), and add **Phoenix Race Manager (PRM)** (it's required, and
 listed under the *Racing* and *Info* categories). The header shows the
 current session phase (Waiting / Qualifying / Grid Locked / Countdown /
 Racing / Race Over), the race clock, and your checkpoint progress (`CP 2/5`)
@@ -150,7 +151,7 @@ survive a restart.
 You never have to log in just to watch: close the login bar with **✕** and the
 live timing is already there.
 
-**Retiring** is how you leave a session you are already in. **⚑ Retire** in the
+**Retiring** is how you leave a session you are already in. **Retire** in the
 Race Entry row asks first, then treats it exactly like taking the flag: the car
 is ghosted where it stands and you go to spectate in it. It is a **classified** retirement,
 not a disappearance. You hold a position, you are in the results file, and you
@@ -170,7 +171,7 @@ rather than where they finally classified.
 *everyone races*, which otherwise has no opt-out short of leaving the server.
 Your car stays exactly where it is and becomes a ghost, so nothing is deleted
 and nothing is respawned, and you watch however you like: BeamNG's own controls
-tab between cars and free camera works as it always does. **↩ Rejoin the field** puts you back. Neither direction is available while a
+tab between cars and free camera works as it always does. **Race**, beside it, puts you back. Neither direction is available while a
 session is running: sitting out decides whether you are in the field, and the
 field is decided when the grid forms. Leaving a race you are already in is
 retiring, above.
@@ -183,8 +184,8 @@ retiring, above.
 
 ### Step 2 - Build a track
 
-Press **Editor** in the header to open the checkpoint editor, then drive the
-course you want to race:
+Open **Track** on the menu bar to open the checkpoint editor (it starts on the
+**Main** tab), then drive the course you want to race:
 
 1. At each place you want a timing gate, drive through it **in the direction
    of travel** and press **+ Checkpoint Here**. A gate is a **flat rectangle**
@@ -197,7 +198,8 @@ course you want to race:
    and **down**, how far it drops below. **Each gate owns its own.** The first
    gate of a new route gets the standard size; every gate after it inherits the
    size of the one placed before, so you set it once and drive the rest of the
-   route. Click any placed gate to change it - **nothing else moves**. Raise
+   route. Click any placed gate in the list to change its **W**, **Up** and
+   **Dn**, then press **Apply** - **nothing else moves**. Raise
    **up** on **high-banked tracks** so the rectangle covers the banking; what you
    see drawn in the world *is* the trigger, so you can verify it at a glance.
 
@@ -225,11 +227,13 @@ course you want to race:
    moves. Both work on the joker route and pit stalls too.
 5. **Undo** removes the last gate, **Clear** wipes the route,
    **Hide/Show Gates** toggles the in-world drawing.
-6. **Nudge** is the mouse pass. Turn it on and the cursor is released from the
-   camera: click a gate to pick it, drag to move it along the ground, scroll to
-   turn it, **ctrl+click** open ground to place a new one. It works on whichever
-   editor tab you are on, so checkpoints, joker gates, pit stalls, branch gates
-   and start positions are all movable.
+6. **✋ Place** is the mouse pass. Press it (it reads **✋ Place: ON** while it
+   is active) and the cursor is released from the camera: click a gate to pick
+   it, drag to move it along the ground, scroll to turn it, **ctrl+click** open
+   ground to place a new one. It works on whichever editor tab you are on, so
+   checkpoints, joker gates, pit stalls, branch gates, markers, props and start
+   positions are all movable. The **Derby** panel has its own **✋ Place** for
+   arena markers, start positions and the arena center.
 
    **Dragging is horizontal only.** A gate keeps whatever height it has while
    you slide it around, including over trees and buildings, and the only thing
@@ -245,9 +249,9 @@ course you want to race:
 
    **Shift+scroll raises and lowers** the selected gate, and **▲ Up** / **▼ Down**
    do the same in bigger steps for a mouse with no wheel. This is the only control
-   that moves a gate vertically: the **Gate size** sliders set how far it extends
-   *up and down from where it sits*, which is a different thing, so a gate that
-   ended up in the terrain could not be recovered with them. It will not let you
+   that moves a gate vertically: the gate's **Up** and **Dn** sizes set how far
+   it extends *up and down from where it sits*, which is a different thing, so a
+   gate that ended up in the terrain could not be recovered with them. It will not let you
    push a gate below the ground under it.
 
    A placed gate faces the way the route is already traveling, from the previous
@@ -267,21 +271,25 @@ course you want to race:
 
    Driving to a spot and pressing the button is still how a track gets built: it
    puts a gate where a car actually fits, facing the way one actually travels.
-   Nudge is for the pass afterwards, where a gate is ten meters late or a few
+   Place mode is for the pass afterwards, where a gate is ten meters late or a few
    degrees off and re-driving the corner is the expensive part.
-6. There is no local scratch copy. Tracks live on the server, where everyone
+7. There is no local scratch copy. Tracks live on the server, where everyone
    races on the same one - save as you go with **Overwrite**.
 
 #### Circuit or point to point
 
-The **Main Route** row carries a toggle: **⟳ Circuit** or **⇥ Point to Point**.
+The **Main** tab carries a **Type** toggle: **⟳ Circuit**, **⇥ P2P** (point to
+point) or **Drag**.
 
 - **Circuit** - the last gate is a start/finish line, and the race runs for the
   lap count.
-- **Point to Point** - the stage is driven once, first gate to last, and the
+- **P2P** - the stage is driven once, first gate to last, and the
   last gate is the finish. The gates relabel themselves (`1 START` … `N FINISH`),
   the header shows a **POINT TO POINT** badge, and the Laps field is disabled
   because laps do not apply.
+- **Drag** - a point-to-point layout filed under **Drag Strip** in the
+  **Layouts ▾** menu, with one start position per lane (see
+  [Drag racing](#drag-racing-parallel-game-mode)).
 
 Setting a circuit to one lap times the same thing, which is why that worked as a
 workaround - but it reads as a one-lap circuit everywhere it is shown, and the
@@ -312,7 +320,8 @@ and is never carried into the next one.
 
 #### Pit stalls
 
-Switch the editor to the **Pit Stalls** tab, drive into each stall and press
+Switch the editor to the **Stalls** tab (in the **Pit** group, beside **In** and
+**Out**), drive into each stall and press
 **+ Place Pit Stall Here**. Stalls are drawn amber and labeled `PIT 1`, `PIT 2`.
 
 **The box is drawn, because the box is the rule.** A stall is not a gate you
@@ -375,7 +384,7 @@ still labels both, numbered.
 
 #### Placing the starting grid
 
-Switch the editor to the **Start Grid** tab, then drive to each grid slot
+Switch the editor to the **Grid** tab, then drive to each grid slot
 **facing down the track** and press **+ Place Start Position Here**. Slot 1 is
 pole. Every placed slot stays editable:
 
@@ -393,17 +402,18 @@ checkpoint** to the first gate ahead of the grid, so the out lap starts there
 
 ### Step 3 - Save it as a layout (so it survives the night)
 
-Scratch saves are local to you; **Track Layouts** (bottom of the editor
-panel) live on the server and persist across server restarts:
+**Track Layouts** (bottom of the editor panel) live on the server and persist
+across server restarts:
 
-1. Type a name in the **Layout name** field and press **Save Current
-   Layout**. The server stores it tagged with the map it is hosting and
-   announces it in chat.
+1. Type a name in the **New layout name…** field and press **Save As New**.
+   The server stores it tagged with the map it is hosting and announces it in
+   chat. To put an edited track back under its own name, select it and press
+   **Overwrite**.
 2. To check a prepped track, pick it in the editor's layout picker - the list
    only ever shows layouts saved **for the current map** - and look at the 2D
    preview: gate dots, the connecting track shape, and the start/finish line
    in green.
-3. To race it, open **Layouts** in the menu bar and click it. Every connected
+3. To race it, open **Layouts ▾** in the menu bar and click it. Every connected
    player's gates rebuild instantly; nobody has to load anything manually.
    (Loading is locked while a countdown or race is running.)
 
@@ -415,7 +425,7 @@ many that is.
 
 A driver who does not want to race presses **Spectate** and the session runs
 without them. Their car stays exactly where it is and becomes a ghost: nothing
-is deleted and nothing is respawned. **Rejoin the field** puts them back. That
+is deleted and nothing is respawned. **Race**, beside it, puts them back. That
 one control is the whole entry system, and it belongs to the driver rather than
 to an admin.
 
@@ -460,12 +470,12 @@ Drivers are told, rather than left to work it out from a lap time that never
 appears:
 
 - chat announces it at **GO**, and again to each driver as they complete it
-  (`Out lap complete - your next lap is TIMED`);
-- the driver's own lap readout shows `OUT LAP - NOT TIMED` in place of the
-  running clock, then `OUT LAP DONE - TIMING` as they cross the line;
+  (`Out lap complete: your next lap is TIMED.`);
+- the driver's own lap readout shows `NOT TIMED` in place of the running clock,
+  then `OUT LAP DONE, TIMING` as they cross the line;
 - the timing table shows `OUT LAP` in the Best Lap column for every driver
-  still on theirs, and an **OUT LAP RULE** badge sits in the header for the
-  session;
+  still on theirs, and an **OUT LAP** badge sits in the header while you are on
+  yours;
 - the results file records `out lap not timed` in the qualifying format line,
   so a lap count read months later still adds up.
 
@@ -2097,7 +2107,7 @@ pressing Load. If two admins load different layouts, the last one the server
 processes wins and is announced in chat - it is one server-side state, so
 everybody ends up on the same track either way.
 
-Build them in the editor's **Branches** tab. Pick which checkpoint the next gate
+Build them in the editor's **Branch** tab. Pick which checkpoint the next gate
 belongs to, drive to where the other way through it crosses, and place it. Both
 gates are drawn on track and both light up green together, so a driver can see
 the choice rather than having to know about it.
@@ -2121,12 +2131,12 @@ opposite directions.
 
 1. **Main route, clockwise.** `CP 1` at turn 1, `CP 2` on the back stretch,
    `CP 3` at turn 2, and the **start/finish** line.
-2. **Branches** tab. Set **Next gate is another** to `CP 1`, drive to **turn 2
+2. **Branch** tab. Set **Next gate is another** to `CP 1`, drive to **turn 2
    facing anti-clockwise**, and place it. Then set it to `CP 3`, drive to **turn 1
    facing anti-clockwise**, and place that.
 3. Leave `CP 2` and the start/finish alone. Both directions cross them, from
    opposite sides, and both are credited.
-4. **Start Grid** - place the grid, then turn half of it round: set **Slots 7 to
+4. **Grid** tab - place the grid, then turn half of it round: set **Slots 7 to
    12** and press **↻ Turn Around**.
 
 That last step is the only thing that splits the field, because the way a start
@@ -2181,12 +2191,12 @@ checkpoint and the line.
 
 #### Building the grid
 
-Placing slots one car at a time is the tedious part, so the **Start Grid** tab
+Placing slots one car at a time is the tedious part, so the **Grid** tab
 does it in bulk.
 
-**Generate N slots, W abreast, from** either your car or a **start position you
-have already placed**. Pole is then a decision you make once, by standing on it
-everything behind it is arithmetic. Generating from a placed slot rebuilds the
+**Generate N slots, W abreast, from** either **My car** or a **start position you
+have already placed**, then press **Generate Slots**. Pole is then a decision you
+make once, by standing on it everything behind it is arithmetic. Generating from a placed slot rebuilds the
 grid from there and leaves every slot before it alone.
 
 **Rows can be any width from single file to eight abreast.** Two is a road-race
@@ -3077,7 +3087,8 @@ its default removes the file.
 
 ### Map votes
 
-Any driver can call a vote from the **Map: call a vote** band under the board.
+Any driver can call a vote from **Map** on the menu bar: choose a map and press
+**Start Vote**.
 Everyone gets 30 seconds and a Yes / No bar at the top of the app, and it passes
 when the yes votes reach the pass mark **of everyone connected**. Not voting
 counts as no, so a few keen drivers cannot move a lobby that is not paying
@@ -3409,7 +3420,7 @@ update puts the file back, still off until a webhook is set.
 A tournament ladder run down a drag strip: its own server events, its own
 panel, its own board and its own results file. Like the Demo Derby it is
 isolated from the circuit racing systems above, so running a ladder never
-touches qualifying or race state and vice versa. Pick the **Drag** tab.
+touches qualifying or race state and vice versa. Open **Drag** on the menu bar.
 
 ### The strip is a point-to-point layout
 
@@ -3711,13 +3722,20 @@ editor is in the same panel. Race controls are not shown while the panel is in
 derby mode, and derby controls are not shown anywhere else - see
 [The menu bar](#the-menu-bar).
 
-1. **Set the rules**: *OOB timer* (seconds allowed outside the arena,
-   default 5), *Demolished timer* (seconds a car may sit stopped before
-   elimination, default 10) and *Max resets* (per driver per derby: `-1`
-   unlimited, `0` none, `N` allowed - enforced exactly the way the race reset
-   limit is, dead reset keys included), then **Set Rules**. When resets are
-   limited the derby standings gain their own `Rst` column.
-2. **Build the arena** on the **Derby Editor** sub-tab. There are two editors
+1. **Set the rules** at the top of the panel. There is no Set button: each
+   value applies as you change it.
+   - *Mode*: **LMS** (last man standing, one life) or **DM** (deathmatch,
+     where the stopped timer spends a life instead; see step 5).
+   - *OOB timer*: seconds allowed outside the arena, default 5.
+   - *Demolished timer*: seconds a car may sit stopped before elimination,
+     default 10.
+   - *Lives* (DM only): 1 to 9.
+
+   **Vehicle resets are off in a derby.** The panel always sends a reset limit
+   of none, enforced exactly the way the race reset limit is, dead reset keys
+   included.
+2. **Build the arena** in the arena editor, under the rules in the same
+   **Derby** panel. There are two editors
    for it, and they produce the same thing - an ordered perimeter every client
    polices against - so pick whichever suits the ground:
 
@@ -3783,12 +3801,13 @@ derby mode, and derby controls are not shown anywhere else - see
    derby the lists stay readable but nothing in them can be changed.
 
    Arenas are **saved and loaded** the same way track layouts are. Type a name
-   in the **Saved Arenas** panel and press **Save Current Arena**: the boundary
+   in **Arena name…** under **Saved Arenas** and press **Save As New**
+   (**Overwrite** puts an edited arena back under its own name): the boundary
    polygon, both timers, the reset limit *and* the starting grid are stored on
    the server in
    `Resources/Server/RaceManager/derbyArenas.json`, tagged with the hosted map,
    so a prepped arena survives a restart. **Load Arena** here, or a click on it
-   under **Arenas** in the **Layouts** menu, pushes it to every connected client
+   under **Arenas** in the **Layouts ▾** menu, pushes it to every connected client
    at once; **✕** deletes it. Loading is refused while a derby is running - the
    arena cannot move under the drivers.
 
@@ -3802,7 +3821,7 @@ derby mode, and derby controls are not shown anywhere else - see
    in one are different jobs - the same split the checkpoint editor already makes
    between an authoring gate and a race one:
 
-   | | Derby Editor (admin, panel open) | During a derby (everyone) |
+   | | Derby panel open (admin) | During a derby (everyone) |
    |---|---|---|
    | Walls | Solid enough to read as a surface | **Translucent** - you can see the car on the other side of one |
    | Corner posts and rails | Full height, bright | A dim ground rail and a short post |
@@ -3812,7 +3831,7 @@ derby mode, and derby controls are not shown anywhere else - see
 
    The **boundary itself is always drawn** during a derby - leaving it is what
    eliminates you, so you have to be able to see it - but nothing authoring-only
-   is. Closing the Derby Editor is enough to get the driving view: you do not
+   is. Closing the Derby panel is enough to get the driving view: you do not
    have to start a derby to see what your drivers will see.
 3. **Entry** is the same one switch the circuit races use: every connected
    player is in the field unless they have pressed **Spectate**, which is how
@@ -3841,7 +3860,7 @@ derby mode, and derby controls are not shown anywhere else - see
      time or you're **Disqualified**.
    - Sitting still flashes **VEHICLE STOPPED! DEMOLISHED IN X.Xs** - get
      moving or you're **Demolished**. Disconnecting counts as Disqualified.
-   - **With Lives set above 1**, the stopped timer spends a life instead of
+   - **In DM mode with Lives above 1**, the stopped timer spends a life instead of
      ending your derby: you go back to the slot you started from and keep
      playing, and both timers arm again as you land. Only the stopped timer
      spends a life - out of bounds is still an outright elimination.
