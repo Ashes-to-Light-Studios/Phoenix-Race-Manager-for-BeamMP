@@ -70,6 +70,11 @@ local CFG = {
   -- THE FREE PASS ("lucky dog"): the highest-placed lapped car gets its lap back
   -- before the restart. Off by default, like every scoring rule.
   luckyDog      = false,
+  -- HOW A CAUTION FREEZES THE ORDER. 'line': the field races back to the line
+  -- and each car locks as it completes the leader's lap. 'call': frozen where
+  -- the field is the moment Caution is pressed, for leagues that do not race
+  -- back.
+  cautionMode   = 'line',
   -- Laps a heat runs; 0 is the race's distance.
   heatLaps      = 0,
 
@@ -191,6 +196,18 @@ local race = {
   -- (ONE per caution).
   luckyDog     = CFG.luckyDog,
   cautionLucky = nil,
+  -- 'line' or 'call' (CFG.cautionMode). Fixed for a caution once it is out.
+  cautionMode  = CFG.cautionMode,
+  -- Laps run under every caution this race, for the results file (cautionLaps
+  -- is the current caution's alone, which the panel shows).
+  cautionLapsTotal = 0,
+  -- The rules this race's cautions ran under ({ line = true, call = true }),
+  -- for the results file: the setting may have changed between them.
+  cautionRulesUsed = {},
+  -- Every pass made under a caution this race, given back or not:
+  -- { lap, at, passer, passerId, passed, passedId, restored }. On the board
+  -- for race control, and in the results file.
+  cautionPasses = {},
   -- A restart called and not yet taken: the LEADER decides when, as they come
   -- back to the line. Cancellable until the green falls.
   restartPending = false,
@@ -331,7 +348,11 @@ local players = {}          -- [playerID] = per-player record
 -- Release a frozen caution order. Declared beside `players`: finishSession,
 -- far above the caution code, calls it, and a later local would be a nil global.
 local function thawOrder()
-  for _, rec in pairs(players) do rec.cautionPos, rec.cautionDown = nil, nil end
+  for _, rec in pairs(players) do
+    rec.cautionPos, rec.cautionDown = nil, nil
+    -- The pass watch belongs to the caution too (race.checkCautionPasses).
+    rec.ucSeen, rec.ucPass, rec.ucPassed = nil, nil, nil
+  end
 end
 -- Authoritative reset ghosts, [playerID] = { startedAt, duration } on
 -- race.time, so a driver joining mid-ghost is told. Per player: independent.
@@ -1043,8 +1064,9 @@ local DRIVER_WIRE_FIELDS = {
   'qualiBest', 'qualiLaps', 'outLap', 'raceBest', 'currentLap', 'lapsLed', 'cpCleared',
   'finishTime', 'resets', 'resetsBlocked',
   'jokerTaken', 'jokerLap', 'outReason', 'dnfPos', 'heldPos', 'bystander',
-  -- Laps down at the caution.
-  'cautionDown',
+  -- Laps down at the caution, and the cars this one passed under it and has
+  -- not given back (names, or nil).
+  'cautionDown', 'ucPassed',
   -- The blue flag, from both ends; each client reads its own row.
   'blue', 'lapping',
   -- The heat program per driver.
@@ -1131,7 +1153,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.23.4'
+local RM_BUILD = '0.24.0'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -1278,6 +1300,10 @@ local function broadcastState(targetPid)
     restartPending = race.restartPending,
     -- The free pass rule, and who has it this caution.
     luckyDog     = race.luckyDog,
+    cautionMode  = race.cautionMode,
+    -- Passes under caution this race, for race control. nil while there are
+    -- none, so a clean race sends nothing.
+    cautionPasses = #race.cautionPasses > 0 and race.cautionPasses or nil,
     cautionLucky = race.cautionLucky,
     -- The heat program; heatLaps because the flags are waved client-side and
     -- must reach the same distance as sessionLapTarget.
@@ -1878,8 +1904,18 @@ local function buildResultsText(cupRound)
     #final))
   -- Cautions, which explain a finishing order that looks wrong.
   if race.cautionCount > 0 then
-    add(string.format(' Cautions: %d, over %d lap%s',
-      race.cautionCount, race.cautionLaps, race.cautionLaps == 1 and '' or 's'))
+    local used = race.cautionRulesUsed
+    add(string.format(' Cautions: %d, over %d lap%s (%s)',
+      race.cautionCount, race.cautionLapsTotal, race.cautionLapsTotal == 1 and '' or 's',
+      (used.call and used.line) and 'frozen at the call, and raced back to the line'
+        or used.call and 'frozen at the call' or 'raced back to the line'))
+    -- What a steward needs: who passed whom under yellow, and whether the
+    -- place went back before the green.
+    for _, p in ipairs(race.cautionPasses) do
+      add(string.format('   Passed under caution: %s on %s, lap %d%s (%s)',
+        p.passer, p.passed, p.lap, p.underRed and ', under the red flag' or '',
+        p.restored and 'given back' or 'NOT given back'))
+    end
   end
   add(string.format(' Regulations: resets %s | joker lap %s',
     race.maxResets < 0 and 'unlimited'
@@ -3521,6 +3557,26 @@ function RM_onSetLuckyDog(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
+-- How the next caution freezes the order: 'line' (race back to it) or 'call'
+-- (where the field is when it is called). Not idle-locked, like the free pass,
+-- but REFUSED while a caution is out: the rule it was called under stands until
+-- the green, or half a field would be locked one way and half the other.
+function RM_onSetCautionMode(pid, rawData)
+  local data = adminPayload(pid, rawData)
+  if not data then return end
+  local want = (data.mode == 'call' or data.mode == 'line') and data.mode or nil
+  if not want or want == race.cautionMode then return end
+  if race.caution or race.cautionPending then
+    MP.SendChatMessage(pid, '[RaceManager] Not while a caution is out: it runs under '
+      .. 'the rule it was called under until the restart.')
+    return
+  end
+  race.cautionMode = want
+  broadcastState()
+  print('[RaceManager] Caution rule: ' .. (want == 'call' and 'freeze at the call'
+    or 'race back to the line') .. ' (set by ' .. tostring(MP.GetPlayerName(pid) or pid) .. ')')
+end
+
 -- A client completed the joker route (it enforced lap 1 and once); the server
 -- records it and rules at the flag.
 function RM_onJokerLap(pid, rawData)
@@ -3598,6 +3654,9 @@ local function releaseField(pacing)
   race.cautionLaps  = 0
   race.cautionSeq   = 0
   race.cautionCount = 0
+  race.cautionLapsTotal = 0
+  race.cautionRulesUsed = {}
+  race.cautionPasses    = {}
   thawOrder()
   race.time = 0.0
   -- The green is now, or stamped when it falls after a pace lap.
@@ -4047,12 +4106,164 @@ local function lockCaution(rec, completed)
   awardLuckyDog('field locked')
 end
 
+-- FROZEN AT THE CALL (cautionMode 'call'): the board as it stands this instant
+-- is the order, with no race back. Every car on track locks now, in the live
+-- order, and its laps down are counted on the road against the leader
+-- (progress.lapsBehind: one more lap on the counter is not a lap down until the
+-- leader is past). Only as exact as the last position reports, about a third
+-- of a second old, so two cars side by side are ordered as they last reported.
+function race.freezeAtCall(who, underRed)
+  race.cautionPending = false
+  race.caution        = true
+  local leader = nil
+  for _, rec in ipairs(raceClassification()) do
+    if onTrack(rec) then
+      leader = leader or rec
+      race.cautionSeq = race.cautionSeq + 1
+      rec.cautionPos  = race.cautionSeq
+      rec.cautionDown = progress.lapsBehind(leader, rec)
+    end
+  end
+  -- What a car that joins the track later is measured against (lockCaution).
+  race.cautionLap = leader and progress.lapsDone(leader) or nil
+  -- Under a red the field is stopped where it stands, which is the order taken.
+  MP.SendChatMessage(-1, underRed
+    and string.format('[RaceManager] CAUTION CALLED UNDER THE RED FLAG: positions '
+      .. 'are frozen where you stand. Stay stopped; when the red is lifted, hold your '
+      .. 'place under caution. By %s.', tostring(who))
+    or  string.format('[RaceManager] CAUTION - FULL COURSE YELLOW: POSITIONS ARE '
+      .. 'FROZEN AS OF NOW. Slow down and hold your place: a pass under yellow does '
+      .. 'not count, and race control is told. By %s.', tostring(who)))
+  print(string.format('[RaceManager] CAUTION #%d called by %s at %.1fs: frozen at the call',
+    race.cautionCount, tostring(who), race.time))
+  -- The whole field is locked, so the free pass is decided now.
+  awardLuckyDog('field frozen at the call')
+  broadcastState()
+end
+
+-- Messages for race control: every logged-in admin or moderator, wherever they
+-- are, and the console.
+function race.tellRaceControl(msg)
+  for pid in pairs(MP.GetPlayers() or {}) do
+    if isAuthenticated(pid) then MP.SendChatMessage(pid, msg) end
+  end
+  print(msg)
+end
+
+-- Is `a` ahead of `b` in the race on the road: laps, then checkpoints, then
+-- distance to the next one, by `margin` meters at least. nil when it cannot be
+-- told (a distance not reported yet), which leaves the watch where it was.
+function race.aheadOnRoad(a, b, margin)
+  local la, lb = progress.lapsDone(a), progress.lapsDone(b)
+  if la ~= lb then return la > lb end
+  local ca, cb = a.cpCleared or 0, b.cpCleared or 0
+  if ca ~= cb then return ca > cb end
+  local da, db = a.distNext, b.distNext
+  if not (da and db) then return nil end
+  return da + margin < db
+end
+
+-- THE PASS WATCH. Under a caution the board holds the frozen order whatever
+-- happens on the road, so a pass gains nothing while the yellow is out -- but
+-- the green thaws the board back to the road, and a place taken under yellow
+-- and never given back is kept from then on. So every car locked behind
+-- another is compared with it on the road:
+--   * ahead by PASS_MARGIN for PASS_CONFIRM seconds is a PASS: the driver is
+--     told to give it back and race control is told who and whom. The margin
+--     and the wait ride out telemetry: reports are a third of a second apart,
+--     and two cars side by side swap places in them.
+--   * back behind (by any amount) is the place GIVEN BACK, and both are told.
+-- Cars a lap or more down are compared by race distance like everybody, so a
+-- lead-lap car going by a backmarker on the road is no pass. The free pass car
+-- is left out: it is meant to drop to the tail of the lead lap.
+function race.checkCautionPasses()
+  if not race.caution then return end
+  local PASS_MARGIN, PASS_CONFIRM = 5.0, 1.0
+  local field = {}
+  for _, rec in pairs(players) do
+    if onTrack(rec) and rec.cautionPos and rec.id ~= race.cautionLucky then
+      field[#field + 1] = rec
+    end
+  end
+  table.sort(field, function (a, b)
+    local da, db = a.cautionDown or 0, b.cautionDown or 0
+    if da ~= db then return da < db end
+    return a.cautionPos < b.cautionPos
+  end)
+  for i = 1, #field do
+    local a = field[i]
+    a.ucSeen = a.ucSeen or {}
+    a.ucPass = a.ucPass or {}
+    local names = nil
+    for j = 1, i - 1 do
+      local b = field[j]
+      local open = a.ucPass[b.id]
+      if open then
+        -- Behind again by any amount: given back.
+        if race.aheadOnRoad(a, b, 0) == false then
+          open.restored = true
+          a.ucPass[b.id], a.ucSeen[b.id] = nil, nil
+          MP.SendChatMessage(a.id, string.format(
+            '[RaceManager] Place given back to %s. Hold it until the green.', displayName(b)))
+          race.tellRaceControl(string.format(
+            '[RaceManager] Race control: %s gave the place back to %s.', open.passer, open.passed))
+        else
+          names = names and (names .. ', ' .. displayName(b)) or displayName(b)
+        end
+      else
+        local ahead = race.aheadOnRoad(a, b, PASS_MARGIN)
+        if ahead then
+          local since = a.ucSeen[b.id]
+          if not since then
+            a.ucSeen[b.id] = race.time
+          elseif race.time - since >= PASS_CONFIRM then
+            local entry = {
+              lap = a.currentLap or 0, at = race.time,
+              passer = displayName(a), passerId = a.id,
+              passed = displayName(b), passedId = b.id, restored = false,
+            }
+            race.cautionPasses[#race.cautionPasses + 1] = entry
+            a.ucPass[b.id] = entry
+            names = names and (names .. ', ' .. entry.passed) or entry.passed
+            -- Under a red the field is told to stop where it is, so the place
+            -- goes back once the red is lifted, not by moving now.
+            entry.underRed = race.flag == 'red' or nil
+            MP.SendChatMessage(a.id, string.format(entry.underRed
+              and '[RaceManager] PASSED UNDER THE RED FLAG: you went by %s. Stay stopped, '
+                .. 'and give the place back when the red is lifted. Race control has been told.'
+              or  '[RaceManager] PASSED UNDER CAUTION: you went by %s. Give the place '
+                .. 'back now: it does not count, and race control has been told.', entry.passed))
+            race.tellRaceControl(string.format(
+              '[RaceManager] Race control: %s passed %s under %s (lap %d).',
+              entry.passer, entry.passed, entry.underRed and 'the red flag' or 'caution', entry.lap))
+          end
+        elseif ahead == false then
+          a.ucSeen[b.id] = nil
+        end
+      end
+    end
+    a.ucPassed = names
+  end
+end
+
 -- End the caution: one path for the Green button and Restart.
 local function restartRace(why)
   if not race.caution then return false end
   -- The fallback award: a car that never crossed again means the field never
   -- fully locked, and the green must not cancel the pass.
   awardLuckyDog('restart called before the field was fully locked')
+  -- A pass still not given back is kept from here on, because the board goes
+  -- back to the road. Nothing here can take it away (there are no penalties to
+  -- give), so race control hears about every one before the order thaws.
+  race.checkCautionPasses()
+  for _, p in ipairs(race.cautionPasses) do
+    if not p.restored and not p.reported then
+      p.reported = true
+      race.tellRaceControl(string.format(
+        '[RaceManager] Race control: at the green, %s is still ahead of %s after '
+        .. 'passing under caution (lap %d).', p.passer, p.passed, p.lap))
+    end
+  end
   race.caution        = false
   race.cautionPending = false
   race.restartPending = false
@@ -4107,16 +4318,36 @@ function RM_onCaution(pid)
       .. 'Restart when the track is clear.')
     return
   end
-  -- CALLED, NOT FROZEN: official when the LEADER takes the line (RM_onLap).
-  race.cautionPending = true
   race.restartPending = false
   race.cautionLucky   = nil
-  race.flag           = 'yellow'
+  -- CALLED UNDER A RED, THE RED STAYS. It used to be overwritten with the
+  -- yellow, which lifted the red without a word: the clock ran again and a
+  -- stopped field was told to race back. Lifting the red (RM_onSetFlag) is what
+  -- puts the field under this caution.
+  local underRed = race.flag == 'red'
+  if not underRed then race.flag = 'yellow' end
   race.cautionLap     = nil
   race.cautionLaps    = 0
   race.cautionSeq     = 0
   race.cautionCount   = race.cautionCount + 1
+  race.cautionRulesUsed[race.cautionMode] = true
   local who = MP.GetPlayerName(pid) or pid
+  if race.cautionMode == 'call' then
+    race.freezeAtCall(who, underRed)
+    return
+  end
+  -- CALLED, NOT FROZEN: official when the LEADER takes the line (RM_onLap).
+  race.cautionPending = true
+  if underRed then
+    MP.SendChatMessage(-1, string.format(
+      '[RaceManager] CAUTION CALLED UNDER THE RED FLAG: stay stopped. When the red '
+      .. 'is lifted, race back to the line: positions lock as you complete that lap. '
+      .. 'By %s.', tostring(who)))
+    print(string.format('[RaceManager] CAUTION #%d called by %s at %.1fs under the red: '
+      .. 'racing back to the line once it is lifted', race.cautionCount, tostring(who), race.time))
+    broadcastState()
+    return
+  end
   MP.SendChatMessage(-1, string.format(
     '[RaceManager] CAUTION - FULL COURSE YELLOW: RACE BACK TO THE LINE. Positions '
     .. 'lock as you complete this lap, and the leader decides which lap that is. '
@@ -4298,6 +4529,9 @@ function RM_onResetLeaderboard(pid)
   race.cautionLaps  = 0
   race.cautionSeq   = 0
   race.cautionCount = 0
+  race.cautionLapsTotal = 0
+  race.cautionRulesUsed = {}
+  race.cautionPasses    = {}
   thawOrder()
   -- The heat program goes with the evening (the records holding the draw are
   -- gone).
@@ -4450,6 +4684,7 @@ function RM_onLap(pid, rawData)
     -- official is not a lap under it).
     if race.caution then
       race.cautionLaps = race.cautionLaps + 1
+      race.cautionLapsTotal = race.cautionLapsTotal + 1
       print(string.format('[RaceManager] Caution lap %d (leader %s on lap %d)',
         race.cautionLaps, rec.name, completed))
     end
@@ -4914,6 +5149,7 @@ local function applyConfigTable(data)
   num('paceGreenFar', 0.5, 1000)
   num('paceArmAt', 20, 1000)
   bool('luckyDog')
+  str('cautionMode', { line = true, call = true })
   -- 0 means a heat runs the race distance.
   num('heatLaps', 0, CFG.maxTotalLaps)
   num('blueFlagWithin', 0.2, 60)
@@ -5004,6 +5240,7 @@ local function configFileText()
     paceGreenFar   = CFG.paceGreenFar,
     paceArmAt      = CFG.paceArmAt,
     luckyDog       = CFG.luckyDog,
+    cautionMode    = CFG.cautionMode,
     heatLaps       = CFG.heatLaps,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
@@ -5052,6 +5289,7 @@ local function applyConfigToRace()
   race.finishTimer    = math.floor(CFG.finishTimer)
   race.paceLap        = CFG.paceLap
   race.luckyDog       = CFG.luckyDog
+  race.cautionMode    = CFG.cautionMode
   race.heatLaps       = CFG.heatLaps
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
@@ -5392,6 +5630,30 @@ sanitizeBranches = function (raw, slotCount)
   return out
 end
 
+-- Sectors: { from, to }, each a checkpoint number or 0 for the start/finish
+-- line, which is always the LAST checkpoint and so is never named by number.
+-- Display only (each client times its own), but rejected rather than repaired
+-- like branch gates: a sector moved to another corner is not the one saved.
+-- The cap mirrors TUNE.MAX_SECTORS on the client (sector_test compares them).
+function race.sanitizeSectors(raw, gateCount)
+  if raw == nil then return nil end
+  if type(raw) ~= 'table' then return false end
+  local MAX = 20
+  local out = {}
+  for i, sec in ipairs(raw) do
+    if type(sec) ~= 'table' or i > MAX then return false end
+    local from, to = tonumber(sec.from), tonumber(sec.to)
+    if not (from and to) then return false end
+    from, to = math.floor(from), math.floor(to)
+    if from < 0 or to < 0 or from >= gateCount or to >= gateCount or from == to then
+      return false
+    end
+    out[i] = { from = from, to = to }
+  end
+  if #out == 0 then return nil end
+  return out
+end
+
 -- Only layouts for the map this server is hosting now.
 local function layoutsForCurrentMap()
   local map = getCurrentMap()
@@ -5637,11 +5899,19 @@ function RM_onSaveLayout(pid, rawData)
     -- or it would be saved on a track that never runs an out lap.
     gridOffLine  = data.gridOffLine == true or (first ~= nil and starts ~= nil and #starts > 0),
     firstCheckpoint = first,
+    -- Optional sectors; false (malformed) is turned away just below.
+    sectors      = race.sanitizeSectors(data.sectors, #checkpoints),
   }
   -- A branch array sent but invalid rejects the save.
   if data.branches ~= nil and not entry.branches then
     print('[RaceManager] Save rejected: branch gates malformed '
       .. '(bad or out-of-range checkpoint number, or bad coordinates)')
+    return
+  end
+  if entry.sectors == false then
+    print('[RaceManager] Save rejected: sectors malformed (a checkpoint number '
+      .. 'out of range, one starting and ending at the same gate, or over 20)')
+    MP.SendChatMessage(pid, '[RaceManager] Save refused: the sectors do not fit this route.')
     return
   end
   -- THE SILENT-DROP GUARD: a save writes what the client holds, so a client path
@@ -5663,6 +5933,8 @@ function RM_onSaveLayout(pid, rawData)
     checkSection('markers',        had(existing.markers),        entry.markers and #entry.markers or 0)
     -- A client from before props sends none at all.
     checkSection('props',          had(existing.props),          entry.props and #entry.props or 0)
+    -- Nor from before sectors.
+    checkSection('sectors',        had(existing.sectors),        entry.sectors and #entry.sectors or 0)
     if next(lost) then
       local parts = {}
       for k, n in pairs(lost) do parts[#parts + 1] = n .. ' ' .. k end
@@ -5718,12 +5990,17 @@ function RM_onSetFlag(pid, rawData)
   -- lap or caution it was under; the green or restart is called separately.
   -- A manual green otherwise ends a pace lap (no timeout needed: the marshal can
   -- see the track) through dropGreenFlag.
-  if want == 'green' and race.flag == 'red' and (race.pacing or race.caution) then
+  -- A caution still being raced back to counts: lifting a red under one once
+  -- went green and left it armed, so the leader's crossing froze the board
+  -- under a green flag.
+  if want == 'green' and race.flag == 'red'
+      and (race.pacing or race.caution or race.cautionPending) then
     race.flag = 'yellow'
     MP.SendChatMessage(-1, string.format(
       '[RaceManager] The red is lifted and the clock runs again: %s. By %s.',
       race.pacing and 'the PACE LAP resumes, hold position'
-                  or  'the race is STILL UNDER CAUTION, hold your position',
+        or race.cautionPending and 'the CAUTION is still out, race back to the line'
+        or 'the race is STILL UNDER CAUTION, hold your position',
       tostring(MP.GetPlayerName(pid) or pid)))
     print('[RaceManager] Red lifted back to '
       .. (race.pacing and 'the pace lap' or 'the caution') .. ' by '
@@ -5742,6 +6019,13 @@ function RM_onSetFlag(pid, rawData)
     restartRace('green flag called by ' .. tostring(MP.GetPlayerName(pid) or pid))
     return
   end
+  -- A green before the leader made the caution official WITHDRAWS it: nothing
+  -- was frozen and no lap ran under it, so it is not counted either. Left
+  -- armed, the leader's crossing would freeze the board under a green flag.
+  if want == 'green' and race.cautionPending then
+    race.cautionPending = false
+    race.cautionCount   = math.max(race.cautionCount - 1, 0)
+  end
   if want == race.flag then return end
   local who = MP.GetPlayerName(pid) or pid
   local wasRed = race.flag == 'red'
@@ -5751,7 +6035,9 @@ function RM_onSetFlag(pid, rawData)
       .. 'The session is still running; the race clock is stopped until the red '
       .. 'is lifted. By ' .. who .. '.')
   elseif want == 'yellow' then
-    MP.SendChatMessage(-1, '[RaceManager] YELLOW FLAG: caution called, race back to the line. '
+    -- NOT a caution (RM_onCaution is): a hazard pointed at, nothing frozen.
+    -- It once said "race back to the line", which is the caution's instruction.
+    MP.SendChatMessage(-1, '[RaceManager] YELLOW FLAG: hazard on track, take care. '
       .. (wasRed and 'The race clock is running again. ' or '') .. 'By ' .. who .. '.')
   else
     MP.SendChatMessage(-1, '[RaceManager] GREEN FLAG: racing. '
@@ -5951,10 +6237,11 @@ end
 
 local garage = {
   enforce = false,   -- master switch for the whole rule
-  -- Which half of the signature is matched:
+  -- How much of a car is matched:
+  --   'model'  the model only; parts, tuning and paint free
   --   'parts'  model + parts; tuning and paint free (the default)
   --   'strict' model + parts + tuning
-  -- Several allowed builds of one car are several entries, not a third mode.
+  -- Several allowed builds of one car are several entries under Parts.
   mode    = 'parts',
   -- { { model, label, sig, partsSig, game, class, name, pc, cfg } }
   -- `class` lives on the CAR (GT3 is GT3 whoever drives it); none anywhere
@@ -5963,6 +6250,15 @@ local garage = {
   list    = {},
 }
 local garageLoaded = false
+
+-- The three modes, and what each is called where people read it.
+garage.MODE_LABEL = { model = 'Model', parts = 'Parts', strict = 'Strict' }
+function garage.validMode(m)
+  return garage.MODE_LABEL[m] and m or nil
+end
+function garage.modeLabel(m)
+  return garage.MODE_LABEL[m] or 'Parts'
+end
 
 -- A display name beside the captured label; matching reads neither.
 garage.MAX_NAME = 40
@@ -5995,8 +6291,8 @@ local function loadGarageFromDisk()
     return
   end
   garage.enforce = data.enforce == true
-  -- Anything but 'strict' is 'parts' (the looser default for an old file).
-  garage.mode = (data.mode == 'strict') and 'strict' or 'parts'
+  -- Anything unknown is 'parts', the default (an old file has no mode).
+  garage.mode = garage.validMode(data.mode) or 'parts'
   garage.list = {}
   local derived = 0
   for _, e in ipairs(type(data.list) == 'table' and data.list or {}) do
@@ -6166,6 +6462,18 @@ garageSnapshot = function ()
   return garageView
 end
 
+-- The bare jbeam name: case, a leading path and .jbeam may differ between the
+-- list (getJBeamFilename) and the spawn packet ("jbm"). Above garageMatch,
+-- which reads it under Model.
+local function garageModelKey(model)
+  if type(model) ~= 'string' or model == '' then return nil end
+  model = model:match('([^/]+)$') or model
+  model = model:gsub('%.jbeam$', '')
+  model = model:lower()
+  if model == '' then return nil end
+  return model
+end
+
 -- Enforcement only bites when it is switched on AND at least one car has been
 -- captured - an empty whitelist would otherwise lock every player out.
 local function garageEnforcing()
@@ -6175,11 +6483,22 @@ end
 
 -- WHICH ENTRY THIS CAR IS under the mode in force, or nil: the ONE place the
 -- mode is interpreted, and where the class lives. An entry with no partsSig is
--- skipped in parts mode.
+-- skipped in parts mode. Under MODEL the car is matched by the model its
+-- signature names (`model=` leads both halves), so any parts and any tune of
+-- an approved model pass; with several entries of one model, the first is the
+-- one whose class and name it takes.
 local function garageMatch(partsSig, fullSig)
-  local strict = getGarage().mode == 'strict'
+  local mode = getGarage().mode
+  local strict = mode == 'strict'
+  local wanted = nil
+  if mode == 'model' then
+    wanted = garageModelKey(type(partsSig) == 'string' and partsSig:match('^model=([^|]*)') or nil)
+    if not wanted then return nil end
+  end
   for _, e in ipairs(getGarage().list) do
-    if strict then
+    if wanted then
+      if garageModelKey(e.model) == wanted then return e end
+    elseif strict then
       if fullSig and fullSig ~= '' and e.sig == fullSig then return e end
     else
       if partsSig and partsSig ~= '' and e.partsSig == partsSig then return e end
@@ -6238,16 +6557,6 @@ garageAudit = function ()
   return bad
 end
 
--- The bare jbeam name: case, a leading path and .jbeam may differ between the
--- list (getJBeamFilename) and the spawn packet ("jbm").
-local function garageModelKey(model)
-  if type(model) ~= 'string' or model == '' then return nil end
-  model = model:match('([^/]+)$') or model
-  model = model:gsub('%.jbeam$', '')
-  model = model:lower()
-  if model == '' then return nil end
-  return model
-end
 
 local function garageHasModel(model)
   local wanted = garageModelKey(model)
@@ -6404,6 +6713,7 @@ function RM_onWhitelistVehicle(pid, rawData)
   MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
     added = true, message = 'Added "' .. entry.label .. '" to the Garage List ('
       .. (g.mode == 'strict' and 'Strict: this exact tune'
+          or g.mode == 'model' and 'Model: this model, any parts and tune'
           or 'Parts: these parts, any tune') .. ')',
   }))
   local msg = string.format('[RaceManager] "%s" added to the Garage List by %s (%d approved)',
@@ -6555,7 +6865,7 @@ function RM_onSaveGarageSet(pid, rawData)
     name, existing and 'updated' or 'saved', MP.GetPlayerName(pid) or pid, #g.list, g.mode)
   MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
     added = true, message = 'Saved "' .. name .. '" (' .. #g.list .. ' car(s), '
-      .. (g.mode == 'strict' and 'Strict' or 'Parts') .. ')' }))
+      .. garage.modeLabel(g.mode) .. ')' }))
   MP.SendChatMessage(-1, msg)
   print(msg)
 end
@@ -6609,7 +6919,7 @@ function RM_onLoadGarageSet(pid, rawData)
     end
   end
   -- The mode travels with the series; the enforcement switch never does.
-  local mode = (stored.mode == 'strict') and 'strict' or 'parts'
+  local mode = garage.validMode(stored.mode) or 'parts'
 
   local added, skipped = #list, 0
   if append then
@@ -6618,8 +6928,8 @@ function RM_onLoadGarageSet(pid, rawData)
     if mode ~= g.mode then
       MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
         added = false,
-        message = '"' .. name .. '" is a ' .. (mode == 'strict' and 'Strict' or 'Parts')
-          .. ' set and the list is ' .. (g.mode == 'strict' and 'Strict' or 'Parts')
+        message = '"' .. name .. '" is a ' .. garage.modeLabel(mode)
+          .. ' set and the list is ' .. garage.modeLabel(g.mode)
           .. '. The two rule cars differently, so they cannot be merged: load it '
           .. 'on its own, or re-save one of them in the other mode.' }))
       return
@@ -6660,7 +6970,7 @@ function RM_onLoadGarageSet(pid, rawData)
     and (', ' .. skipped .. ' already on the list') or ''
   local msg = string.format('[RaceManager] Garage set "%s" %s by %s (%d car(s)%s, %d total, %s%s)',
     name, append and 'added' or 'loaded', MP.GetPlayerName(pid) or pid, added, dupNote,
-    #g.list, g.mode == 'strict' and 'Strict' or 'Parts',
+    #g.list, garage.modeLabel(g.mode),
     g.enforce and ', enforcing' or ', not enforced')
   MP.TriggerClientEvent(pid, 'RM_GarageResult', Util.JsonEncode({
     added = true,
@@ -6668,7 +6978,7 @@ function RM_onLoadGarageSet(pid, rawData)
       and ('Added "' .. name .. '": ' .. added .. ' car(s)' .. dupNote
            .. ', ' .. #g.list .. ' on the list')
       or ('Loaded "' .. name .. '": ' .. added .. ' car(s)'))
-      .. ', ' .. (g.mode == 'strict' and 'Strict' or 'Parts')
+      .. ', ' .. garage.modeLabel(g.mode)
       .. (g.enforce and '' or ' (enforcement is still off)') }))
   MP.SendChatMessage(-1, msg)
   print(msg)
@@ -6699,12 +7009,12 @@ function RM_onSetGarageEnforce(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
--- Parts or Strict; saveGarageToDisk re-judges every driver.
+-- Model, Parts or Strict; saveGarageToDisk re-judges every driver.
 function RM_onSetGarageMode(pid, rawData)
   local data = adminPayload(pid, rawData)
   if not data then return end
-  local mode = tostring(data.mode or '')
-  if mode ~= 'parts' and mode ~= 'strict' then return end
+  local mode = garage.validMode(tostring(data.mode or ''))
+  if not mode then return end
   local g = getGarage()
   if g.mode == mode then return end
   g.mode = mode
@@ -6757,13 +7067,14 @@ function RM_onVehicleConfig(pid, rawData)
   if allowed then return end
 
   -- Both signatures side by side in the console, for the admin (truncated).
-  local shown = (getGarage().mode == 'strict') and sig or partsSig
+  local gmode = getGarage().mode
+  local shown = gmode == 'strict' and sig or gmode == 'model' and model or partsSig
   print(string.format('[RaceManager] Garage mismatch (%s mode) for %s',
     getGarage().mode, MP.GetPlayerName(pid) or pid))
   print('[RaceManager]   driving: ' .. shown:sub(1, 300))
   for _, e in ipairs(getGarage().list) do
     if garageModelKey(e.model) == garageModelKey(model) then
-      local listed = (getGarage().mode == 'strict') and e.sig or e.partsSig
+      local listed = gmode == 'strict' and e.sig or gmode == 'model' and e.model or e.partsSig
       print('[RaceManager]   listed : ' .. tostring(listed):sub(1, 300))
     end
   end
@@ -6777,8 +7088,11 @@ function RM_onVehicleConfig(pid, rawData)
     return
   end
   -- Naming the mode tells the driver whether to undo a part swap or a tune.
-  rejectVehicle(pid, nil, getGarage().mode == 'strict'
+  rejectVehicle(pid, nil, gmode == 'strict'
     and 'this exact setup is not on the Garage List (Strict: parts AND tuning are locked)'
+    or  gmode == 'model'
+    and ('this model is not on the Garage List (Model: any parts and tune of an '
+        .. 'approved model are allowed)')
     or  'these parts are not on the Garage List (Parts: tuning and paint are free, '
         .. 'parts are locked)')
 end
@@ -8781,6 +9095,9 @@ function RM_Tick()
     tickCounter = tickCounter + 1
     if tickCounter >= CFG.pushEveryTicks then
       tickCounter = 0
+      -- The pass watch too: a red over a caution freezes nothing more, and a
+      -- car driving past a stopped field is the plainest pass there is.
+      if race.caution then race.checkCautionPasses() end
       broadcastState()
     end
     return
@@ -8857,6 +9174,8 @@ function RM_Tick()
   tickCounter = tickCounter + 1
   if tickCounter >= CFG.pushEveryTicks then
     tickCounter = 0
+    -- Passes under caution, judged on the reports this push will show.
+    if race.caution then race.checkCautionPasses() end
     broadcastState()
   end
 end
@@ -9017,6 +9336,7 @@ function onInit()
   MP.RegisterEvent('RM_Restart',          'RM_onRestart')
   MP.RegisterEvent('RM_CancelRestart',    'RM_onCancelRestart')  -- wave the restart off
   MP.RegisterEvent('RM_SetLuckyDog',      'RM_onSetLuckyDog')    -- the free pass rule
+  MP.RegisterEvent('RM_SetCautionMode',   'RM_onSetCautionMode') -- race back, or freeze at the call
   MP.RegisterEvent('RM_SetHeats',         'RM_onSetHeats')       -- Module 6
   MP.RegisterEvent('RM_DrawHeats',        'RM_onDrawHeats')
   MP.RegisterEvent('RM_SetHeatCurrent',   'RM_onSetHeatCurrent')
