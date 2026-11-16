@@ -1397,6 +1397,11 @@ local sticky = {
 -- What the HUD should hold now, or nil: the one a driver must act on first.
 local function stickyMessage()
   if not sessionRunning() or session.spectatorLock then return nil end
+  -- A RED OUTRANKS ALL OF THEM. Laid over a caution or a restart, the lines
+  -- below would tell a stopped field to race back, hold station or get ready.
+  if session.raceFlag == 'red' then
+    return 'red', 'RED FLAG - stop where you are and wait.'
+  end
   if session.greenReady then
     return 'ready', 'GET READY: hold position until the green flag falls.'
   end
@@ -8117,13 +8122,17 @@ local function onServerUpdate(rawData)
       { still = true, color = 'yellow' })
   end
   -- Three edges, three instructions, in the order a driver meets them.
+  -- Called under a red, the red still stands: the caution comes when it lifts.
+  local underRed = session.raceFlag == 'red'
   if session.cautionPending and not wasPending then
-    pushNotice('flag', 'CAUTION - RACE BACK TO THE LINE',
-      { sub = 'Positions lock as you complete this lap', color = 'yellow' })
+    pushNotice('flag', underRed and 'CAUTION CALLED UNDER THE RED' or 'CAUTION - RACE BACK TO THE LINE',
+      { sub = underRed and 'Stay stopped. Race back to the line when the red is lifted'
+          or 'Positions lock as you complete this lap', color = 'yellow' })
   end
   if session.caution and not wasCaution then
-    pushNotice('flag', 'CAUTION',
-      { sub = 'Hold position, no overtaking - places are frozen', color = 'yellow' })
+    pushNotice('flag', underRed and 'CAUTION CALLED UNDER THE RED' or 'CAUTION',
+      { sub = underRed and 'Stay stopped. Positions are frozen where you stand'
+          or 'Hold position, no overtaking - places are frozen', color = 'yellow' })
   elseif session.restartPending and not wasRestart then
     -- The green is coming, at the line.
     pushNotice('flag', 'RESTART THIS LAP',
@@ -8242,7 +8251,9 @@ local function onServerUpdate(rawData)
   -- sticky line holds it until the place is back.
   if session.ucPassed and session.ucPassed ~= wasPassed and sessionRunning() then
     pushNotice('flag', 'GIVE THE PLACE BACK',
-      { sub = 'You passed ' .. session.ucPassed .. ' under caution', color = 'yellow' })
+      { sub = session.raceFlag == 'red'
+          and ('You passed ' .. session.ucPassed .. ' - give it back when the red is lifted')
+          or  ('You passed ' .. session.ucPassed .. ' under caution'), color = 'yellow' })
   end
   -- The other half is a heads-up, not a flag: on the strip.
   if session.lappingAhead and not wasLapping and sessionRunning() then

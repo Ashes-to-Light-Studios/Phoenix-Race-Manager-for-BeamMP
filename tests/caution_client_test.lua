@@ -40,8 +40,10 @@ beamng_version   = '0.39.0.0'
 vec3 = function (x, y, z) return { x = x, y = y, z = z } end
 quat = function (x, y, z, w) return { x = x, y = y, z = z, w = w } end
 log  = function () end
+local hudLine = nil
 guihooks = { trigger = function (e, p)
   if e == 'RaceManagerNotice' then notices[#notices + 1] = p end
+  if e == 'Message' then hudLine = p.msg end
 end }
 MPGameNetwork      = {}
 MPConfig           = { getPlayerServerID = function () return 1 end }
@@ -125,6 +127,46 @@ update({ flag = 'yellow', caution = true,
          drivers = { { id = 1, name = 'Me', status = 'racing' },
                      { id = 2, name = 'Bob', status = 'racing', ucPassed = 'Me' } } })
 check(noticed('GIVE THE PLACE BACK') == nil, 'another driver\'s pass is not ours to give back')
+
+-- ---------------------------------------------------------------------------
+-- The red flag over a caution
+-- ---------------------------------------------------------------------------
+-- The HUD's standing line names the one thing to act on. Under a red that is
+-- stopping, whatever is underneath: a caution being raced back to, a restart
+-- or a place to give back would each tell a stopped field to move.
+local function hud()
+  hudLine = nil
+  for _ = 1, 60 do RM.onUpdate(0.05) end
+  return hudLine
+end
+update({ flag = 'green' })
+update({ flag = 'red', cautionPending = true })
+check(hud() == 'RED FLAG - stop where you are and wait.',
+  'under a red the HUD says stop, not race back (got ' .. tostring(hudLine) .. ')')
+update({ flag = 'red', caution = true, restartPending = true,
+         drivers = { { id = 1, name = 'Me', status = 'racing', ucPassed = 'Bob' } } })
+check(hud() == 'RED FLAG - stop where you are and wait.',
+  'nor restart, nor give a place back')
+update({ flag = 'yellow', caution = true,
+         drivers = { { id = 1, name = 'Me', status = 'racing', ucPassed = 'Bob' } } })
+check(hud() and hud():find('GIVE THE PLACE BACK to Bob', 1, true) ~= nil,
+  'the red lifted, the place to give back is the line again')
+
+-- A caution CALLED under a red is announced as one, not as a race back.
+update({ flag = 'green' })
+update({ flag = 'red' })
+notices = {}
+update({ flag = 'red', cautionPending = true })
+check(noticed('CAUTION CALLED UNDER THE RED') ~= nil and noticed('CAUTION - RACE BACK TO THE LINE') == nil,
+  'a caution called under a red tells the field to stay stopped')
+update({ flag = 'green' })
+update({ flag = 'red' })
+notices = {}
+update({ flag = 'red', caution = true,
+         drivers = { { id = 1, name = 'Me', status = 'racing', ucPassed = 'Bob' } } })
+n = noticed('GIVE THE PLACE BACK')
+check(n and n.sub:find('when the red is lifted', 1, true) ~= nil,
+  'a pass under the red is given back after it, not now')
 
 print(string.format('caution_client_test: %d checks, %d failures', checks, fails))
 if fails > 0 then os.exit(1) end

@@ -1604,6 +1604,18 @@ Some details worth knowing:
   goes back to its caution rather than being waved off the instant the wreck is
   moved. A red also holds the restart: a leader who rolls the last few meters to
   the line under one does not start the race by arriving.
+- **A caution called while a red is out leaves the red out.** The clock stays
+  stopped and the field is told to stay stopped. Lifting the red is what puts
+  the race under the caution: racing back to the line, or frozen where the
+  field stood when it was called. (Pressing Caution under a red used to lift the
+  red without saying so.)
+- **Passes are watched under a red too.** A car that drives past a stopped field
+  while a red is out over a caution is reported like any other pass under
+  caution, marked *under the red flag*. The driver is told to stay stopped and
+  give the place back once the red is lifted.
+- **Under a red, the HUD line says RED FLAG - stop where you are.** It takes
+  priority over every caution instruction, so a stopped field is never told to
+  race back, get ready for a restart or give a place back while the red is out.
 - **The Green flag button is still the restart** where it is reachable (a chat
   command, an older panel), so a green called by hand can never leave the race
   running with the order frozen and nothing to unfreeze it.

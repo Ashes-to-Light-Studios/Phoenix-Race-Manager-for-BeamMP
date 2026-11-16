@@ -825,7 +825,7 @@
     <span class="rm-uc-title">Passed under caution</span>
     <span class="rm-uc-pass" ng-repeat="p in cautionPasses track by $index"
           ng-class="{'rm-uc-restored': p.restored}">
-      {{ p.passer }} on {{ p.passed }} &middot; lap {{ p.lap }} &middot; {{ p.restored ? 'given back' : 'not given back' }}
+      {{ p.passer }} on {{ p.passed }} &middot; lap {{ p.lap }}<span ng-if="p.underRed"> &middot; under red</span> &middot; {{ p.restored ? 'given back' : 'not given back' }}
     </span>
   </div>
 

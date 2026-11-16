@@ -249,6 +249,53 @@ seconds(0.3)
 check(lastState.caution ~= true, 'so the leader\'s crossing freezes nothing under green')
 
 -- ---------------------------------------------------------------------------
+-- 6b. THE RED FLAG AGAINST THE CAUTION
+-- ---------------------------------------------------------------------------
+-- Caution pressed while a red is out used to overwrite the red with the yellow:
+-- the clock ran again, and a field told to stop was told to race back. The
+-- red stands now, and lifting it is what puts the field under the caution.
+RM_onSetFlag(0, '{"flag":"red"}')
+chatClear()
+RM_onCaution(0)
+check(lastState.flag == 'red' and lastState.clockStopped == true,
+  'racing back: a caution called under a red leaves the red out and the clock stopped')
+check(lastState.cautionPending == true, 'with the caution pending underneath')
+check(chatTo(-1, 'UNDER THE RED FLAG: stay stopped') ~= nil, 'and the field is told to stay stopped')
+RM_onSetFlag(0, '{"flag":"green"}')
+check(lastState.flag == 'yellow' and lastState.cautionPending == true,
+  'lifting the red puts the field under the caution, racing back')
+RM_onSetFlag(0, '{"flag":"green"}')   -- withdrawn before it went official
+
+RM_onSetCautionMode(0, '{"mode":"call"}')
+report(1, 3, 3, 100.0); report(2, 3, 2, 50.0); report(3, 3, 2, 80.0)
+seconds(0.5)
+RM_onSetFlag(0, '{"flag":"red"}')
+chatClear()
+RM_onCaution(0)
+check(lastState.flag == 'red' and lastState.clockStopped == true,
+  'frozen at the call: a caution called under a red leaves the red out too')
+check(lastState.caution == true, 'with the order frozen where the field stands')
+check(chatTo(-1, 'frozen where you stand') ~= nil, 'and the field is told so')
+
+-- A car driving past a stopped field under the red, over a caution, is caught,
+-- and told to give it back once the red is lifted rather than now.
+chatClear()
+report(3, 3, 2, 30.0)
+seconds(2)
+check(driver(3).ucPassed == 'Bob', 'a pass under the red over a caution is seen')
+check(chatTo(3, 'give the place back when the red is lifted') ~= nil,
+  'the driver is told to stay stopped and give it back after the red')
+check(chatTo(0, 'Cara passed Bob under the red flag') ~= nil, 'race control is told it was under the red')
+RM_onSetFlag(0, '{"flag":"green"}')
+check(lastState.flag == 'yellow' and lastState.caution == true, 'lifting the red returns to the caution')
+report(3, 3, 2, 90.0)
+seconds(0.5)
+check(driver(3).ucPassed == nil, 'and the place can be given back under it')
+RM_onSetFlag(0, '{"flag":"green"}')
+check(lastState.caution == false, 'then the green restarts the race')
+RM_onSetCautionMode(0, '{"mode":"line"}')
+
+-- ---------------------------------------------------------------------------
 -- 7. THE ADVISORY YELLOW IS A HAZARD, NOT A RACE BACK
 -- ---------------------------------------------------------------------------
 chatClear()
@@ -270,8 +317,10 @@ end
 local f = path and io.open(path, 'r')
 local text = f and f:read('*a') or ''
 if f then f:close() end
-check(text:find('Cautions: 2,', 1, true) ~= nil,
-  'the results count the two cautions that went official, not the one withdrawn')
+check(text:find('Cautions: 3,', 1, true) ~= nil,
+  'the results count the three cautions that went official, not the two withdrawn')
+check(text:find('Cara on Bob, lap 3, under the red flag (given back)', 1, true) ~= nil,
+  'a pass under the red is marked so')
 check(text:find('over 2 laps', 1, true) ~= nil,
   'over every lap run under them, not only the last caution\'s (got: '
     .. tostring(text:match('Cautions:[^\n]*')) .. ')')

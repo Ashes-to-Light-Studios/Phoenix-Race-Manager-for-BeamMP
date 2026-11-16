@@ -1912,8 +1912,9 @@ local function buildResultsText(cupRound)
     -- What a steward needs: who passed whom under yellow, and whether the
     -- place went back before the green.
     for _, p in ipairs(race.cautionPasses) do
-      add(string.format('   Passed under caution: %s on %s, lap %d (%s)',
-        p.passer, p.passed, p.lap, p.restored and 'given back' or 'NOT given back'))
+      add(string.format('   Passed under caution: %s on %s, lap %d%s (%s)',
+        p.passer, p.passed, p.lap, p.underRed and ', under the red flag' or '',
+        p.restored and 'given back' or 'NOT given back'))
     end
   end
   add(string.format(' Regulations: resets %s | joker lap %s',
@@ -4111,7 +4112,7 @@ end
 -- (progress.lapsBehind: one more lap on the counter is not a lap down until the
 -- leader is past). Only as exact as the last position reports, about a third
 -- of a second old, so two cars side by side are ordered as they last reported.
-function race.freezeAtCall(who)
+function race.freezeAtCall(who, underRed)
   race.cautionPending = false
   race.caution        = true
   local leader = nil
@@ -4125,10 +4126,14 @@ function race.freezeAtCall(who)
   end
   -- What a car that joins the track later is measured against (lockCaution).
   race.cautionLap = leader and progress.lapsDone(leader) or nil
-  MP.SendChatMessage(-1, string.format(
-    '[RaceManager] CAUTION - FULL COURSE YELLOW: POSITIONS ARE FROZEN AS OF NOW. '
-    .. 'Slow down and hold your place: a pass under yellow does not count, and '
-    .. 'race control is told. By %s.', tostring(who)))
+  -- Under a red the field is stopped where it stands, which is the order taken.
+  MP.SendChatMessage(-1, underRed
+    and string.format('[RaceManager] CAUTION CALLED UNDER THE RED FLAG: positions '
+      .. 'are frozen where you stand. Stay stopped; when the red is lifted, hold your '
+      .. 'place under caution. By %s.', tostring(who))
+    or  string.format('[RaceManager] CAUTION - FULL COURSE YELLOW: POSITIONS ARE '
+      .. 'FROZEN AS OF NOW. Slow down and hold your place: a pass under yellow does '
+      .. 'not count, and race control is told. By %s.', tostring(who)))
   print(string.format('[RaceManager] CAUTION #%d called by %s at %.1fs: frozen at the call',
     race.cautionCount, tostring(who), race.time))
   -- The whole field is locked, so the free pass is decided now.
@@ -4220,12 +4225,17 @@ function race.checkCautionPasses()
             race.cautionPasses[#race.cautionPasses + 1] = entry
             a.ucPass[b.id] = entry
             names = names and (names .. ', ' .. entry.passed) or entry.passed
-            MP.SendChatMessage(a.id, string.format(
-              '[RaceManager] PASSED UNDER CAUTION: you went by %s. Give the place '
-              .. 'back now: it does not count, and race control has been told.', entry.passed))
+            -- Under a red the field is told to stop where it is, so the place
+            -- goes back once the red is lifted, not by moving now.
+            entry.underRed = race.flag == 'red' or nil
+            MP.SendChatMessage(a.id, string.format(entry.underRed
+              and '[RaceManager] PASSED UNDER THE RED FLAG: you went by %s. Stay stopped, '
+                .. 'and give the place back when the red is lifted. Race control has been told.'
+              or  '[RaceManager] PASSED UNDER CAUTION: you went by %s. Give the place '
+                .. 'back now: it does not count, and race control has been told.', entry.passed))
             race.tellRaceControl(string.format(
-              '[RaceManager] Race control: %s passed %s under caution (lap %d).',
-              entry.passer, entry.passed, entry.lap))
+              '[RaceManager] Race control: %s passed %s under %s (lap %d).',
+              entry.passer, entry.passed, entry.underRed and 'the red flag' or 'caution', entry.lap))
           end
         elseif ahead == false then
           a.ucSeen[b.id] = nil
@@ -4310,7 +4320,12 @@ function RM_onCaution(pid)
   end
   race.restartPending = false
   race.cautionLucky   = nil
-  race.flag           = 'yellow'
+  -- CALLED UNDER A RED, THE RED STAYS. It used to be overwritten with the
+  -- yellow, which lifted the red without a word: the clock ran again and a
+  -- stopped field was told to race back. Lifting the red (RM_onSetFlag) is what
+  -- puts the field under this caution.
+  local underRed = race.flag == 'red'
+  if not underRed then race.flag = 'yellow' end
   race.cautionLap     = nil
   race.cautionLaps    = 0
   race.cautionSeq     = 0
@@ -4318,11 +4333,21 @@ function RM_onCaution(pid)
   race.cautionRulesUsed[race.cautionMode] = true
   local who = MP.GetPlayerName(pid) or pid
   if race.cautionMode == 'call' then
-    race.freezeAtCall(who)
+    race.freezeAtCall(who, underRed)
     return
   end
   -- CALLED, NOT FROZEN: official when the LEADER takes the line (RM_onLap).
   race.cautionPending = true
+  if underRed then
+    MP.SendChatMessage(-1, string.format(
+      '[RaceManager] CAUTION CALLED UNDER THE RED FLAG: stay stopped. When the red '
+      .. 'is lifted, race back to the line: positions lock as you complete that lap. '
+      .. 'By %s.', tostring(who)))
+    print(string.format('[RaceManager] CAUTION #%d called by %s at %.1fs under the red: '
+      .. 'racing back to the line once it is lifted', race.cautionCount, tostring(who), race.time))
+    broadcastState()
+    return
+  end
   MP.SendChatMessage(-1, string.format(
     '[RaceManager] CAUTION - FULL COURSE YELLOW: RACE BACK TO THE LINE. Positions '
     .. 'lock as you complete this lap, and the leader decides which lap that is. '
@@ -9042,6 +9067,9 @@ function RM_Tick()
     tickCounter = tickCounter + 1
     if tickCounter >= CFG.pushEveryTicks then
       tickCounter = 0
+      -- The pass watch too: a red over a caution freezes nothing more, and a
+      -- car driving past a stopped field is the plainest pass there is.
+      if race.caution then race.checkCautionPasses() end
       broadcastState()
     end
     return
