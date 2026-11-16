@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Post one GitHub event to a Discord channel, under the studio's name and
-# avatar, whoever caused it. Commits are never posted: a push is announced
-# only when it creates or deletes a branch or tag.
+# avatar, whoever caused it.
+#
+# ONLY PULL REQUESTS AND ISSUES go to the channel, plus releases to their own.
+# Pushes (commits, branches, tags) and comments are never posted.
 #
 #   discord-post.sh <event name> <event payload file>
 #
@@ -12,7 +14,7 @@
 # `username` and `avatar_url`.
 #
 # EVERY POST IS FROM THE STUDIO: the name and avatar just below, the same for
-# everybody. Who pushed or commented is not shown.
+# everybody. Who opened or closed something is not shown.
 #
 # Environment:
 #   DISCORD_WEBHOOK_URL  the channel's webhook URL, or several, one per line:
@@ -47,20 +49,10 @@ message=$(jq -c \
   def body(n): (. // "") | gsub("\r"; "") | trunc(n);
 
   # --- what: null means "nothing worth a post" ---
-  # NO POSTS FOR COMMITS. A push says only that a branch or tag came or went;
-  # the commits it carries are never listed, however many there are.
-  (if $event == "push" then
-      (.ref | sub("^refs/(heads|tags)/"; "")) as $ref
-      | (.ref | startswith("refs/tags/")) as $is_tag
-      | if .deleted then
-          { title: "[\($repo)] \(if $is_tag then "Tag" else "Branch" end) deleted: \($ref)", color: 13574702 }
-        elif $is_tag then
-          { title: "[\($repo)] New tag: \($ref)", url: "\($repo_url)/releases/tag/\($ref)", color: 7506394 }
-        elif .created then
-          { title: "[\($repo)] New branch: \($ref)", url: "\($repo_url)/tree/\($ref)", color: 7506394 }
-        else null end
-
-    elif $event == "pull_request" or $event == "pull_request_target" then
+  # Pull requests, issues and releases, nothing else. Pushes and comments fall
+  # through to null on purpose: a branch made before the workflow dropped its
+  # push trigger still runs on its own pushes, with THIS copy of the script.
+  (if $event == "pull_request" or $event == "pull_request_target" then
       .pull_request as $pr
       | (if .action == "closed" and $pr.merged then "merged" else .action end) as $did
       | if ($did | IN("opened", "reopened", "closed", "merged", "ready_for_review")) then
@@ -79,14 +71,6 @@ message=$(jq -c \
             description: (if .action == "opened" then ($i.body | body(500)) else "" end) }
         else null end
 
-    elif $event == "issue_comment" then
-      if .action == "created" then
-        { title: "[\($repo)] New comment on \(if .issue.pull_request then "pull request" else "issue" end) #\(.issue.number): \(.issue.title)",
-          url: .comment.html_url,
-          color: 9807270,
-          description: (.comment.body | body(500)) }
-      else null end
-
     elif $event == "release" then
       if .action == "published" then
         { title: "[\($repo)] New release: \(.release.name // .release.tag_name)",
@@ -100,7 +84,7 @@ message=$(jq -c \
   | if $embed == null then empty else
       { username: ($name | trunc(80)),
         avatar_url: $avatar,
-        # Commit messages and comments are text written by others: never let an
+        # Pull request and issue text is written by others: never let an
         # @everyone in one of them ping the channel.
         allowed_mentions: { parse: [] },
         embeds: [ $embed + { title: ($embed.title | trunc(256)) } ] }

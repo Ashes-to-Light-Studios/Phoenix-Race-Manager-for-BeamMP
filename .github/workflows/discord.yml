@@ -1,7 +1,8 @@
 name: Post to Discord
 
-# Repo activity, posted to the Discord channel under the studio's name and
-# avatar, whoever caused it. Both are set at the top of
+# Pull requests and issues, posted to the Discord channel under the studio's
+# name and avatar, whoever caused it. Nothing else: no commits, branches, tags
+# or comments. Both are set at the top of
 # .github/scripts/discord-post.sh.
 #
 # THIS REPLACES the webhook under Settings, Webhooks whose URL ends in /github.
@@ -15,26 +16,25 @@ name: Post to Discord
 # green.
 #
 # RELEASES GO TO THEIR OWN CHANNEL: a second secret, DISCORD_RELEASES_WEBHOOK_URL,
-# holds that channel's webhook URL. New and deleted branches and tags, pull
-# requests, issues and comments go to DISCORD_WEBHOOK_URL. Commits are never
-# posted. While the releases secret is unset, releases are posted with
-# everything else rather than nowhere.
+# holds that channel's webhook URL. Pull requests and issues go to
+# DISCORD_WEBHOOK_URL. While the releases secret is unset, releases are posted
+# with everything else rather than nowhere.
 #
 # pull_request_target, not pull_request: a pull request from a fork gets no
 # secrets under pull_request, so it could not post. This is safe here because
 # nothing from the pull request is checked out or run -- the checkout below is
 # the base branch, and the event is only ever read as data by jq.
 #
-# Every trigger but push runs the copy of this file on main, so they start
-# working when this is merged.
+# Every trigger here runs the copy of this file on main, so a change starts
+# working when it is merged. NO PUSH TRIGGER: a push runs the copy on the
+# branch pushed, so a branch made before push was dropped still runs this on
+# its own pushes. It posts nothing: the script is always main's, and main's
+# ignores pushes.
 on:
-  push:
   pull_request_target:
     types: [opened, reopened, closed, ready_for_review]
   issues:
     types: [opened, reopened, closed]
-  issue_comment:
-    types: [created]
   # A release published BY THE PACKAGE WORKFLOW never arrives here: GitHub does
   # not start workflows for what a workflow's own token did. package.yml posts
   # that one itself. This is for a release published by hand.
@@ -48,8 +48,8 @@ jobs:
   post:
     runs-on: ubuntu-latest
     steps:
-      # The default branch, for the script alone. A deleted branch has nothing
-      # left to check out, and a pull request's own code is never wanted.
+      # The default branch, for the script alone: a pull request's own code is
+      # never wanted.
       - name: Checkout
         uses: actions/checkout@v7
         with:
