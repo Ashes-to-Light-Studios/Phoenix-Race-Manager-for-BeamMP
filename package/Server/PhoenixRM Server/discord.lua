@@ -1,8 +1,8 @@
 -- Race Manager: DISCORD, an optional add-on that posts results to a channel
 -- through a webhook.
 --
--- OFF UNTIL THE OWNER TURNS onlineFeatures ON in config.json (see M.online),
--- and then until a webhook is set, from the Admin tab or in Data/discord.json.
+-- OFF UNTIL onlineFeatures IS ON (config.json, or Online features on the Admin
+-- tab; see M.online), and then until a webhook is set, from the Admin tab or in Data/discord.json.
 -- Until both, nothing here starts a process or touches the network. Deleting
 -- this file turns it off as well: main.lua loads it with pcall and nothing
 -- else depends on it.
@@ -51,7 +51,8 @@ local COLOR = { race = 0xF39C12, quali = 0x3498DB, derby = 0xE74C3C, drag = 0x2E
 function M.online()
   return host ~= nil and host.CFG ~= nil and host.CFG.onlineFeatures == true
 end
-M.OFF = 'Discord posts are off on this server (onlineFeatures in config.json)'
+M.OFF = 'Discord posts are off on this server (Online features on the Admin tab, '
+  .. 'or onlineFeatures in config.json)'
 
 M.queue  = {}
 M.job    = nil   -- the post curl is sending
@@ -303,6 +304,8 @@ function M.build.race(data)
 
   local winner = final[1].finishTime and final[1].status ~= 'dsq' and final[1] or nil
   local rows = {}
+  -- Room for a penalty note when one is shown (the cell is cut at its width).
+  local timeW = 10
   for i, rec in ipairs(final) do
     local pos, time
     if rec.status == 'dsq' then
@@ -313,10 +316,17 @@ function M.build.race(data)
       if down > 0 then
         time = '+' .. down .. (down == 1 and ' lap' or ' laps')
       elseif winner and rec ~= winner then
-        local gap = rec.finishTime - winner.finishTime
+        -- On the classified time: the flag plus any checkpoint-skip penalty,
+        -- which is what put the order in this order.
+        local gap = (rec.finishTime + (rec.penaltySeconds or 0))
+          - (winner.finishTime + (winner.penaltySeconds or 0))
         time = '+' .. (gap >= 60 and host.fmtLap(gap) or string.format('%.3f', gap))
       else
-        time = host.fmtLap(rec.finishTime)
+        time = host.fmtLap(rec.finishTime + (rec.penaltySeconds or 0))
+      end
+      if (rec.penaltySeconds or 0) > 0 then
+        time = time .. string.format(' (+%.1fs pen)', rec.penaltySeconds)
+        timeW = 22
       end
     else
       pos, time = 'DNF', 'DNF'
@@ -326,7 +336,7 @@ function M.build.race(data)
 
   local lines = { string.format('%s \u{00B7} %s \u{00B7} %d driver%s', where(trackName()),
     host.raceLength(), #final, #final == 1 and '' or 's') }
-  lines[#lines + 1] = grid({ 'Pos', 'Driver', 'Best', 'Time' }, rows, { 4, 18, 9, 10 })
+  lines[#lines + 1] = grid({ 'Pos', 'Driver', 'Best', 'Time' }, rows, { 4, 18, 9, timeW })
   lines[#lines + 1] = more(rows, data)
 
   local fields = {}

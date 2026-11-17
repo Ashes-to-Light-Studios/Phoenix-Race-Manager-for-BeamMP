@@ -70,6 +70,9 @@ local CFG = {
   -- THE FREE PASS ("lucky dog"): the highest-placed lapped car gets its lap back
   -- before the restart. Off by default, like every scoring rule.
   luckyDog      = false,
+  -- LAPS BACK: under a caution EVERY lapped car takes all its laps back and
+  -- restarts at the tail of the lead lap. Covers the free pass. Off by default.
+  lapsBack      = false,
   -- HOW A CAUTION FREEZES THE ORDER. 'line': the field races back to the line
   -- and each car locks as it completes the leader's lap. 'call': frozen where
   -- the field is the moment Caution is pressed, for leagues that do not race
@@ -77,6 +80,22 @@ local CFG = {
   cautionMode   = 'line',
   -- Laps a heat runs; 0 is the race's distance.
   heatLaps      = 0,
+
+  -- CHECKPOINT SKIPS (a track cut). Off as shipped, like every scoring rule: a
+  -- cut then leaves the car armed on the gate it missed until it drives back.
+  -- On, the car is moved on past the gate it crossed, and the skip costs a
+  -- warning, then the penalty: 'time' (seconds on the race time), 'lift' (lift
+  -- off the throttle for liftSeconds within liftWindow seconds of green
+  -- running, or the time instead) or 'liftAndTime' (both).
+  enableCheckpointSkipPenalty   = false,
+  checkpointSkipWarningsAllowed = 1,      -- warnings before penalties; 0 = none
+  checkpointSkipPenaltyType     = 'time', -- 'time' | 'lift' | 'liftAndTime'
+  checkpointSkipPenaltySeconds  = 5,      -- per penalised skip, and per unserved lift
+  checkpointSkipLiftSeconds     = 3,      -- seconds off the throttle per penalised skip
+  checkpointSkipLiftWindow      = 30,     -- seconds of green running to serve a lift
+  -- Furthest ahead (gates) a crossing still counts as a skip; further is
+  -- ignored, as it always was. config.json only, never the panel.
+  checkpointSkipMaxGates        = 2,
 
   -- THE BLUE FLAG: shown within blueFlagWithin seconds, cleared past
   -- blueFlagClear. Two numbers, so a car hovering at one threshold does not make
@@ -127,9 +146,10 @@ local CFG = {
   mapVotePercent  = 60,      -- share of everyone connected who must vote yes
 
   -- THE SERVER GOES ONLINE BY ITSELF only with this on: update checks, Update
-  -- and restart, Discord posts. Off as shipped and config.json only, never the
-  -- panel: a game host cut a server off the internet after its startup update
-  -- check, BeamMP's player login included, and nothing tells such a host apart.
+  -- and restart, Discord posts. Off as shipped: a game host cut a server off the
+  -- internet after its startup update check, BeamMP's player login included, and
+  -- nothing tells such a host apart. The Admin panel's Online features row sets
+  -- it too (admin tier, asks first, saved here): RM_onSetOnlineFeatures.
   onlineFeatures  = false,
   -- Updates from GitHub. See update.lua. false never contacts GitHub at all.
   updateCheck     = true,
@@ -196,11 +216,24 @@ local race = {
   -- (ONE per caution).
   luckyDog     = CFG.luckyDog,
   cautionLucky = nil,
+  -- Laps back: the admin's switch. Every lapped car, every caution.
+  lapsBack     = CFG.lapsBack,
   -- 'line' or 'call' (CFG.cautionMode). Fixed for a caution once it is out.
   cautionMode  = CFG.cautionMode,
   -- Laps run under every caution this race, for the results file (cautionLaps
   -- is the current caution's alone, which the panel shows).
   cautionLapsTotal = 0,
+  -- ---------------------------------------------------------------------
+  -- CHECKPOINT SKIPS: the live rules (CFG holds the boot defaults). Locked
+  -- while a session is under way (RM_onSetCheckpointSkip). The look-ahead
+  -- window stays CFG.checkpointSkipMaxGates: config.json only.
+  -- ---------------------------------------------------------------------
+  enableCheckpointSkipPenalty   = CFG.enableCheckpointSkipPenalty,
+  checkpointSkipWarningsAllowed = CFG.checkpointSkipWarningsAllowed,
+  checkpointSkipPenaltyType     = CFG.checkpointSkipPenaltyType,
+  checkpointSkipPenaltySeconds  = CFG.checkpointSkipPenaltySeconds,
+  checkpointSkipLiftSeconds     = CFG.checkpointSkipLiftSeconds,
+  checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow,
   -- The rules this race's cautions ran under ({ line = true, call = true }),
   -- for the results file: the setting may have changed between them.
   cautionRulesUsed = {},
@@ -208,6 +241,11 @@ local race = {
   -- { lap, at, passer, passerId, passed, passedId, restored }. On the board
   -- for race control, and in the results file.
   cautionPasses = {},
+  -- Laps handed back under a caution this race, free pass and laps back alike:
+  -- { caution, rule = 'free pass' | 'laps back', cars = { { name, laps } } }.
+  -- For the results file: a car that finished on the lead lap may not have
+  -- driven every lap of it.
+  lapCredits = {},
   -- A restart called and not yet taken: the LEADER decides when, as they come
   -- back to the line. Cancellable until the green falls.
   restartPending = false,
@@ -350,6 +388,8 @@ local players = {}          -- [playerID] = per-player record
 local function thawOrder()
   for _, rec in pairs(players) do
     rec.cautionPos, rec.cautionDown = nil, nil
+    -- Laps credited under this caution (the pass watch leaves the car out).
+    rec.cautionCredited = nil
     -- The pass watch belongs to the caution too (race.checkCautionPasses).
     rec.ucSeen, rec.ucPass, rec.ucPassed = nil, nil, nil
   end
@@ -461,8 +501,8 @@ function auth.requireFull(pid)
     .. (MP.GetPlayerName(pid) or tostring(pid)))
   MP.TriggerClientEvent(pid, 'RM_Denied', Util.JsonEncode({
     reason = 'That needs the admin password: a moderator cannot change '
-      .. 'passwords, choose where results are saved, clear the results or lap '
-      .. 'records, or delete a layout.',
+      .. 'passwords, choose where results are saved, turn online features on '
+      .. 'or off, clear the results or lap records, or delete a layout.',
   }))
   return false
 end
@@ -504,6 +544,20 @@ local function newRecord(pid)
     holdCorrectedAt = nil,   -- race.time of the last correction (rate limiting)
     jokerTaken = 0,          -- completed runs of the joker route this race
     jokerLap   = nil,        -- lap the joker route was taken on
+    -- CHECKPOINT SKIPS this session (race.resetSkips). Zero goes out as nil.
+    checkpointWarningsUsed = 0,  -- warnings spent of checkpointSkipWarningsAllowed
+    penaltySeconds = 0,      -- added to finishTime in the classification
+    liftOwed   = 0,          -- lift-off units still to serve (liftSeconds each)
+    checkpointSkips = 0,     -- checkpoints skipped, warned or penalised (results)
+    liftDeadline = nil,      -- race.time an owed lift converts to time; not sent
+    liftWindowLeft = nil,    -- seconds of it left, for the board (RM_Tick)
+    liftFrom   = nil,        -- race.time the lift being served became due; not sent
+    liftsServed = 0,         -- results file
+    liftsConverted = 0,      -- results file
+    cutLaps    = 0,          -- race laps with a skip on them (no time, results)
+    qualiCutLaps = 0,        -- the same in qualifying, kept with qualiBest
+    cutOnLap   = nil,        -- lap a skip was reported on (RM_onLap's cross-check)
+    skipSeen   = nil,        -- { ['lap:to'] = true }: one report per crossing
     -- Where this driver locked under the caution, stamped at their own crossing:
     --   cautionDown  laps down on the leader (0 = lead lap), compared FIRST
     --   cautionPos   order back to the line within that
@@ -622,6 +676,28 @@ function progress.record(rec, lap, cp)
     if onLap[k] then break end
     onLap[k] = race.time
   end
+end
+
+-- The time a FINISHER is classified on: the flag, plus any checkpoint-skip
+-- penalty. Finishers only (raceOrderLess, the results file, Discord); never
+-- the on-road order, the gaps or the blue flag.
+function progress.flagTime(rec)
+  return rec.finishTime + (rec.penaltySeconds or 0)
+end
+
+-- A new session's checkpoint-skip tallies: Generate Grid (both kinds of
+-- driver) and GO. `quali` also clears qualifying's cut laps, which belong to
+-- qualiBest and so are cleared where it is.
+function race.resetSkips(rec, quali)
+  rec.checkpointWarningsUsed = 0
+  rec.penaltySeconds = 0
+  rec.liftOwed = 0
+  rec.checkpointSkips = 0
+  rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = nil, nil, nil
+  rec.liftsServed, rec.liftsConverted = 0, 0
+  rec.cutLaps = 0
+  rec.cutOnLap, rec.skipSeen = nil, nil
+  if quali then rec.qualiCutLaps = 0 end
 end
 
 -- ---------------------------------------------------------------------------
@@ -900,7 +976,10 @@ local function raceOrderLess(a, b)
     if la ~= lb then return la > lb end
     if (a.atLine == true) ~= (b.atLine == true) then return a.atLine == true end
     if a.atLine then
-      if a.finishTime ~= b.finishTime then return a.finishTime < b.finishTime end
+      -- On the flag PLUS any checkpoint-skip penalty (both home on the same
+      -- laps here, so a penalty never drops a car behind one with fewer).
+      local ta, tb = progress.flagTime(a), progress.flagTime(b)
+      if ta ~= tb then return ta < tb end
       -- Home on the same tick: the order the crossings reached the server.
       return (a.finishSeq or 0) < (b.finishSeq or 0)
     end
@@ -912,8 +991,9 @@ local function raceOrderLess(a, b)
   end
   if ra ~= rb then return ra < rb end
   -- Drivers excluded after finishing are ordered by the flag.
-  if ra == 2 and a.finishTime and b.finishTime and a.finishTime ~= b.finishTime then
-    return a.finishTime < b.finishTime
+  if ra == 2 and a.finishTime and b.finishTime
+      and progress.flagTime(a) ~= progress.flagTime(b) then
+    return progress.flagTime(a) < progress.flagTime(b)
   end
   -- THE CAUTION ORDER, first for cars still circulating, so closing up under
   -- yellow (as told) gains no places:
@@ -1077,6 +1157,9 @@ local DRIVER_WIRE_FIELDS = {
   'gap', 'intv', 'down', 'idown',
   -- Garage List verdict, three-valued (see newRecord).
   'carOk',
+  -- Checkpoint skips: warnings spent, penalty seconds, lift units owed and the
+  -- seconds left to serve them. Zero goes out as nil (driverForWire).
+  'checkpointWarningsUsed', 'penaltySeconds', 'liftOwed', 'liftWindowLeft',
 }
 
 -- The projection buffer lives ON the record and is reused: no allocation per
@@ -1091,6 +1174,11 @@ local function driverForWire(rec)
     local key = DRIVER_WIRE_FIELDS[i]
     wire[key] = rec[key]
   end
+  -- The skip tallies are zero on nearly every row of nearly every race: nil
+  -- leaves them out of the JSON (the app reads nil as 0), as ucPassed does.
+  if wire.checkpointWarningsUsed == 0 then wire.checkpointWarningsUsed = nil end
+  if wire.penaltySeconds == 0 then wire.penaltySeconds = nil end
+  if wire.liftOwed == 0 then wire.liftOwed = nil end
   return wire
 end
 
@@ -1153,7 +1241,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.24.0'
+local RM_BUILD = '0.26.0'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -1300,11 +1388,23 @@ local function broadcastState(targetPid)
     restartPending = race.restartPending,
     -- The free pass rule, and who has it this caution.
     luckyDog     = race.luckyDog,
+    lapsBack     = race.lapsBack,
     cautionMode  = race.cautionMode,
     -- Passes under caution this race, for race control. nil while there are
     -- none, so a clean race sends nothing.
     cautionPasses = #race.cautionPasses > 0 and race.cautionPasses or nil,
     cautionLucky = race.cautionLucky,
+    -- Checkpoint skips: the rules the panel shows and the client detects with
+    -- (maxGates is its look-ahead window). One small table, every push.
+    cpSkip       = {
+      enabled    = race.enableCheckpointSkipPenalty,
+      warnings   = race.checkpointSkipWarningsAllowed,
+      type       = race.checkpointSkipPenaltyType,
+      penaltySec = race.checkpointSkipPenaltySeconds,
+      liftSec    = race.checkpointSkipLiftSeconds,
+      liftWindow = race.checkpointSkipLiftWindow,
+      maxGates   = CFG.checkpointSkipMaxGates,
+    },
     -- The heat program; heatLaps because the flags are waved client-side and
     -- must reach the same distance as sessionLapTarget.
     heatCount    = race.heatCount,
@@ -1378,6 +1478,8 @@ local function broadcastState(targetPid)
     -- Admin sends only: where a closing session's results go (Save results).
     resultsSave  = selfAdmin and { server = CFG.saveResultsOnServer == true,
       admins = CFG.copyResultsToAdmins == true } or nil,
+    -- Admin sends only: does the server go online by itself (Online features).
+    onlineFeatures = selfAdmin and { on = CFG.onlineFeatures == true } or nil,
     -- Admin sends only: is a newer release out, and an update under way.
     prmUpdate    = selfAdmin and race.updateSnapshot and race.updateSnapshot(targetPid) or nil,
     -- Admin sends only: the Discord add-on, never its webhook URL.
@@ -1389,12 +1491,15 @@ end
 
 -- Out of the session (finished, DNF, derby eliminated). `source` scopes the lock
 -- so race and derby never release each other's spectators.
-local function forceSpectate(pid, reason, source, place)
+local function forceSpectate(pid, reason, source, place, provisional)
   MP.TriggerClientEvent(pid, 'RM_ForceSpectate', Util.JsonEncode({
     reason = reason or 'You are out of this session',
     source = source or 'race',
     -- Their finishing place, locked at the crossing (drivers already home).
     place  = place,
+    -- A penalty on their time: a car still out can finish inside it, so the
+    -- place is told as provisional. nil otherwise.
+    provisional = provisional or nil,
   }))
 end
 
@@ -1890,10 +1995,43 @@ local function buildResultsText(cupRound)
   end
   -- A classified car's Race Time cell: its time, or the laps it was down on
   -- the winner (a car home a lap down did not race the winner's distance).
+  -- A checkpoint-skip penalty is IN the time shown, and said beside it.
   local function finishCell(rec)
+    local pen = rec.penaltySeconds or 0
+    local note = pen > 0 and string.format(' (+%.1fs pen)', pen) or ''
     local down = leaderLaps - lapsRun(rec)
-    if down > 0 then return '+' .. down .. (down == 1 and ' lap' or ' laps') end
-    return fmtLap(rec.finishTime)
+    if down > 0 then return '+' .. down .. (down == 1 and ' lap' or ' laps') .. note end
+    return fmtLap(progress.flagTime(rec)) .. note
+  end
+  -- Checkpoint skips, in a column of their own while the rule was on: skips,
+  -- warnings, penalty seconds, lifts served and converted, and cut laps. And
+  -- the Race Time column widened when any time carries a penalty note.
+  local skipsOn = race.enableCheckpointSkipPenalty == true
+  local timeW = 10
+  for _, rec in ipairs(final) do
+    if (rec.penaltySeconds or 0) > 0 then timeW = 24 break end
+  end
+  local function skipCell(rec)
+    local parts = {}
+    if (rec.checkpointSkips or 0) > 0 then
+      parts[#parts + 1] = rec.checkpointSkips .. ' skip' .. (rec.checkpointSkips == 1 and '' or 's')
+    end
+    if race.checkpointSkipWarningsAllowed > 0 and (rec.checkpointWarningsUsed or 0) > 0 then
+      parts[#parts + 1] = string.format('W %d/%d', rec.checkpointWarningsUsed,
+        race.checkpointSkipWarningsAllowed)
+    end
+    if (rec.penaltySeconds or 0) > 0 then
+      parts[#parts + 1] = string.format('+%.1fs', rec.penaltySeconds)
+    end
+    if (rec.liftsServed or 0) > 0 then parts[#parts + 1] = rec.liftsServed .. ' lift served' end
+    if (rec.liftsConverted or 0) > 0 then
+      parts[#parts + 1] = rec.liftsConverted .. ' lift converted'
+    end
+    if (rec.liftOwed or 0) > 0 then parts[#parts + 1] = rec.liftOwed .. ' lift owed' end
+    if (rec.cutLaps or 0) > 0 then
+      parts[#parts + 1] = rec.cutLaps .. ' cut lap' .. (rec.cutLaps == 1 and '' or 's')
+    end
+    return #parts > 0 and table.concat(parts, ', ') or '-'
   end
   local distance = raceDistance()
   -- A timed race's distance is the laps it ran; a lap race says so if cut short.
@@ -1921,11 +2059,32 @@ local function buildResultsText(cupRound)
         p.passer, p.passed, p.lap, p.underRed and ', under the red flag' or '',
         p.restored and 'given back' or 'NOT given back'))
     end
+    -- Laps handed back, so a lead-lap finish that was not all driven says so.
+    for _, c in ipairs(race.lapCredits) do
+      local cars = {}
+      for _, car in ipairs(c.cars) do
+        cars[#cars + 1] = string.format('%s +%d lap%s', car.name, car.laps,
+          car.laps == 1 and '' or 's')
+      end
+      add(string.format('   %s, caution %d: %s',
+        c.rule == 'laps back' and 'Laps back' or 'Free pass', c.caution,
+        table.concat(cars, ', ')))
+    end
   end
   add(string.format(' Regulations: resets %s | joker lap %s',
     race.maxResets < 0 and 'unlimited'
       or (race.maxResets == 0 and 'not allowed' or tostring(race.maxResets) .. ' per driver'),
     race.jokerEnabled and 'required exactly once' or 'disabled'))
+  -- The checkpoint skip rule, when it was on (a plain race exports as always).
+  if skipsOn then
+    local w = race.checkpointSkipWarningsAllowed
+    add(string.format(' Checkpoint skips: %s, then %s per skipped checkpoint%s',
+      w == 0 and 'no warnings' or (w .. ' warning' .. (w == 1 and '' or 's')),
+      race.skipCostText(1),
+      race.checkpointSkipPenaltyType ~= 'time' and string.format(
+        ' (lift within %ds or +%.1fs)', race.checkpointSkipLiftWindow,
+        race.checkpointSkipPenaltySeconds) or ''))
+  end
   if race.closedHow then add(' Ended: ' .. race.closedHow) end
   add('==================================================')
   add('')
@@ -1939,8 +2098,11 @@ local function buildResultsText(cupRound)
   add(string.format('%-5s %-22s %-10s %s', 'Pos', 'Driver', 'Best Lap', 'Laps'))
   for i, rec in ipairs(quali) do
     local tag = (i == 1 and rec.qualiBest) and '  << POLE POSITION' or ''
-    add(string.format('P%-4d %-22s %-10s %-5d%s%s',
-      i, displayName(rec), fmtLap(rec.qualiBest), rec.qualiLaps or 0, aliasNote(rec), tag))
+    -- Laps with a checkpoint skipped on them were run but not timed.
+    local cut = (rec.qualiCutLaps or 0) > 0
+      and string.format(' (%d cut, not timed)', rec.qualiCutLaps) or ''
+    add(string.format('P%-4d %-22s %-10s %-5d%s%s%s',
+      i, displayName(rec), fmtLap(rec.qualiBest), rec.qualiLaps or 0, cut, aliasNote(rec), tag))
   end
   if #quali == 0 then add('(no drivers)') end
   add('')
@@ -1955,11 +2117,13 @@ local function buildResultsText(cupRound)
     if rec.class then classed = true break end
   end
   local classCol = classed and string.format(' %-12s', 'Class') or ''
+  -- Last: its cells are as long as there is to say.
+  local skipCol = skipsOn and ' Track cuts' or ''
   -- 'Race Time' is padded only when a column follows it.
-  local tail = classCol .. jokerCol .. resetCol
+  local tail = classCol .. jokerCol .. resetCol .. skipCol
   add(string.format('%-5s %-6s %-22s %-10s %-9s %-5s %s%s',
     'Pos', 'Start', 'Driver', 'Best Lap', 'Laps Led', 'Laps',
-    tail ~= '' and string.format('%-10s', 'Race Time') or 'Race Time', tail))
+    tail ~= '' and string.format('%-' .. timeW .. 's', 'Race Time') or 'Race Time', tail))
   local awards = sessionAwards(final)
   for i, rec in ipairs(final) do
     local excluded   = rec.status == 'dsq'
@@ -1988,10 +2152,11 @@ local function buildResultsText(cupRound)
     local classVal = classed and string.format(' %-12s',
       rec.class and (rec.class .. (rec.classPos and (' P' .. rec.classPos) or ''))
         or '-') or ''
-    add(string.format('%-5s %-6s %-22s %-10s %-9d %-5d %-10s%s%s%s%s%s',
+    local skipVal = skipsOn and (' ' .. skipCell(rec)) or ''
+    add(string.format('%-5s %-6s %-22s %-10s %-9d %-5d %-' .. timeW .. 's%s%s%s%s%s%s',
       pos, rec.gridPos and ('P' .. rec.gridPos) or '-',
       displayName(rec), fmtLap(rec.raceBest), rec.lapsLed or 0, lapsRun(rec), finish,
-      classVal, jokerVal, resetVal, aliasNote(rec), tag))
+      classVal, jokerVal, resetVal, skipVal, aliasNote(rec), tag))
   end
   if #final == 0 then add('(no drivers)') end
   -- PER-CLASS RESULTS: a league running two classes publishes two results. The
@@ -2266,6 +2431,9 @@ local function retireDriver(rec, reason, atLine)
   -- The RESET ghost ends here. The finished ghost is derived from status by
   -- finishedRoster, not an event.
   clearGhost(rec.id, 'driver finished')
+  -- A lift still owed at the flag can no longer be served: it becomes time
+  -- NOW, before the place below is worked out, so it counts.
+  if race.sessionKind == 'race' then race.convertLift(rec, 'at the flag') end
   -- Their place: in a race, where the classification puts them (laps first,
   -- so not simply how many are home); in qualifying, the count home.
   local place = 0
@@ -2278,7 +2446,9 @@ local function retireDriver(rec, reason, atLine)
       if r.status == 'finished' then place = place + 1 end
     end
   end
-  forceSpectate(rec.id, reason, 'race', place)
+  -- With a penalty on this car's time, a car still out can finish inside it.
+  forceSpectate(rec.id, reason, 'race', place,
+    race.sessionKind == 'race' and (rec.penaltySeconds or 0) > 0)
   return true
 end
 
@@ -2312,6 +2482,9 @@ local function retireAsDnf(rec, reason)
   if not rec then return false end
   rec.status = 'dnf'
   rec.outReason = rec.outReason or reason
+  -- A lift owed is discarded: there is no race time for it to go on. Warnings
+  -- and penalty seconds stay, for the results.
+  rec.liftOwed, rec.liftDeadline, rec.liftWindowLeft = 0, nil, nil
   -- Where they were running, kept apart from where they classify.
   if rec.heldPos == nil then
     rec.heldPos = rec.position or rec.gridPos
@@ -2858,6 +3031,9 @@ formGrid = function (kind, byName)
       rec.currentLap, rec.lapsLed = 0, 0
       rec.dnfPos, rec.heldPos, rec.outReason = nil, nil, nil
       rec.splits, rec.splitLap, rec.splitCp = nil, nil, nil
+      -- ...and no penalty or lift from it on the board. (Qualifying's cut
+      -- laps stay, with the qualiBest they belong to.)
+      race.resetSkips(rec, false)
       progress.clear(rec)
       -- ...and a ghost both ways (finishedRoster covers the other way). A heat
       -- draw puts drivers here without anybody pressing anything.
@@ -2927,6 +3103,8 @@ formGrid = function (kind, byName)
     -- "This session" counters.
     rec.pitStops   = 0
     rec.ghosts     = 0
+    -- Checkpoint skips start over: warnings, penalties, lifts, cut laps.
+    race.resetSkips(rec, isQualiSession())
     -- A qualifying grid clears the times it replaces.
     if isQualiSession() then
       rec.qualiBest = nil
@@ -3562,6 +3740,19 @@ function RM_onSetLuckyDog(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
+-- The laps back rule. NOT idle-locked, like the free pass it covers: nothing
+-- changes until a caution's field is locked, and a marshal may decide mid-race.
+-- Set during a caution, it applies to that caution's field from the next lock,
+-- or at the latest at the restart.
+function RM_onSetLapsBack(pid, rawData)
+  local data = adminPayload(pid, rawData)
+  if not data then return end
+  race.lapsBack = data.enabled == true or data.enabled == 1
+  broadcastState()
+  print('[RaceManager] Laps back ' .. (race.lapsBack and 'ENABLED' or 'disabled')
+    .. ' by ' .. (MP.GetPlayerName(pid) or pid))
+end
+
 -- How the next caution freezes the order: 'line' (race back to it) or 'call'
 -- (where the field is when it is called). Not idle-locked, like the free pass,
 -- but REFUSED while a caution is out: the rule it was called under stands until
@@ -3662,6 +3853,7 @@ local function releaseField(pacing)
   race.cautionLapsTotal = 0
   race.cautionRulesUsed = {}
   race.cautionPasses    = {}
+  race.lapCredits       = {}
   thawOrder()
   race.time = 0.0
   -- The green is now, or stamped when it falls after a pace lap.
@@ -3690,6 +3882,7 @@ local function releaseField(pacing)
       rec.outReason  = nil
       rec.dnfPos     = nil
       rec.heldPos    = nil
+      race.resetSkips(rec, isQualiSession())
       if isQualiSession() then
         rec.qualiBest = nil
         rec.qualiLaps = 0
@@ -4065,6 +4258,40 @@ local function cautionLeader()
   return best
 end
 
+-- Credit `laps` to one locked car and move it to the TAIL of its new lap group
+-- (cautionSeq only grows, so the last stamp is the back). The client is told the
+-- lap it now owns (RM_LapCredit): RM_onProgress drops telemetry whose lap
+-- disagrees with the server's. Old checkpoint telemetry must not rank it either.
+--
+-- THE CAR WHOSE CROSSING CLOSED THE FIELD is still inside RM_onLap, usually a
+-- lapped car, since they are last back. That crossing advances its lap from the
+-- credited one and tells the client then (race.crossing): told here, the client
+-- would own a lap one short of the server's, and every report after it would
+-- be dropped. (The crossing used to overwrite the credit outright.)
+function race.creditCautionLaps(rec, laps, reason)
+  race.cautionSeq     = race.cautionSeq + 1
+  rec.cautionPos      = race.cautionSeq
+  rec.cautionDown     = rec.cautionDown - laps
+  rec.currentLap      = (rec.currentLap or 0) + laps
+  rec.cautionCredited = (rec.cautionCredited or 0) + laps
+  progress.clear(rec)
+  local crossing = race.crossing
+  if crossing and crossing.rec == rec then
+    crossing.laps, crossing.reason = crossing.laps + laps, reason
+    return
+  end
+  MP.TriggerClientEvent(rec.id, 'RM_LapCredit', Util.JsonEncode({
+    lap = rec.currentLap, laps = laps, reason = reason,
+  }))
+end
+
+-- The results file's record of one caution's credits.
+function race.noteLapCredits(rule, cars)
+  race.lapCredits[#race.lapCredits + 1] = {
+    caution = race.cautionCount, rule = rule, cars = cars,
+  }
+end
+
 -- THE FREE PASS: the highest-placed car a lap or more down (not the furthest
 -- back, which would always be the same slowest car) gets one lap and the TAIL of
 -- the lead lap. The client is told (RM_LapCredit): RM_onProgress drops telemetry
@@ -4074,16 +4301,9 @@ local function awardLuckyDog(why)
   local order = raceClassification()
   for _, rec in ipairs(order) do
     if onTrack(rec) and (rec.cautionDown or 0) >= 1 then
-      race.cautionSeq  = race.cautionSeq + 1
-      rec.cautionPos   = race.cautionSeq
-      rec.cautionDown  = rec.cautionDown - 1
-      rec.currentLap   = (rec.currentLap or 0) + 1
+      race.creditCautionLaps(rec, 1, 'luckydog')
       race.cautionLucky = rec.id
-      -- The lap moved: old checkpoint telemetry must not rank them.
-      progress.clear(rec)
-      MP.TriggerClientEvent(rec.id, 'RM_LapCredit', Util.JsonEncode({
-        lap = rec.currentLap, reason = 'luckydog',
-      }))
+      race.noteLapCredits('free pass', { { name = displayName(rec), laps = 1 } })
       MP.SendChatMessage(-1, string.format(
         '[RaceManager] FREE PASS: %s takes their lap back and restarts at the '
         .. 'tail of the lead lap.', displayName(rec)))
@@ -4095,9 +4315,51 @@ local function awardLuckyDog(why)
   return nil
 end
 
+-- LAPS BACK: EVERY car a lap or more down takes ALL its laps back and restarts
+-- at the tail of the lead lap. The lapped cars keep the order they locked in
+-- among themselves (one down ahead of two down, then first back first), so the
+-- rule changes which lap they are on, never who is ahead of whom.
+--
+-- No once-per-caution latch, unlike the free pass: a credited car is on the lead
+-- lap (cautionDown 0), so running this again only picks up a car that locked
+-- since, which is every lapped car, as the rule says.
+function race.awardLapsBack(why)
+  if not race.lapsBack or not race.caution then return nil end
+  local given = {}
+  for _, rec in ipairs(raceClassification()) do
+    if onTrack(rec) and (rec.cautionDown or 0) >= 1 then
+      given[#given + 1] = rec
+    end
+  end
+  if #given == 0 then return nil end
+  local cars, said = {}, {}
+  for _, rec in ipairs(given) do
+    local laps = rec.cautionDown
+    race.creditCautionLaps(rec, laps, 'lapsback')
+    cars[#cars + 1] = { name = displayName(rec), laps = laps }
+    said[#said + 1] = string.format('%s (+%d)', displayName(rec), laps)
+    print(string.format('[RaceManager] Laps back: %s +%d lap%s (%s)',
+      rec.name, laps, laps == 1 and '' or 's', why or 'field locked'))
+  end
+  race.noteLapCredits('laps back', cars)
+  MP.SendChatMessage(-1, string.format(
+    '[RaceManager] LAPS BACK: every lapped car takes its laps back and restarts '
+    .. 'at the tail of the lead lap: %s.', table.concat(said, ', ')))
+  return given
+end
+
+-- The caution's lap credits, whichever rule is on. Laps back covers the free
+-- pass (the first car a lap down is one of every lapped car), so with both on
+-- only laps back runs.
+local function awardLapCredits(why)
+  if race.lapsBack then return race.awardLapsBack(why) end
+  return awardLuckyDog(why)
+end
+
 -- Lock one driver's caution place at their own crossing, ONCE (the field keeps
--- crossing under yellow). `completed` is the lap just finished. The free pass is
--- awarded when the last car locks, so the board shows it before the green.
+-- crossing under yellow). `completed` is the lap just finished. The free pass, or
+-- laps back, is awarded when the last car locks, so the board shows it before
+-- the green.
 local function lockCaution(rec, completed)
   if not race.caution or rec.cautionPos then return end
   local down = (race.cautionLap or completed) - completed
@@ -4108,7 +4370,7 @@ local function lockCaution(rec, completed)
   for _, other in pairs(players) do
     if onTrack(other) and not other.cautionPos then return end
   end
-  awardLuckyDog('field locked')
+  awardLapCredits('field locked')
 end
 
 -- FROZEN AT THE CALL (cautionMode 'call'): the board as it stands this instant
@@ -4141,8 +4403,8 @@ function race.freezeAtCall(who, underRed)
       .. 'not count, and race control is told. By %s.', tostring(who)))
   print(string.format('[RaceManager] CAUTION #%d called by %s at %.1fs: frozen at the call',
     race.cautionCount, tostring(who), race.time))
-  -- The whole field is locked, so the free pass is decided now.
-  awardLuckyDog('field frozen at the call')
+  -- The whole field is locked, so the free pass (or laps back) is decided now.
+  awardLapCredits('field frozen at the call')
   broadcastState()
 end
 
@@ -4179,14 +4441,16 @@ end
 --     and two cars side by side swap places in them.
 --   * back behind (by any amount) is the place GIVEN BACK, and both are told.
 -- Cars a lap or more down are compared by race distance like everybody, so a
--- lead-lap car going by a backmarker on the road is no pass. The free pass car
--- is left out: it is meant to drop to the tail of the lead lap.
+-- lead-lap car going by a backmarker on the road is no pass. A car given laps
+-- back (the free pass, or laps back) is left out: it is meant to drop to the
+-- tail of the lead lap, and its race distance moved by whole laps it never drove.
 function race.checkCautionPasses()
   if not race.caution then return end
   local PASS_MARGIN, PASS_CONFIRM = 5.0, 1.0
   local field = {}
   for _, rec in pairs(players) do
-    if onTrack(rec) and rec.cautionPos and rec.id ~= race.cautionLucky then
+    if onTrack(rec) and rec.cautionPos and rec.id ~= race.cautionLucky
+        and not rec.cautionCredited then
       field[#field + 1] = rec
     end
   end
@@ -4255,8 +4519,8 @@ end
 local function restartRace(why)
   if not race.caution then return false end
   -- The fallback award: a car that never crossed again means the field never
-  -- fully locked, and the green must not cancel the pass.
-  awardLuckyDog('restart called before the field was fully locked')
+  -- fully locked, and the green must not cancel the pass (or the laps back).
+  awardLapCredits('restart called before the field was fully locked')
   -- A pass still not given back is kept from here on, because the board goes
   -- back to the road. Nothing here can take it away (there are no penalties to
   -- give), so race control hears about every one before the order thaws.
@@ -4537,6 +4801,7 @@ function RM_onResetLeaderboard(pid)
   race.cautionLapsTotal = 0
   race.cautionRulesUsed = {}
   race.cautionPasses    = {}
+  race.lapCredits       = {}
   thawOrder()
   -- The heat program goes with the evening (the records holding the draw are
   -- gone).
@@ -4653,6 +4918,20 @@ function RM_onLap(pid, rawData)
   local lapTime = decodeNumber(rawData, 'lapTime')
   -- The launch is not a lap time; the crossing still counts.
   if untimedFirstLap then lapTime = nil end
+  -- A CUT LAP (a checkpoint skipped on it) counts toward the distance, and its
+  -- time sets nothing: no best, no fastest lap, no qualifying time, so no lap
+  -- record. The client says so; a skip reported for this lap says so too.
+  if race.lapWasCut(rec, rawData) then
+    lapTime = nil
+    if quali then
+      rec.qualiCutLaps = (rec.qualiCutLaps or 0) + 1
+      MP.SendChatMessage(rec.id, '[RaceManager] Lap not timed: you skipped a checkpoint on it.')
+    else
+      rec.cutLaps = (rec.cutLaps or 0) + 1
+    end
+    print(string.format('[RaceManager] %s: lap %d was cut (time not counted)',
+      rec.name, rec.currentLap or 0))
+  end
   if lapTime and lapTime > 0 then
     if not rec.raceBest or lapTime < rec.raceBest then
       rec.raceBest = lapTime
@@ -4708,8 +4987,20 @@ function RM_onLap(pid, rawData)
         completed, rec.name))
     end
   end
-  -- This driver's caution place, once.
+  -- This driver's caution place, once. Locking the last car closes the field
+  -- and hands out laps (the free pass, laps back), possibly to THIS car: its
+  -- crossing then counts on from the credited lap, and its client is told the
+  -- lap it ends up on (race.creditCautionLaps).
+  race.crossing = { rec = rec, laps = 0 }
   lockCaution(rec, completed)
+  local credit = race.crossing
+  race.crossing = nil
+  if credit.laps > 0 then
+    completed = completed + credit.laps
+    MP.TriggerClientEvent(rec.id, 'RM_LapCredit', Util.JsonEncode({
+      lap = completed + 1, laps = credit.laps, reason = credit.reason,
+    }))
+  end
   -- The restart the distance watch missed (no slotCount, or no telemetry near
   -- the line): the leader's crossing is the backstop. cautionLeader, not
   -- ledThisLap (a lapped car claims lap numbers the front has not reached). Not
@@ -4797,6 +5088,259 @@ function RM_onLap(pid, rawData)
   broadcastState()
 end
 
+-- ---------------------------------------------------------------------------
+-- CHECKPOINT SKIPS: warnings, penalties and the lift-off
+-- ---------------------------------------------------------------------------
+-- The CLIENT sees a cut, because only it has the car: crossing a gate up to
+-- CFG.checkpointSkipMaxGates ahead of the one it is due moves it on past that
+-- gate and reports RM_CheckpointSkip. The SERVER rules on it: warnings first,
+-- then the admin's penalty. The ruling lands on the driver's own row, which the
+-- client reads for its HUD, as the blue flag and ucPassed do (no event of its
+-- own: a client binds its server events once per game session). Everything
+-- here hangs off `race`, for the locals ceiling.
+
+-- A half-second setting: clamped, rounded to 0.5, and a whole number written as
+-- one (config.json says 5, not 5.0).
+function race.halfStep(v, lo, hi)
+  if v ~= v then return lo end
+  if v < lo then v = lo elseif v > hi then v = hi end
+  v = math.floor(v * 2 + 0.5) / 2
+  if v == math.floor(v) then v = math.floor(v) end
+  return v
+end
+
+-- What `n` penalised skips cost, in words: '+5.0s', 'lift 3.0s', or both.
+function race.skipCostText(n)
+  n = n or 1
+  local timePart = string.format('+%.1fs', n * race.checkpointSkipPenaltySeconds)
+  local liftPart = n == 1 and string.format('lift %.1fs', race.checkpointSkipLiftSeconds)
+    or string.format('lift %d x %.1fs', n, race.checkpointSkipLiftSeconds)
+  if race.checkpointSkipPenaltyType == 'lift' then return liftPart end
+  if race.checkpointSkipPenaltyType == 'liftAndTime' then return timePart .. ' and ' .. liftPart end
+  return timePart
+end
+
+-- Was the lap this crossing completes cut? The client's flag on RM_Lap, or a
+-- skip reported on the lap. Never with the rule off, so a lap is scored
+-- exactly as it always was.
+function race.lapWasCut(rec, rawData)
+  if not race.enableCheckpointSkipPenalty then return false end
+  if rec.cutOnLap ~= nil and rec.cutOnLap == rec.currentLap then return true end
+  if type(rawData) ~= 'string' or rawData == '' then return false end
+  local ok, data = pcall(Util.JsonDecode, rawData)
+  return ok and type(data) == 'table' and (data.cut == true or data.cut == 1)
+end
+
+-- An owed lift that can no longer be served becomes time: the serve window ran
+-- out, or the car took the flag. Returns the seconds added.
+function race.convertLift(rec, why)
+  local n = rec.liftOwed or 0
+  if n <= 0 then return 0 end
+  local add = n * race.checkpointSkipPenaltySeconds
+  rec.penaltySeconds = (rec.penaltySeconds or 0) + add
+  rec.liftsConverted = (rec.liftsConverted or 0) + n
+  rec.liftOwed, rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = 0, nil, nil, nil
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Lift not served: +%.1fs penalty', add))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s lift converted to +%.1fs (%s)',
+    displayName(rec), add, why or 'not served'))
+  return add
+end
+
+-- THE SERVE WINDOW, from RM_Tick. It runs on GREEN-FLAG RUNNING only: under a
+-- caution, a caution called, a red or the pace lap it pauses, which is the
+-- deadline moving with the clock (as greenAt does under red). Expired, the lift
+-- becomes time. `liftWindowLeft` is the board's countdown.
+function race.skipTick(dt, paused)
+  if not race.enableCheckpointSkipPenalty or isQualiSession() then return end
+  local changed = false
+  for _, rec in pairs(players) do
+    if rec.liftDeadline and onTrack(rec) then
+      if paused then
+        rec.liftDeadline = rec.liftDeadline + dt
+      elseif race.time >= rec.liftDeadline then
+        race.convertLift(rec, 'the serve window ran out')
+        changed = true
+      end
+      if rec.liftDeadline then
+        rec.liftWindowLeft = math.floor(math.max(rec.liftDeadline - race.time, 0) * 10 + 0.5) / 10
+      end
+    end
+  end
+  if changed then broadcastState() end
+end
+
+-- A client crossed a gate ahead of the one it was due. Ruled on once per
+-- (lap, gate), on the server's own lap count, and only in a running race.
+function RM_onCheckpointSkip(pid, rawData)
+  if not race.enableCheckpointSkipPenalty or not sessionRunning() then return end
+  local rec = players[pidKey(pid) or -1]
+  if not onTrack(rec) then return end
+  if type(rawData) ~= 'string' or rawData == '' then return end
+  local ok, data = pcall(Util.JsonDecode, rawData)
+  if not ok or type(data) ~= 'table' then return end
+  local lap, to, skipped = tonumber(data.lap), tonumber(data.to), tonumber(data.skipped)
+  if not (lap and to and skipped) then return end
+  lap, to, skipped = math.floor(lap), math.floor(to), math.floor(skipped)
+  -- Another lap than the server's is a stale report (as RM_onProgress).
+  if lap ~= rec.currentLap then return end
+  if skipped < 1 or skipped > CFG.checkpointSkipMaxGates then return end
+  if to <= skipped or (race.slotCount > 0 and to > race.slotCount) then return end
+  -- One crossing, one ruling: a report sent twice costs once.
+  local key = string.format('%d:%d', lap, to)
+  rec.skipSeen = rec.skipSeen or {}
+  if rec.skipSeen[key] then return end
+  rec.skipSeen[key] = true
+  rec.cutOnLap = lap
+
+  local first, last = to - skipped, to - 1
+  local cps = first == last and ('CP ' .. first) or ('CPs ' .. first .. '-' .. last)
+  local racingLap = math.max(lap - (paceLapArmed() and 1 or 0), 1)
+  local name = displayName(rec)
+  -- Qualifying throws the lap time away (RM_onLap) and nothing else; nobody is
+  -- scored on a formation lap.
+  if isQualiSession() or race.pacing then
+    print(string.format('[RaceManager] %s skipped %s on lap %d: lap not timed, no penalty (%s)',
+      rec.name, cps, lap, isQualiSession() and 'qualifying' or 'pace lap'))
+    return
+  end
+
+  local remaining = math.max(0, race.checkpointSkipWarningsAllowed - (rec.checkpointWarningsUsed or 0))
+  local warn      = math.min(skipped, remaining)
+  local penalised = skipped - warn
+  rec.checkpointWarningsUsed = (rec.checkpointWarningsUsed or 0) + warn
+  rec.checkpointSkips        = (rec.checkpointSkips or 0) + skipped
+  local kind = race.checkpointSkipPenaltyType
+  local hasTime = kind == 'time' or kind == 'liftAndTime'
+  local hasLift = kind == 'lift' or kind == 'liftAndTime'
+  if penalised > 0 then
+    if hasTime then
+      rec.penaltySeconds = (rec.penaltySeconds or 0) + penalised * race.checkpointSkipPenaltySeconds
+    end
+    if hasLift then
+      -- The lift being served is timed from the first one owed.
+      if (rec.liftOwed or 0) <= 0 then rec.liftFrom = race.time end
+      rec.liftOwed     = (rec.liftOwed or 0) + penalised
+      rec.liftDeadline = race.time + race.checkpointSkipLiftWindow   -- restarts on each penalty
+      rec.liftWindowLeft = race.checkpointSkipLiftWindow
+    end
+  end
+
+  -- The driver's line (the HUD says the same, off the row), race control's,
+  -- and the console's.
+  local allowed = race.checkpointSkipWarningsAllowed
+  local msg
+  if penalised == 0 then
+    msg = string.format('Track Cut Warning (%d/%d) - next skip: %s',
+      rec.checkpointWarningsUsed, allowed, race.skipCostText(1))
+  elseif warn > 0 then
+    msg = string.format('Track Cut: last warning used, %s for %d more checkpoint%s',
+      race.skipCostText(penalised), penalised, penalised == 1 and '' or 's')
+  else
+    local head = penalised == 1 and 'Checkpoint skipped'
+      or (penalised .. ' checkpoints skipped')
+    local tail = allowed > 0 and ' (warnings used up)' or ''
+    if kind == 'lift' then
+      msg = string.format('%s: LIFT OFF THE THROTTLE for %s within %ds%s', head,
+        penalised == 1 and string.format('%.1fs', race.checkpointSkipLiftSeconds)
+          or string.format('%d x %.1fs', penalised, race.checkpointSkipLiftSeconds),
+        race.checkpointSkipLiftWindow, tail)
+    elseif kind == 'liftAndTime' then
+      msg = string.format('%s: +%.1fs and LIFT OFF for %s%s', head,
+        penalised * race.checkpointSkipPenaltySeconds,
+        penalised == 1 and string.format('%.1fs', race.checkpointSkipLiftSeconds)
+          or string.format('%d x %.1fs', penalised, race.checkpointSkipLiftSeconds), tail)
+    else
+      msg = string.format('%s: +%.1fs penalty%s', head,
+        penalised * race.checkpointSkipPenaltySeconds, tail)
+    end
+  end
+  MP.SendChatMessage(rec.id, '[RaceManager] ' .. msg)
+
+  local ruling = {}
+  if warn > 0 then
+    ruling[#ruling + 1] = string.format('warning %d/%d', rec.checkpointWarningsUsed, allowed)
+  end
+  if penalised > 0 and hasTime then
+    ruling[#ruling + 1] = string.format('+%.1fs', penalised * race.checkpointSkipPenaltySeconds)
+  end
+  if penalised > 0 and hasLift then
+    ruling[#ruling + 1] = penalised == 1
+      and string.format('lift %.1fs owed', race.checkpointSkipLiftSeconds)
+      or string.format('lift %d x %.1fs owed', penalised, race.checkpointSkipLiftSeconds)
+  end
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s skipped %s on lap %d: %s',
+    name, cps, racingLap, table.concat(ruling, ', ')))
+  broadcastState()
+end
+
+-- A client served one lift (liftSeconds off the throttle at racing speed under
+-- green). The client cannot be watched doing it, but it cannot have finished
+-- one sooner than that after it was owed: the client's countdown only pauses.
+function RM_onLiftServed(pid, rawData)
+  if not race.enableCheckpointSkipPenalty or not sessionRunning() or isQualiSession() then return end
+  local rec = players[pidKey(pid) or -1]
+  if not onTrack(rec) or (rec.liftOwed or 0) <= 0 then return end
+  if rec.liftFrom and race.time - rec.liftFrom < race.checkpointSkipLiftSeconds - 0.5 then
+    print(string.format('[RaceManager] %s: lift served %.1fs after it was owed, '
+      .. 'quicker than %.1fs: ignored', rec.name, race.time - rec.liftFrom,
+      race.checkpointSkipLiftSeconds))
+    return
+  end
+  rec.liftOwed    = rec.liftOwed - 1
+  rec.liftsServed = (rec.liftsServed or 0) + 1
+  if rec.liftOwed <= 0 then
+    rec.liftOwed = 0
+    rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = nil, nil, nil
+  else
+    -- The next one is timed from here.
+    rec.liftFrom = race.time
+  end
+  MP.SendChatMessage(rec.id, '[RaceManager] Lift served - carry on')
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s lift served%s',
+    displayName(rec), rec.liftOwed > 0 and string.format(' (%d more owed)', rec.liftOwed) or ''))
+  broadcastState()
+end
+
+-- The admin's rules for the next session, every field in one event. Locked
+-- while one is under way, like every rule that changes how a lap is scored. A
+-- field left out keeps its value; every value is clamped.
+function RM_onSetCheckpointSkip(pid, rawData)
+  if not requireAuth(pid) then return end
+  if sessionUnderWay() then
+    MP.SendChatMessage(pid, '[RaceManager] Checkpoint skip rules are locked while a session '
+      .. 'is running. Change them before the next one.')
+    broadcastState(pid)
+    return
+  end
+  local data = adminPayload(pid, rawData, true)
+  if not data then return end
+  if data.enabled ~= nil then
+    race.enableCheckpointSkipPenalty = data.enabled == true or data.enabled == 1
+  end
+  local n = tonumber(data.warnings)
+  if n and n == n then
+    race.checkpointSkipWarningsAllowed = math.min(math.max(math.floor(n), 0), 99)
+  end
+  if data.type == 'time' or data.type == 'lift' or data.type == 'liftAndTime' then
+    race.checkpointSkipPenaltyType = data.type
+  end
+  n = tonumber(data.penaltySec)
+  if n then race.checkpointSkipPenaltySeconds = race.halfStep(n, 0.5, 300) end
+  n = tonumber(data.liftSec)
+  if n then race.checkpointSkipLiftSeconds = race.halfStep(n, 0.5, 30) end
+  n = tonumber(data.liftWindow)
+  if n and n == n then
+    race.checkpointSkipLiftWindow = math.min(math.max(math.floor(n), 5), 300)
+  end
+  broadcastState()
+  print(string.format('[RaceManager] Checkpoint skips %s by %s: %d warning(s), then %s '
+    .. '(%.1fs, lift %.1fs within %ds)',
+    race.enableCheckpointSkipPenalty and 'ENABLED' or 'disabled',
+    tostring(MP.GetPlayerName(pid) or pid), race.checkpointSkipWarningsAllowed,
+    race.checkpointSkipPenaltyType, race.checkpointSkipPenaltySeconds,
+    race.checkpointSkipLiftSeconds, race.checkpointSkipLiftWindow))
+end
+
 -- Clear Results Cache: delete every saved results file. ADMIN ONLY (the
 -- league's only record, no undo); a race director's local copies are cleared on
 -- the client.
@@ -4838,6 +5382,48 @@ function RM_onSetResultsSave(pid, rawData)
   end
   -- Every admin's panel, so a second one does not show the old switches.
   for adminPid in pairs(authenticatedPlayers) do broadcastState(adminPid) end
+end
+
+-- ONLINE FEATURES: whether the server goes online by itself (update checks,
+-- Update and restart, Discord posts). Off as shipped, for the reason under
+-- Game hosts in the REFERENCE: on one host the startup update check cut the
+-- server off BeamMP's own login, every join was refused, and only config.json
+-- could turn it back off. So:
+--   * ADMIN ONLY, as installing an update is, and the panel asks first, saying
+--     why. Written to config.json, so it survives a restart.
+--   * Switching it ON reaches nothing by itself. The network is next used by an
+--     admin's Check now or login, a Discord post as a session closes, or the
+--     check at the next start.
+--   * Switching it OFF is refused only while an update is under way, which is
+--     using the network until it is done or stopped. A Discord post queued
+--     behind it is dropped (discord.lua), and a check still waiting to start
+--     refuses itself (update.lua, M.online).
+function RM_onSetOnlineFeatures(pid, rawData)
+  if not auth.requireFull(pid) then return end
+  local data = adminPayload(pid, rawData)
+  if not data or type(data.on) ~= 'boolean' then return end
+  local function pushAdmins()
+    for adminPid in pairs(authenticatedPlayers) do broadcastState(adminPid) end
+  end
+  if data.on == (CFG.onlineFeatures == true) then return pushAdmins() end
+  if not data.on and race.updateBusy and race.updateBusy() then
+    MP.SendChatMessage(pid, '[RaceManager] Not while an update is under way: it is '
+      .. 'using the network until it is done. Stop it on the Updates row first.')
+    return pushAdmins()
+  end
+  CFG.onlineFeatures = data.on
+  local kept = saveConfigToDisk()
+  local who = tostring(MP.GetPlayerName(pid) or pid)
+  race.tellRaceControl(data.on
+    and string.format('[RaceManager] Online features turned ON by %s: update checks, '
+      .. 'Update and restart and Discord posts can now reach the internet. If players '
+      .. 'start being kicked with "Invalid key", set onlineFeatures to false in '
+      .. 'config.json and restart the server.%s', who,
+      kept and '' or ' (config.json could not be written: it reverts on restart)')
+    or string.format('[RaceManager] Online features turned OFF by %s: the server no '
+      .. 'longer goes online by itself.%s', who,
+      kept and '' or ' (config.json could not be written: it reverts on restart)'))
+  pushAdmins()
 end
 
 -- A client asks for state (the app opened, or it just joined).
@@ -5264,9 +5850,23 @@ local function applyConfigTable(data)
   num('paceGreenFar', 0.5, 1000)
   num('paceArmAt', 20, 1000)
   bool('luckyDog')
+  bool('lapsBack')
   str('cautionMode', { line = true, call = true })
   -- 0 means a heat runs the race distance.
   num('heatLaps', 0, CFG.maxTotalLaps)
+  bool('enableCheckpointSkipPenalty')
+  num('checkpointSkipWarningsAllowed', 0, 99)
+  str('checkpointSkipPenaltyType', { time = true, lift = true, liftAndTime = true })
+  num('checkpointSkipPenaltySeconds', 0.5, 300)
+  num('checkpointSkipLiftSeconds', 0.5, 30)
+  num('checkpointSkipLiftWindow', 5, 300)
+  num('checkpointSkipMaxGates', 1, 5)
+  -- Whole numbers where a count is meant, and half seconds where a time is.
+  CFG.checkpointSkipWarningsAllowed = math.floor(CFG.checkpointSkipWarningsAllowed)
+  CFG.checkpointSkipLiftWindow      = math.floor(CFG.checkpointSkipLiftWindow)
+  CFG.checkpointSkipMaxGates        = math.floor(CFG.checkpointSkipMaxGates)
+  CFG.checkpointSkipPenaltySeconds  = race.halfStep(CFG.checkpointSkipPenaltySeconds, 0.5, 300)
+  CFG.checkpointSkipLiftSeconds     = race.halfStep(CFG.checkpointSkipLiftSeconds, 0.5, 30)
   num('blueFlagWithin', 0.2, 60)
   num('blueFlagClear', 0.2, 120)
   num('qualiLapLimit', 0, CFG.maxQualiLaps)
@@ -5355,8 +5955,16 @@ local function configFileText()
     paceGreenFar   = CFG.paceGreenFar,
     paceArmAt      = CFG.paceArmAt,
     luckyDog       = CFG.luckyDog,
+    lapsBack       = CFG.lapsBack,
     cautionMode    = CFG.cautionMode,
     heatLaps       = CFG.heatLaps,
+    enableCheckpointSkipPenalty   = CFG.enableCheckpointSkipPenalty,
+    checkpointSkipWarningsAllowed = CFG.checkpointSkipWarningsAllowed,
+    checkpointSkipPenaltyType     = CFG.checkpointSkipPenaltyType,
+    checkpointSkipPenaltySeconds  = CFG.checkpointSkipPenaltySeconds,
+    checkpointSkipLiftSeconds     = CFG.checkpointSkipLiftSeconds,
+    checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow,
+    checkpointSkipMaxGates        = CFG.checkpointSkipMaxGates,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
     qualiLapLimit  = CFG.qualiLapLimit,
@@ -5404,8 +6012,15 @@ local function applyConfigToRace()
   race.finishTimer    = math.floor(CFG.finishTimer)
   race.paceLap        = CFG.paceLap
   race.luckyDog       = CFG.luckyDog
+  race.lapsBack       = CFG.lapsBack
   race.cautionMode    = CFG.cautionMode
   race.heatLaps       = CFG.heatLaps
+  race.enableCheckpointSkipPenalty   = CFG.enableCheckpointSkipPenalty
+  race.checkpointSkipWarningsAllowed = CFG.checkpointSkipWarningsAllowed
+  race.checkpointSkipPenaltyType     = CFG.checkpointSkipPenaltyType
+  race.checkpointSkipPenaltySeconds  = CFG.checkpointSkipPenaltySeconds
+  race.checkpointSkipLiftSeconds     = CFG.checkpointSkipLiftSeconds
+  race.checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
   race.readyCheck     = CFG.readyCheck
@@ -9207,6 +9822,8 @@ function RM_Tick()
     race.greenAt = race.greenAt + dt
     if race.raceExpiredAt then race.raceExpiredAt = race.raceExpiredAt + dt end
     if race.closeAt then race.closeAt = race.closeAt + dt end
+    -- A lift's serve window stops with them.
+    race.skipTick(dt, true)
     tickCounter = tickCounter + 1
     if tickCounter >= CFG.pushEveryTicks then
       tickCounter = 0
@@ -9281,6 +9898,8 @@ function RM_Tick()
       print('[RaceManager] Timed race: no lead-lap crossing within the grace, flag out')
     end
   end
+  -- Owed lifts: the serve window runs on green-flag running only.
+  race.skipTick(dt, race.caution or race.cautionPending or race.pacing)
   -- The pace lap: watch the leader home and drop the green. Every tick (ten
   -- metres is under half a second at pace), and a scan, not a sort.
   if race.pacing then paceLapWatch() end
@@ -9420,6 +10039,10 @@ function onInit()
   -- Module 1: vehicle reset ruleset + forced spectator reports
   MP.RegisterEvent('RM_SetMaxResets',     'RM_onSetMaxResets')
   MP.RegisterEvent('RM_SetResetMode',     'RM_onSetResetMode')
+  -- Checkpoint skips: the rules, a skip reported, a lift served.
+  MP.RegisterEvent('RM_SetCheckpointSkip', 'RM_onSetCheckpointSkip')
+  MP.RegisterEvent('RM_CheckpointSkip',    'RM_onCheckpointSkip')
+  MP.RegisterEvent('RM_LiftServed',        'RM_onLiftServed')
   MP.RegisterEvent('RM_VehicleReset',     'RM_onVehicleReset')
   MP.RegisterEvent('RM_ResetDenied',      'RM_onResetDenied')
   -- Reset ghosting
@@ -9453,6 +10076,7 @@ function onInit()
   MP.RegisterEvent('RM_Restart',          'RM_onRestart')
   MP.RegisterEvent('RM_CancelRestart',    'RM_onCancelRestart')  -- wave the restart off
   MP.RegisterEvent('RM_SetLuckyDog',      'RM_onSetLuckyDog')    -- the free pass rule
+  MP.RegisterEvent('RM_SetLapsBack',      'RM_onSetLapsBack')    -- every lapped car's laps back
   MP.RegisterEvent('RM_SetCautionMode',   'RM_onSetCautionMode') -- race back, or freeze at the call
   MP.RegisterEvent('RM_SetHeats',         'RM_onSetHeats')       -- Module 6
   MP.RegisterEvent('RM_DrawHeats',        'RM_onDrawHeats')
@@ -9461,6 +10085,7 @@ function onInit()
   MP.RegisterEvent('RM_ResetLeaderboard', 'RM_onResetLeaderboard')
   MP.RegisterEvent('RM_ClearResults',     'RM_onClearResults')
   MP.RegisterEvent('RM_SetResultsSave',   'RM_onSetResultsSave')
+  MP.RegisterEvent('RM_SetOnlineFeatures', 'RM_onSetOnlineFeatures')
   MP.RegisterEvent('RM_Lap',              'RM_onLap')
   MP.RegisterEvent('RM_Progress',         'RM_onProgress')  -- live position telemetry
   MP.RegisterEvent('RM_RequestState',     'RM_onRequestState')

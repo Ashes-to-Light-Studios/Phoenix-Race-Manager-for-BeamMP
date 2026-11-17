@@ -116,6 +116,7 @@ angular.module('beamng.apps')
       $scope.restartPending = false;
       // The free pass: the rule, and the driver who took it this caution.
       $scope.luckyDog = false;
+      $scope.lapsBack = false;
       $scope.cautionLucky = null;
       // How a caution freezes the order: 'line' (race back to it) or 'call'
       // (where the field is when it is called).
@@ -1528,7 +1529,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.25.0';
+      var APP_BUILD = '0.26.0';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -2161,6 +2162,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.cautionPending = !!data.cautionPending;
           $scope.restartPending = !!data.restartPending;
           $scope.luckyDog = !!data.luckyDog;
+          $scope.lapsBack = !!data.lapsBack;
           $scope.cautionLucky = data.cautionLucky || null;
           $scope.cautionMode = data.cautionMode === 'call' ? 'call' : 'line';
           // THROUGH toArray: nil while there are none, {} if Lua sends it empty.
@@ -2269,6 +2271,11 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           // And where results go (Save results).
           if (data.resultsSave && typeof data.resultsSave === 'object') {
             $scope.resultsSave = data.resultsSave;
+          }
+          // And whether the server goes online by itself (Online features).
+          if (data.onlineFeatures && typeof data.onlineFeatures === 'object') {
+            $scope.onlineFeatures = data.onlineFeatures;
+            if (data.onlineFeatures.on) { $scope.onlineUi.confirm = false; }
           }
           // The same: a newer release, and an update under way.
           if (data.prmUpdate && typeof data.prmUpdate === 'object') {
@@ -4245,6 +4252,30 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         bngApi.engineLua('raceManager.setResultsSave(' + luaStr(which) + ', '
           + (!$scope.resultsSave[which]) + ')');
       };
+      // Online features: does the server go online by itself (update checks,
+      // Update and restart, Discord posts). { on }. Off as shipped. Turning it
+      // ON asks first: on some game hosts going online cut the server off
+      // BeamMP's own login. Turning it off needs no question. The admin tier's,
+      // as installing an update is; an older server never sends it, and there
+      // the row stays hidden.
+      $scope.onlineFeatures = null;
+      $scope.onlineUi = { confirm: false };
+      $scope.onlineAsk = function () {
+        if ($scope.isFullAdmin()) { $scope.onlineUi.confirm = true; }
+      };
+      $scope.onlineAskCancel = function () { $scope.onlineUi.confirm = false; };
+      $scope.setOnlineFeatures = function (on) {
+        $scope.onlineUi.confirm = false;
+        if (!$scope.onlineFeatures || !$scope.isFullAdmin()) { return; }
+        bngApi.engineLua('raceManager.setOnlineFeatures(' + (on === true) + ')');
+      };
+      $scope.onlineFeaturesText = function () {
+        var o = $scope.onlineFeatures;
+        if (!o) { return ''; }
+        return o.on
+          ? 'On: update checks, Update and restart and Discord posts can reach the internet.'
+          : 'Off: the server never goes online by itself.';
+      };
       $scope.resultsSaveText = function () {
         var s = $scope.resultsSave;
         if (!s) { return ''; }
@@ -4742,6 +4773,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // The free pass rule, for the next caution called.
       $scope.toggleLuckyDog = function () {
         bngApi.engineLua('raceManager.setLuckyDog(' + (!$scope.luckyDog) + ')');
+      };
+      // Laps back: every lapped car, every caution. Covers the free pass.
+      $scope.toggleLapsBack = function () {
+        bngApi.engineLua('raceManager.setLapsBack(' + (!$scope.lapsBack) + ')');
       };
       // Only while a race runs (nothing to neutralise before the lights, no order
       // in qualifying).

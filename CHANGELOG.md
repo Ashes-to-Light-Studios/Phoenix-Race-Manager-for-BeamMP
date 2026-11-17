@@ -6,6 +6,38 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.26.0 - Laps back, and online features from the Admin tab
+
+#### Added
+
+- **Laps back.** A new caution rule in Race settings, beside the free pass and
+  off unless you turn it on. Under a caution, **every** lapped car takes **all**
+  of its laps back and restarts at the tail of the lead lap: a car two laps down
+  gets two. The lapped cars keep the order they locked in among themselves, so
+  the rule changes which lap they are on, never who is ahead of whom. It covers
+  the free pass, so with both on only laps back runs. The field is told who got
+  how many, credited cars are never reported for passing under caution on their
+  way to the tail, and the results file lists every lap handed back (free pass
+  included), so a lead-lap finish that was not all driven says so. Set the
+  server default with `"lapsBack": true` in `config.json`. See
+  [Laps back](docs/REFERENCE.md#laps-back).
+- **Online features on the Admin tab.** `onlineFeatures` (update checks,
+  **Update and restart** and Discord posts) can now be turned on and off from
+  the **Online features** row, not only in `config.json`. It is still off as
+  shipped. Changing it needs the admin password, turning it on asks first and
+  says why (some game hosts cut a server off the internet when it goes online by
+  itself), and turning it on reaches nothing by itself. It is saved to
+  `config.json`. See [Online features](docs/REFERENCE.md#online-features).
+
+#### Fixed
+
+- **The free pass was lost when the lapped car closed the field.** Racing back
+  to the line, the free pass is handed out as the last car locks, and that is
+  usually the lapped car itself. Its own crossing then set its lap from the lap
+  it had just completed, which threw the credit away: the driver was told FREE
+  PASS and stayed a lap down. The crossing now counts on from the credited lap,
+  and the driver's client is told the lap it ends on.
+
 ## 0.25.0 - Checkpoint skip warnings and penalties
 
 #### Added

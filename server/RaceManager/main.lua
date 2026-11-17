@@ -70,6 +70,9 @@ local CFG = {
   -- THE FREE PASS ("lucky dog"): the highest-placed lapped car gets its lap back
   -- before the restart. Off by default, like every scoring rule.
   luckyDog      = false,
+  -- LAPS BACK: under a caution EVERY lapped car takes all its laps back and
+  -- restarts at the tail of the lead lap. Covers the free pass. Off by default.
+  lapsBack      = false,
   -- HOW A CAUTION FREEZES THE ORDER. 'line': the field races back to the line
   -- and each car locks as it completes the leader's lap. 'call': frozen where
   -- the field is the moment Caution is pressed, for leagues that do not race
@@ -143,9 +146,10 @@ local CFG = {
   mapVotePercent  = 60,      -- share of everyone connected who must vote yes
 
   -- THE SERVER GOES ONLINE BY ITSELF only with this on: update checks, Update
-  -- and restart, Discord posts. Off as shipped and config.json only, never the
-  -- panel: a game host cut a server off the internet after its startup update
-  -- check, BeamMP's player login included, and nothing tells such a host apart.
+  -- and restart, Discord posts. Off as shipped: a game host cut a server off the
+  -- internet after its startup update check, BeamMP's player login included, and
+  -- nothing tells such a host apart. The Admin panel's Online features row sets
+  -- it too (admin tier, asks first, saved here): RM_onSetOnlineFeatures.
   onlineFeatures  = false,
   -- Updates from GitHub. See update.lua. false never contacts GitHub at all.
   updateCheck     = true,
@@ -212,6 +216,8 @@ local race = {
   -- (ONE per caution).
   luckyDog     = CFG.luckyDog,
   cautionLucky = nil,
+  -- Laps back: the admin's switch. Every lapped car, every caution.
+  lapsBack     = CFG.lapsBack,
   -- 'line' or 'call' (CFG.cautionMode). Fixed for a caution once it is out.
   cautionMode  = CFG.cautionMode,
   -- Laps run under every caution this race, for the results file (cautionLaps
@@ -235,6 +241,11 @@ local race = {
   -- { lap, at, passer, passerId, passed, passedId, restored }. On the board
   -- for race control, and in the results file.
   cautionPasses = {},
+  -- Laps handed back under a caution this race, free pass and laps back alike:
+  -- { caution, rule = 'free pass' | 'laps back', cars = { { name, laps } } }.
+  -- For the results file: a car that finished on the lead lap may not have
+  -- driven every lap of it.
+  lapCredits = {},
   -- A restart called and not yet taken: the LEADER decides when, as they come
   -- back to the line. Cancellable until the green falls.
   restartPending = false,
@@ -377,6 +388,8 @@ local players = {}          -- [playerID] = per-player record
 local function thawOrder()
   for _, rec in pairs(players) do
     rec.cautionPos, rec.cautionDown = nil, nil
+    -- Laps credited under this caution (the pass watch leaves the car out).
+    rec.cautionCredited = nil
     -- The pass watch belongs to the caution too (race.checkCautionPasses).
     rec.ucSeen, rec.ucPass, rec.ucPassed = nil, nil, nil
   end
@@ -488,8 +501,8 @@ function auth.requireFull(pid)
     .. (MP.GetPlayerName(pid) or tostring(pid)))
   MP.TriggerClientEvent(pid, 'RM_Denied', Util.JsonEncode({
     reason = 'That needs the admin password: a moderator cannot change '
-      .. 'passwords, choose where results are saved, clear the results or lap '
-      .. 'records, or delete a layout.',
+      .. 'passwords, choose where results are saved, turn online features on '
+      .. 'or off, clear the results or lap records, or delete a layout.',
   }))
   return false
 end
@@ -1228,7 +1241,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.25.0'
+local RM_BUILD = '0.26.0'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -1375,6 +1388,7 @@ local function broadcastState(targetPid)
     restartPending = race.restartPending,
     -- The free pass rule, and who has it this caution.
     luckyDog     = race.luckyDog,
+    lapsBack     = race.lapsBack,
     cautionMode  = race.cautionMode,
     -- Passes under caution this race, for race control. nil while there are
     -- none, so a clean race sends nothing.
@@ -1464,6 +1478,8 @@ local function broadcastState(targetPid)
     -- Admin sends only: where a closing session's results go (Save results).
     resultsSave  = selfAdmin and { server = CFG.saveResultsOnServer == true,
       admins = CFG.copyResultsToAdmins == true } or nil,
+    -- Admin sends only: does the server go online by itself (Online features).
+    onlineFeatures = selfAdmin and { on = CFG.onlineFeatures == true } or nil,
     -- Admin sends only: is a newer release out, and an update under way.
     prmUpdate    = selfAdmin and race.updateSnapshot and race.updateSnapshot(targetPid) or nil,
     -- Admin sends only: the Discord add-on, never its webhook URL.
@@ -2042,6 +2058,17 @@ local function buildResultsText(cupRound)
       add(string.format('   Passed under caution: %s on %s, lap %d%s (%s)',
         p.passer, p.passed, p.lap, p.underRed and ', under the red flag' or '',
         p.restored and 'given back' or 'NOT given back'))
+    end
+    -- Laps handed back, so a lead-lap finish that was not all driven says so.
+    for _, c in ipairs(race.lapCredits) do
+      local cars = {}
+      for _, car in ipairs(c.cars) do
+        cars[#cars + 1] = string.format('%s +%d lap%s', car.name, car.laps,
+          car.laps == 1 and '' or 's')
+      end
+      add(string.format('   %s, caution %d: %s',
+        c.rule == 'laps back' and 'Laps back' or 'Free pass', c.caution,
+        table.concat(cars, ', ')))
     end
   end
   add(string.format(' Regulations: resets %s | joker lap %s',
@@ -3713,6 +3740,19 @@ function RM_onSetLuckyDog(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
+-- The laps back rule. NOT idle-locked, like the free pass it covers: nothing
+-- changes until a caution's field is locked, and a marshal may decide mid-race.
+-- Set during a caution, it applies to that caution's field from the next lock,
+-- or at the latest at the restart.
+function RM_onSetLapsBack(pid, rawData)
+  local data = adminPayload(pid, rawData)
+  if not data then return end
+  race.lapsBack = data.enabled == true or data.enabled == 1
+  broadcastState()
+  print('[RaceManager] Laps back ' .. (race.lapsBack and 'ENABLED' or 'disabled')
+    .. ' by ' .. (MP.GetPlayerName(pid) or pid))
+end
+
 -- How the next caution freezes the order: 'line' (race back to it) or 'call'
 -- (where the field is when it is called). Not idle-locked, like the free pass,
 -- but REFUSED while a caution is out: the rule it was called under stands until
@@ -3813,6 +3853,7 @@ local function releaseField(pacing)
   race.cautionLapsTotal = 0
   race.cautionRulesUsed = {}
   race.cautionPasses    = {}
+  race.lapCredits       = {}
   thawOrder()
   race.time = 0.0
   -- The green is now, or stamped when it falls after a pace lap.
@@ -4217,6 +4258,40 @@ local function cautionLeader()
   return best
 end
 
+-- Credit `laps` to one locked car and move it to the TAIL of its new lap group
+-- (cautionSeq only grows, so the last stamp is the back). The client is told the
+-- lap it now owns (RM_LapCredit): RM_onProgress drops telemetry whose lap
+-- disagrees with the server's. Old checkpoint telemetry must not rank it either.
+--
+-- THE CAR WHOSE CROSSING CLOSED THE FIELD is still inside RM_onLap, usually a
+-- lapped car, since they are last back. That crossing advances its lap from the
+-- credited one and tells the client then (race.crossing): told here, the client
+-- would own a lap one short of the server's, and every report after it would
+-- be dropped. (The crossing used to overwrite the credit outright.)
+function race.creditCautionLaps(rec, laps, reason)
+  race.cautionSeq     = race.cautionSeq + 1
+  rec.cautionPos      = race.cautionSeq
+  rec.cautionDown     = rec.cautionDown - laps
+  rec.currentLap      = (rec.currentLap or 0) + laps
+  rec.cautionCredited = (rec.cautionCredited or 0) + laps
+  progress.clear(rec)
+  local crossing = race.crossing
+  if crossing and crossing.rec == rec then
+    crossing.laps, crossing.reason = crossing.laps + laps, reason
+    return
+  end
+  MP.TriggerClientEvent(rec.id, 'RM_LapCredit', Util.JsonEncode({
+    lap = rec.currentLap, laps = laps, reason = reason,
+  }))
+end
+
+-- The results file's record of one caution's credits.
+function race.noteLapCredits(rule, cars)
+  race.lapCredits[#race.lapCredits + 1] = {
+    caution = race.cautionCount, rule = rule, cars = cars,
+  }
+end
+
 -- THE FREE PASS: the highest-placed car a lap or more down (not the furthest
 -- back, which would always be the same slowest car) gets one lap and the TAIL of
 -- the lead lap. The client is told (RM_LapCredit): RM_onProgress drops telemetry
@@ -4226,16 +4301,9 @@ local function awardLuckyDog(why)
   local order = raceClassification()
   for _, rec in ipairs(order) do
     if onTrack(rec) and (rec.cautionDown or 0) >= 1 then
-      race.cautionSeq  = race.cautionSeq + 1
-      rec.cautionPos   = race.cautionSeq
-      rec.cautionDown  = rec.cautionDown - 1
-      rec.currentLap   = (rec.currentLap or 0) + 1
+      race.creditCautionLaps(rec, 1, 'luckydog')
       race.cautionLucky = rec.id
-      -- The lap moved: old checkpoint telemetry must not rank them.
-      progress.clear(rec)
-      MP.TriggerClientEvent(rec.id, 'RM_LapCredit', Util.JsonEncode({
-        lap = rec.currentLap, reason = 'luckydog',
-      }))
+      race.noteLapCredits('free pass', { { name = displayName(rec), laps = 1 } })
       MP.SendChatMessage(-1, string.format(
         '[RaceManager] FREE PASS: %s takes their lap back and restarts at the '
         .. 'tail of the lead lap.', displayName(rec)))
@@ -4247,9 +4315,51 @@ local function awardLuckyDog(why)
   return nil
 end
 
+-- LAPS BACK: EVERY car a lap or more down takes ALL its laps back and restarts
+-- at the tail of the lead lap. The lapped cars keep the order they locked in
+-- among themselves (one down ahead of two down, then first back first), so the
+-- rule changes which lap they are on, never who is ahead of whom.
+--
+-- No once-per-caution latch, unlike the free pass: a credited car is on the lead
+-- lap (cautionDown 0), so running this again only picks up a car that locked
+-- since, which is every lapped car, as the rule says.
+function race.awardLapsBack(why)
+  if not race.lapsBack or not race.caution then return nil end
+  local given = {}
+  for _, rec in ipairs(raceClassification()) do
+    if onTrack(rec) and (rec.cautionDown or 0) >= 1 then
+      given[#given + 1] = rec
+    end
+  end
+  if #given == 0 then return nil end
+  local cars, said = {}, {}
+  for _, rec in ipairs(given) do
+    local laps = rec.cautionDown
+    race.creditCautionLaps(rec, laps, 'lapsback')
+    cars[#cars + 1] = { name = displayName(rec), laps = laps }
+    said[#said + 1] = string.format('%s (+%d)', displayName(rec), laps)
+    print(string.format('[RaceManager] Laps back: %s +%d lap%s (%s)',
+      rec.name, laps, laps == 1 and '' or 's', why or 'field locked'))
+  end
+  race.noteLapCredits('laps back', cars)
+  MP.SendChatMessage(-1, string.format(
+    '[RaceManager] LAPS BACK: every lapped car takes its laps back and restarts '
+    .. 'at the tail of the lead lap: %s.', table.concat(said, ', ')))
+  return given
+end
+
+-- The caution's lap credits, whichever rule is on. Laps back covers the free
+-- pass (the first car a lap down is one of every lapped car), so with both on
+-- only laps back runs.
+local function awardLapCredits(why)
+  if race.lapsBack then return race.awardLapsBack(why) end
+  return awardLuckyDog(why)
+end
+
 -- Lock one driver's caution place at their own crossing, ONCE (the field keeps
--- crossing under yellow). `completed` is the lap just finished. The free pass is
--- awarded when the last car locks, so the board shows it before the green.
+-- crossing under yellow). `completed` is the lap just finished. The free pass, or
+-- laps back, is awarded when the last car locks, so the board shows it before
+-- the green.
 local function lockCaution(rec, completed)
   if not race.caution or rec.cautionPos then return end
   local down = (race.cautionLap or completed) - completed
@@ -4260,7 +4370,7 @@ local function lockCaution(rec, completed)
   for _, other in pairs(players) do
     if onTrack(other) and not other.cautionPos then return end
   end
-  awardLuckyDog('field locked')
+  awardLapCredits('field locked')
 end
 
 -- FROZEN AT THE CALL (cautionMode 'call'): the board as it stands this instant
@@ -4293,8 +4403,8 @@ function race.freezeAtCall(who, underRed)
       .. 'not count, and race control is told. By %s.', tostring(who)))
   print(string.format('[RaceManager] CAUTION #%d called by %s at %.1fs: frozen at the call',
     race.cautionCount, tostring(who), race.time))
-  -- The whole field is locked, so the free pass is decided now.
-  awardLuckyDog('field frozen at the call')
+  -- The whole field is locked, so the free pass (or laps back) is decided now.
+  awardLapCredits('field frozen at the call')
   broadcastState()
 end
 
@@ -4331,14 +4441,16 @@ end
 --     and two cars side by side swap places in them.
 --   * back behind (by any amount) is the place GIVEN BACK, and both are told.
 -- Cars a lap or more down are compared by race distance like everybody, so a
--- lead-lap car going by a backmarker on the road is no pass. The free pass car
--- is left out: it is meant to drop to the tail of the lead lap.
+-- lead-lap car going by a backmarker on the road is no pass. A car given laps
+-- back (the free pass, or laps back) is left out: it is meant to drop to the
+-- tail of the lead lap, and its race distance moved by whole laps it never drove.
 function race.checkCautionPasses()
   if not race.caution then return end
   local PASS_MARGIN, PASS_CONFIRM = 5.0, 1.0
   local field = {}
   for _, rec in pairs(players) do
-    if onTrack(rec) and rec.cautionPos and rec.id ~= race.cautionLucky then
+    if onTrack(rec) and rec.cautionPos and rec.id ~= race.cautionLucky
+        and not rec.cautionCredited then
       field[#field + 1] = rec
     end
   end
@@ -4407,8 +4519,8 @@ end
 local function restartRace(why)
   if not race.caution then return false end
   -- The fallback award: a car that never crossed again means the field never
-  -- fully locked, and the green must not cancel the pass.
-  awardLuckyDog('restart called before the field was fully locked')
+  -- fully locked, and the green must not cancel the pass (or the laps back).
+  awardLapCredits('restart called before the field was fully locked')
   -- A pass still not given back is kept from here on, because the board goes
   -- back to the road. Nothing here can take it away (there are no penalties to
   -- give), so race control hears about every one before the order thaws.
@@ -4689,6 +4801,7 @@ function RM_onResetLeaderboard(pid)
   race.cautionLapsTotal = 0
   race.cautionRulesUsed = {}
   race.cautionPasses    = {}
+  race.lapCredits       = {}
   thawOrder()
   -- The heat program goes with the evening (the records holding the draw are
   -- gone).
@@ -4874,8 +4987,20 @@ function RM_onLap(pid, rawData)
         completed, rec.name))
     end
   end
-  -- This driver's caution place, once.
+  -- This driver's caution place, once. Locking the last car closes the field
+  -- and hands out laps (the free pass, laps back), possibly to THIS car: its
+  -- crossing then counts on from the credited lap, and its client is told the
+  -- lap it ends up on (race.creditCautionLaps).
+  race.crossing = { rec = rec, laps = 0 }
   lockCaution(rec, completed)
+  local credit = race.crossing
+  race.crossing = nil
+  if credit.laps > 0 then
+    completed = completed + credit.laps
+    MP.TriggerClientEvent(rec.id, 'RM_LapCredit', Util.JsonEncode({
+      lap = completed + 1, laps = credit.laps, reason = credit.reason,
+    }))
+  end
   -- The restart the distance watch missed (no slotCount, or no telemetry near
   -- the line): the leader's crossing is the backstop. cautionLeader, not
   -- ledThisLap (a lapped car claims lap numbers the front has not reached). Not
@@ -5257,6 +5382,48 @@ function RM_onSetResultsSave(pid, rawData)
   end
   -- Every admin's panel, so a second one does not show the old switches.
   for adminPid in pairs(authenticatedPlayers) do broadcastState(adminPid) end
+end
+
+-- ONLINE FEATURES: whether the server goes online by itself (update checks,
+-- Update and restart, Discord posts). Off as shipped, for the reason under
+-- Game hosts in the REFERENCE: on one host the startup update check cut the
+-- server off BeamMP's own login, every join was refused, and only config.json
+-- could turn it back off. So:
+--   * ADMIN ONLY, as installing an update is, and the panel asks first, saying
+--     why. Written to config.json, so it survives a restart.
+--   * Switching it ON reaches nothing by itself. The network is next used by an
+--     admin's Check now or login, a Discord post as a session closes, or the
+--     check at the next start.
+--   * Switching it OFF is refused only while an update is under way, which is
+--     using the network until it is done or stopped. A Discord post queued
+--     behind it is dropped (discord.lua), and a check still waiting to start
+--     refuses itself (update.lua, M.online).
+function RM_onSetOnlineFeatures(pid, rawData)
+  if not auth.requireFull(pid) then return end
+  local data = adminPayload(pid, rawData)
+  if not data or type(data.on) ~= 'boolean' then return end
+  local function pushAdmins()
+    for adminPid in pairs(authenticatedPlayers) do broadcastState(adminPid) end
+  end
+  if data.on == (CFG.onlineFeatures == true) then return pushAdmins() end
+  if not data.on and race.updateBusy and race.updateBusy() then
+    MP.SendChatMessage(pid, '[RaceManager] Not while an update is under way: it is '
+      .. 'using the network until it is done. Stop it on the Updates row first.')
+    return pushAdmins()
+  end
+  CFG.onlineFeatures = data.on
+  local kept = saveConfigToDisk()
+  local who = tostring(MP.GetPlayerName(pid) or pid)
+  race.tellRaceControl(data.on
+    and string.format('[RaceManager] Online features turned ON by %s: update checks, '
+      .. 'Update and restart and Discord posts can now reach the internet. If players '
+      .. 'start being kicked with "Invalid key", set onlineFeatures to false in '
+      .. 'config.json and restart the server.%s', who,
+      kept and '' or ' (config.json could not be written: it reverts on restart)')
+    or string.format('[RaceManager] Online features turned OFF by %s: the server no '
+      .. 'longer goes online by itself.%s', who,
+      kept and '' or ' (config.json could not be written: it reverts on restart)'))
+  pushAdmins()
 end
 
 -- A client asks for state (the app opened, or it just joined).
@@ -5683,6 +5850,7 @@ local function applyConfigTable(data)
   num('paceGreenFar', 0.5, 1000)
   num('paceArmAt', 20, 1000)
   bool('luckyDog')
+  bool('lapsBack')
   str('cautionMode', { line = true, call = true })
   -- 0 means a heat runs the race distance.
   num('heatLaps', 0, CFG.maxTotalLaps)
@@ -5787,6 +5955,7 @@ local function configFileText()
     paceGreenFar   = CFG.paceGreenFar,
     paceArmAt      = CFG.paceArmAt,
     luckyDog       = CFG.luckyDog,
+    lapsBack       = CFG.lapsBack,
     cautionMode    = CFG.cautionMode,
     heatLaps       = CFG.heatLaps,
     enableCheckpointSkipPenalty   = CFG.enableCheckpointSkipPenalty,
@@ -5843,6 +6012,7 @@ local function applyConfigToRace()
   race.finishTimer    = math.floor(CFG.finishTimer)
   race.paceLap        = CFG.paceLap
   race.luckyDog       = CFG.luckyDog
+  race.lapsBack       = CFG.lapsBack
   race.cautionMode    = CFG.cautionMode
   race.heatLaps       = CFG.heatLaps
   race.enableCheckpointSkipPenalty   = CFG.enableCheckpointSkipPenalty
@@ -9906,6 +10076,7 @@ function onInit()
   MP.RegisterEvent('RM_Restart',          'RM_onRestart')
   MP.RegisterEvent('RM_CancelRestart',    'RM_onCancelRestart')  -- wave the restart off
   MP.RegisterEvent('RM_SetLuckyDog',      'RM_onSetLuckyDog')    -- the free pass rule
+  MP.RegisterEvent('RM_SetLapsBack',      'RM_onSetLapsBack')    -- every lapped car's laps back
   MP.RegisterEvent('RM_SetCautionMode',   'RM_onSetCautionMode') -- race back, or freeze at the call
   MP.RegisterEvent('RM_SetHeats',         'RM_onSetHeats')       -- Module 6
   MP.RegisterEvent('RM_DrawHeats',        'RM_onDrawHeats')
@@ -9914,6 +10085,7 @@ function onInit()
   MP.RegisterEvent('RM_ResetLeaderboard', 'RM_onResetLeaderboard')
   MP.RegisterEvent('RM_ClearResults',     'RM_onClearResults')
   MP.RegisterEvent('RM_SetResultsSave',   'RM_onSetResultsSave')
+  MP.RegisterEvent('RM_SetOnlineFeatures', 'RM_onSetOnlineFeatures')
   MP.RegisterEvent('RM_Lap',              'RM_onLap')
   MP.RegisterEvent('RM_Progress',         'RM_onProgress')  -- live position telemetry
   MP.RegisterEvent('RM_RequestState',     'RM_onRequestState')
