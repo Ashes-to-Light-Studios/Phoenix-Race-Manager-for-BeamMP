@@ -330,6 +330,11 @@ check(text:find('Passed under caution: Cara on Bob, lap 3 (given back)', 1, true
   'and list the pass that was given back')
 check(text:find('Passed under caution: Cara on Bob, lap 3 (NOT given back)', 1, true) ~= nil,
   'and the one that was not')
+-- A lap handed back is in the file too: Dan finished on the lead lap without
+-- driving all of it.
+check(text:find('Free pass, caution 2: Dan +1 lap', 1, true) ~= nil,
+  'and the free pass, with the caution it came from (got: '
+    .. tostring(text:match('Free pass[^\n]*')) .. ')')
 
 os.execute(package.config:sub(1, 1) == '\\'
   and ('rmdir /s /q "' .. RESULTS_DIR:gsub('/', '\\') .. '" 2>nul')

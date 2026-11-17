@@ -456,6 +456,12 @@ lap(4)                          -- and the last car home closes the field
 check(lastState.cautionLucky == 4, 'the free pass goes to the highest-placed lapped car')
 check(chatHas('FREE PASS'), 'and the whole field is told')
 check(driver(4).cautionDown == 0, 'Dan is back on the lead lap')
+-- Dan's own crossing closed the field, so the pass was handed out inside it.
+-- The crossing used to finish by setting his lap from the lap he completed,
+-- which threw the credit away: he was told FREE PASS and stayed a lap down.
+check(driver(4).currentLap == driver(3).currentLap,
+  'on the lead lap\'s NUMBER too: the crossing that earned it does not undo it (Dan '
+    .. driver(4).currentLap .. ', Cara ' .. driver(3).currentLap .. ')')
 check(lapCredits[4] == driver(4).currentLap,
   'and the CLIENT is told the lap it now owns, or its telemetry would be dropped '
     .. 'for the rest of the race')
@@ -491,6 +497,140 @@ seconds(0.5)
 check(lastState.caution == false, 'the green falls as the leader reaches the LINE')
 check(lastState.flag == 'green', 'and the flag follows')
 check(lastState.restartPending == false, 'the call is spent')
+
+-- ---------------------------------------------------------------------------
+-- LAPS BACK: every lapped car takes ALL its laps back
+-- ---------------------------------------------------------------------------
+-- The free pass for the whole field. A car two laps down gets both, and the
+-- lapped cars restart at the tail of the lead lap in the order they locked:
+-- the rule changes which lap they are on, never who is ahead of whom.
+RM_onEndRace(0)
+RM_onResetLeaderboard(0)
+RM_onSetSpectating(0, '{"spectating":true}')
+check(lastState.lapsBack == false, 'laps back is OFF by default: a league opts into it')
+RM_onSetLapsBack(3, '{"enabled":true}')
+check(lastState.lapsBack == false, 'a driver cannot arm it')
+RM_onSetLapsBack(0, '{"enabled":true}')
+check(lastState.lapsBack == true, 'an admin can')
+-- The free pass stays on from above: with both on, laps back is what runs.
+check(lastState.luckyDog == true, 'the free pass is still armed too')
+
+RM_onGenerateGrid(0)
+RM_onStartCountdown(0)
+RM_CountdownTick(); RM_CountdownTick(); RM_CountdownTick()
+-- Alice and Bob on the lead lap; Cara one down; Dan two down.
+lap(1); lap(2); lap(3); lap(4)
+lap(1); lap(2); lap(3)
+lap(1); lap(2)
+report(1, driver(1).currentLap, 1, 10.0)
+report(2, driver(2).currentLap, 1, 20.0)
+report(3, driver(3).currentLap, 1, 30.0)
+report(4, driver(4).currentLap, 1, 40.0)
+seconds(0.5)
+check(order() == '1,2,3,4', 'the live order is Alice, Bob, Cara, Dan (got ' .. order() .. ')')
+
+chatClear()
+lapCredits = {}
+RM_onCaution(0)
+lap(1)                          -- Alice leads it away: the caution is official
+lap(2)                          -- Bob locks on the lead lap
+lap(3)                          -- Cara locks a lap down
+check(lapCredits[3] == nil, 'nothing is handed back while a car is still racing back')
+lap(4)                          -- Dan locks two down, and the field is closed
+check(driver(3).cautionDown == 0 and driver(4).cautionDown == 0,
+  'every lapped car is back on the lead lap')
+check(driver(3).currentLap == driver(1).currentLap
+  and driver(4).currentLap == driver(1).currentLap,
+  'with ALL its laps: Dan, two down, gets two (Alice ' .. driver(1).currentLap
+    .. ', Cara ' .. driver(3).currentLap .. ', Dan ' .. driver(4).currentLap .. ')')
+check(lapCredits[3] == driver(3).currentLap and lapCredits[4] == driver(4).currentLap,
+  'and each CLIENT is told the lap it now owns')
+check(lapCredits[1] == nil and lapCredits[2] == nil, 'the lead lap is told nothing')
+check(chatHas('LAPS BACK') and chatHas('Cara (+1)') and chatHas('Dan (+2)'),
+  'the whole field is told who got how many')
+check(not chatHas('FREE PASS'), 'and there is no separate free pass on top')
+check(lastState.cautionLucky == nil, 'nobody is the lucky dog: laps back covered it')
+seconds(0.5)
+check(order() == '1,2,3,4',
+  'they restart at the TAIL of the lead lap, one down ahead of two down (got '
+    .. order() .. ')')
+
+-- On the road a credited car is wherever it was. Ahead of the leader by race
+-- distance now, it has passed nobody: it is meant to drop to the tail.
+report(4, driver(4).currentLap, 2, 1.0)
+seconds(2)
+check(order() == '1,2,3,4', 'the board holds: a credited car cannot buy a place')
+check(driver(4).ucPassed == nil, 'and is never flagged for a pass it did not make')
+
+-- Once per lap down: further crossings count normally.
+local creditedLap = driver(4).currentLap
+lap(1); lap(4)
+check(driver(4).currentLap == creditedLap + 1,
+  'the credit is the laps down, and nothing more on later crossings')
+
+RM_onRestart(0)
+report(1, driver(1).currentLap, 2, 0.5)
+seconds(0.5)
+check(lastState.caution == false, 'the green falls')
+
+-- FROZEN AT THE CALL, the laps are handed back the moment it is called.
+-- Alice and Bob lead; Cara a lap down; Dan two down.
+lap(2)
+lap(1); lap(2); lap(1); lap(2)
+lap(3); lap(3)
+check(driver(1).currentLap == driver(2).currentLap
+  and driver(3).currentLap == driver(1).currentLap - 1
+  and driver(4).currentLap == driver(1).currentLap - 2,
+  'set up: Cara one down and Dan two down')
+report(1, driver(1).currentLap, 2, 100.0)
+report(2, driver(2).currentLap, 1, 50.0)
+report(3, driver(3).currentLap, 1, 50.0)
+report(4, driver(4).currentLap, 1, 50.0)
+seconds(0.5)
+RM_onSetCautionMode(0, '{"mode":"call"}')
+lapCredits = {}
+chatClear()
+RM_onCaution(0)
+check(lastState.caution == true, 'frozen at the call')
+check(driver(3).currentLap == driver(1).currentLap
+  and driver(4).currentLap == driver(1).currentLap,
+  'every lapped car is on the lead lap at once')
+check(lapCredits[3] == driver(3).currentLap and lapCredits[4] == driver(4).currentLap,
+  'and each client is told the lap it owns')
+check(chatHas('Cara (+1)') and chatHas('Dan (+2)'), 'and the field who got how many')
+check(order() == '1,2,3,4', 'at the tail of the lead lap (got ' .. order() .. ')')
+RM_onSetFlag(0, '{"flag":"green"}')
+RM_onSetCautionMode(0, '{"mode":"line"}')
+
+-- The results file says so: a lead-lap finish that was not all driven.
+local RESULTS_DIR = 'Resources/Server/PhoenixRM Server/Data/results'
+local function clearResults()
+  os.execute(package.config:sub(1, 1) == '\\'
+    and ('rmdir /s /q "' .. RESULTS_DIR:gsub('/', '\\') .. '" 2>nul')
+    or  ('rm -rf "' .. RESULTS_DIR .. '"'))
+end
+clearResults()
+RM_onSetResultsSave(0, '{"server":true}')
+chatClear()
+RM_onEndRace(0)
+local resultsPath = nil
+for _, m in ipairs(chatLog) do
+  resultsPath = resultsPath or m:match('(' .. RESULTS_DIR .. '/[%w%-_%.]+%.txt)')
+end
+local rf = resultsPath and io.open(resultsPath, 'r')
+local resultsText = rf and rf:read('*a') or ''
+if rf then rf:close() end
+check(resultsText:find('Laps back, caution 1: Cara +1 lap, Dan +2 laps', 1, true) ~= nil,
+  'the results file lists the laps handed back at the first caution (got: '
+    .. tostring(resultsText:match('Laps back[^\n]*')) .. ')')
+check(resultsText:find('Laps back, caution 2: Cara +1 lap, Dan +2 laps', 1, true) ~= nil,
+  'and at the second')
+RM_onSetResultsSave(0, '{"server":false}')
+clearResults()
+
+-- Off again, the free pass is what runs.
+RM_onSetLapsBack(0, '{"enabled":false}')
+check(lastState.lapsBack == false, 'an admin can turn it off')
 
 -- ---------------------------------------------------------------------------
 -- Qualifying has no running order to freeze

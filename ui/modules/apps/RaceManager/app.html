@@ -1162,8 +1162,25 @@
               ng-disabled="!isAdmin">
         {{ luckyDog ? '&#10003; Enabled' : 'Disabled' }}
       </button>
-      <span class="rm-setting-val" ng-if="luckyDog">
+      <span class="rm-setting-val" ng-if="luckyDog &amp;&amp; !lapsBack">
         Lucky dog &middot; one car per caution, the highest placed a lap down
+      </span>
+      <span class="rm-setting-val" ng-if="lapsBack">
+        Covered by Laps back while that is on
+      </span>
+    </span>
+    <!-- LAPS BACK. The free pass for the whole field: every lapped car takes
+         ALL its laps back. Not idle-locked, for the same reason as the free
+         pass. With both on, laps back is the one that runs. -->
+    <span class="rm-setting" title="Under a caution, every lapped car takes all its laps back and restarts at the tail of the lead lap.">
+      <label>Laps back</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': lapsBack}"
+              ng-click="toggleLapsBack()"
+              ng-disabled="!isAdmin">
+        {{ lapsBack ? '&#10003; Enabled' : 'Disabled' }}
+      </button>
+      <span class="rm-setting-val" ng-if="lapsBack">
+        Every lapped car, every caution &middot; restarts at the tail of the lead lap
       </span>
     </span>
     <!-- THE CAUTION RULE. Racing back to the line is the default; a league that
@@ -3487,6 +3504,35 @@
       <span class="rm-layouts-hint">% of everyone connected voting yes. Not voting counts as no.</span>
     </div>
 
+    <!-- ONLINE FEATURES: does the server go online by itself (update checks,
+         Update and restart, Discord posts). Off as shipped. Turning it ON asks
+         first and says why: on one game host going online cut the server off
+         BeamMP's own login, and every player was kicked (update.lua,
+         M.online). Admin tier only, saved to config.json. No row on an older
+         server, which only reads it from config.json. -->
+    <div class="rm-adminbar" ng-if="isAdmin && onlineFeatures">
+      <span class="rm-adminbar-label">Online features</span>
+      <span class="rm-layouts-hint">{{ onlineFeaturesText() }}</span>
+      <button class="rm-btn rm-btn-mini rm-btn-start"
+              ng-if="isFullAdmin() && !onlineFeatures.on && !onlineUi.confirm" ng-click="onlineAsk()"
+              title="Let the server go online by itself: update checks, Update and restart and Discord posts">Turn on</button>
+      <span class="rm-confirm" ng-if="onlineUi.confirm && !onlineFeatures.on">
+        Only for a server on your own machine. Some game hosts cut a server off the
+        internet when it goes online by itself, and every player is then kicked with
+        "Invalid key". Turn online features on?
+        <button class="rm-btn rm-btn-mini rm-btn-end" ng-click="setOnlineFeatures(true)">Yes, turn on</button>
+        <button class="rm-btn rm-btn-mini" ng-click="onlineAskCancel()">Cancel</button>
+      </span>
+      <button class="rm-btn rm-btn-mini" ng-if="isFullAdmin() && onlineFeatures.on"
+              ng-click="setOnlineFeatures(false)"
+              title="Stop the server going online by itself">Turn off</button>
+      <span class="rm-layouts-hint" ng-if="onlineFeatures.on">
+        If players start being kicked with "Invalid key", set onlineFeatures to
+        false in config.json and restart the server.
+      </span>
+      <span class="rm-layouts-hint" ng-if="!isFullAdmin()">Changing this needs the admin password.</span>
+    </div>
+
     <!-- UPDATES. Installing is the admin tier's: it cannot be undone from here.
          It restarts the server the way a map switch does, so it asks first. -->
     <div class="rm-adminbar rm-update" ng-if="isAdmin && prmUpdate">
@@ -3540,8 +3586,8 @@
           (Windows) or PRM-Install.sh (Linux) does the same.
         </div>
         <div class="rm-layouts-hint">
-          Server on your own machine? Set onlineFeatures to true in config.json
-          for Check now and Update and restart.
+          Server on your own machine? Turn on Online features above for Check
+          now and Update and restart.
         </div>
       </div>
       <span class="rm-layouts-hint" ng-if="prmUpdate.last">
@@ -3565,7 +3611,7 @@
       <span class="rm-adminbar-label">Discord</span>
       <span class="rm-layouts-hint">
         Off: this server does not go online by itself. Server on your own
-        machine? Set onlineFeatures to true in config.json.
+        machine? Turn on Online features above.
       </span>
     </div>
     <div class="rm-adminbar rm-discord" ng-if="isAdmin && prmDiscord && prmDiscord.online !== false">

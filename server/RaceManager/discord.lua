@@ -1,8 +1,8 @@
 -- Race Manager: DISCORD, an optional add-on that posts results to a channel
 -- through a webhook.
 --
--- OFF UNTIL THE OWNER TURNS onlineFeatures ON in config.json (see M.online),
--- and then until a webhook is set, from the Admin tab or in Data/discord.json.
+-- OFF UNTIL onlineFeatures IS ON (config.json, or Online features on the Admin
+-- tab; see M.online), and then until a webhook is set, from the Admin tab or in Data/discord.json.
 -- Until both, nothing here starts a process or touches the network. Deleting
 -- this file turns it off as well: main.lua loads it with pcall and nothing
 -- else depends on it.
@@ -51,7 +51,8 @@ local COLOR = { race = 0xF39C12, quali = 0x3498DB, derby = 0xE74C3C, drag = 0x2E
 function M.online()
   return host ~= nil and host.CFG ~= nil and host.CFG.onlineFeatures == true
 end
-M.OFF = 'Discord posts are off on this server (onlineFeatures in config.json)'
+M.OFF = 'Discord posts are off on this server (Online features on the Admin tab, '
+  .. 'or onlineFeatures in config.json)'
 
 M.queue  = {}
 M.job    = nil   -- the post curl is sending

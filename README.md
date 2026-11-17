@@ -65,10 +65,11 @@ use the zip or an installer once.
 
 **Updating from the game** is off as shipped, because some game hosts cut a
 server off the internet when it goes online by itself and every player who
-joins is kicked. On a server you run on your own machine, set
-`"onlineFeatures": true` in `Resources/Server/PhoenixRM Server/Data/config.json`:
-the server then looks for a newer release at each start, and **Update and
-restart** on the **Admin** tab installs it. See [Updating from the Admin
+joins is kicked. On a server you run on your own machine, turn **Online
+features** on, on the **Admin** tab (or set `"onlineFeatures": true` in
+`Resources/Server/PhoenixRM Server/Data/config.json`): the server then looks for
+a newer release at each start, and **Update and restart** on the **Admin** tab
+installs it. See [Updating from the Admin
 tab](docs/REFERENCE.md#updating-from-the-admin-tab).
 
 Building from source instead? `python3 tools/deploy.py` writes the package and
@@ -197,7 +198,7 @@ order. From there the board holds station, so closing up under the yellow
 nobody a place. **Restart** is *called* rather than taken: the green falls as the
 leader reaches the line, and **Cancel restart** waves it off until it does. Turn
 **Free pass** on and the first car a lap down takes its lap back before the
-green.
+green, or **Laps back** on and every lapped car takes all its laps back.
 
 Turn on **Pace lap** and Start Countdown becomes **Start Race** instead. The
 field is released under a **yellow flag** with no countdown, told to hold
@@ -234,7 +235,7 @@ expect without touching any of it.
 | **[Branch gates](docs/REFERENCE.md#branch-gates-two-ways-through-a-checkpoint)** | Give a checkpoint a second gate and either one clears it. Split lanes and head-on "suicide" ovals, scored together on one leaderboard, with nothing to assign anyone to. |
 | **[Sectors](docs/REFERENCE.md#sectors)** | Define a track's sectors, such as S1 from the line to CP 3 and S2 from CP 3 to CP 6, and drivers are timed on those instead of on every checkpoint. Each sector time shows against the driver's own best for it. |
 | **[Mouse track editing](docs/REFERENCE.md#tutorial-running-a-race-night)** | **✋ Place** mode: click, drag and scroll to move and turn gates from free cam, ctrl+click to place new ones. Works on props, grid slots and derby arenas too. Driving to a gate still works and still builds the track. |
-| **[Caution and restart](docs/REFERENCE.md#caution-and-restart)** | A full-course yellow that freezes the running order. By default the field **races back to the line**: the leader's crossing sets the lap, everyone locks their place as they complete it, and lapped cars go to the bottom in their own order. Or **freeze at the call**, where the field stands. Passes under yellow never count, and are shown to the driver and race control and listed in the results. Optional free pass. The restart is called and falls at the line, and can be waved off. |
+| **[Caution and restart](docs/REFERENCE.md#caution-and-restart)** | A full-course yellow that freezes the running order. By default the field **races back to the line**: the leader's crossing sets the lap, everyone locks their place as they complete it, and lapped cars go to the bottom in their own order. Or **freeze at the call**, where the field stands. Passes under yellow never count, and are shown to the driver and race control and listed in the results. Optional free pass, or laps back for every lapped car. The restart is called and falls at the line, and can be waved off. |
 | **[Multi-class racing](docs/REFERENCE.md#multi-class-racing)** | Two car types on one grid, scored as two races. Tag a class on each Garage List entry and every driver in that car is in it: a Class column with per-class positions on the board, and a section per class in the results file. The overall order is unchanged. |
 | **[The blue flag](docs/REFERENCE.md#the-blue-flag)** | Lapped traffic gets signalled instead of only displayed: the backmarker is shown blue when a car a lap up closes on them, and the car doing the lapping is told there is one ahead. Measured on the road rather than off the timing sheet, which are different orders once anybody is lapped. |
 | **[Heats and transfers](docs/REFERENCE.md#heats-and-transfers)** | Run the night as heats into a feature, with a lap count of their own. The field is split by a serpentine draw off qualifying, the top N from each heat transfer, and the feature grid is built from the results &mdash; winners on the front row, interleaved by heat. |
@@ -249,11 +250,11 @@ expect without touching any of it.
 | **[Demo Derby](docs/REFERENCE.md#demo-derby-parallel-game-mode)** | A separate last-man-standing mode with its own arena, timers and results, fully isolated from the racing. |
 | **[Ready check](docs/REFERENCE.md#the-ready-check)** | Forming a grid, a derby form-up and a drag pass call the drivers instead of teleporting them into place: each presses **Ready**, and the board shows who has. Admins see the count, can Ready All or place one driver, and are asked before starting without somebody. Not ready at the start sits that session or derby out, and is a no-show on the strip. |
 | **[Map switching and votes](docs/REFERENCE.md#switching-maps)** | Change the server's map from the Admin tab, or let drivers vote for one: it passes only at a percentage of the whole lobby you choose, and a race director can lock voting. Map zips move between `custom_maps` and `Resources/Client`, and the server restarts itself onto the new map, under the BeamMP Server Management Tool or started by hand. |
-| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | For a server on your own machine (`onlineFeatures` in `config.json`): it looks for a newer release on GitHub and asks the admin. **Update and restart** downloads it, checks it against GitHub's SHA-256, keeps the old files, swaps the new ones in and restarts the server. Tracks, the cup and results are untouched. |
+| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | For a server on your own machine (**Online features** on the Admin tab): it looks for a newer release on GitHub and asks the admin. **Update and restart** downloads it, checks it against GitHub's SHA-256, keeps the old files, swaps the new ones in and restarts the server. Tracks, the cup and results are untouched. |
 | **[Map display names](docs/REFERENCE.md#map-display-names)** | Show `bark_river_sc` as *Bark River International* in the map menus, the vote and the switch. Display only: no file is renamed. |
 | **[Lap records](docs/REFERENCE.md#lap-records)** | Each driver's fastest lap on every saved layout, per map, kept across restarts and open to everyone. Scored from qualifying and races. An admin can take a time off or clear a board in game, or edit the JSON on the server. |
 | **[Where results go](docs/REFERENCE.md#where-results-go)** | A results file for every race, derby and drag tournament, kept on the server, sent to each admin's PC, both or neither. Two switches on the Admin tab, off until you turn them on. |
-| **[Results on Discord](docs/REFERENCE.md#posting-results-to-discord)** | Paste a channel's webhook URL on the Admin tab and every race, derby and drag tournament posts its results there as it closes, with the full results file attached. Qualifying too if you want it. For a server on your own machine (`onlineFeatures` in `config.json`), and off until a webhook is set. |
+| **[Results on Discord](docs/REFERENCE.md#posting-results-to-discord)** | Paste a channel's webhook URL on the Admin tab and every race, derby and drag tournament posts its results there as it closes, with the full results file attached. Qualifying too if you want it. For a server on your own machine (**Online features** on the Admin tab), and off until a webhook is set. |
 | **[Drag racing](docs/REFERENCE.md#drag-racing-parallel-game-mode)** | A tournament ladder down a drag strip: single or double elimination, or a points shootout. Two to eight cars a pass with any number going through, a christmas tree with real red lights, reaction times, elapsed times and trap speeds, and dial-in bracket racing. Scores into the cup on a table of its own. The strip is an ordinary point-to-point layout saved with the type Drag, so the track editor already builds one, and a practice pass lets one driver try it before a field turns up. |
 | **[Broadcast board](docs/REFERENCE.md#broadcast-board-spectators)** | A spectator's board for streaming: the whole field, the drivers who are out and why, cup standings, and click a name to put the camera on that car in orbit. |
 | **[Race Lights (PRM)](docs/REFERENCE.md#race-lights-prm)** | An optional second app with the start lights, the flags and the drag tree in a box you place anywhere on screen. GET READY is a steady caption, so the green is the first thing that changes. Start sounds for the countdown, the green and the tree, mutable from the panel. |

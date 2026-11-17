@@ -217,7 +217,7 @@ jobs:
             echo
             # NOT "any server can update in-game": a game host cut a server off
             # the internet for going online by itself (0.23.4, onlineFeatures).
-            echo "**Updating from the game** (**Update and restart** on the **Admin** tab) is for a server on your own machine with \`\"onlineFeatures\": true\` in its \`config.json\`: some game hosts cut a server off the internet when it goes online by itself. On a hosting panel, update with the zip as above."
+            echo "**Updating from the game** (**Update and restart** on the **Admin** tab) is for a server on your own machine with **Online features** turned on (the **Admin** tab, or \`\"onlineFeatures\": true\` in its \`config.json\`): some game hosts cut a server off the internet when it goes online by itself. On a hosting panel, update with the zip as above."
             echo
             echo "### What changed"
             echo

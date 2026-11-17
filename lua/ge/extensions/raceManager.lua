@@ -8796,7 +8796,7 @@ local function onHoldCorrect(rawData)
   pushNotice('grid', 'Held on the grid, wait for the lights')
 end
 
--- The server credited a lap (the caution's free pass). A CORRECTION, not a
+-- The server credited a lap (the caution's free pass, or laps back). A CORRECTION, not a
 -- notice: localLap stamps progress reports (the server drops mismatches),
 -- numbers the joker and times the flags. It sends the lap, not a delta, so a
 -- lost message is corrected by the next.
@@ -8809,6 +8809,11 @@ local function onLapCredit(rawData)
   if data.reason == 'luckydog' then
     pushNotice('flag', 'FREE PASS - YOU GET YOUR LAP BACK',
       { sub = 'Restart at the tail of the lead lap', color = 'green' })
+  elseif data.reason == 'lapsback' then
+    local laps = math.floor(tonumber(data.laps) or 1)
+    pushNotice('flag', laps == 1 and 'LAPS BACK - YOU GET YOUR LAP BACK'
+        or ('LAPS BACK - YOU GET ' .. laps .. ' LAPS BACK'),
+      { sub = 'You are on the lead lap: restart at its tail', color = 'green' })
   else
     pushNotice('session', 'Lap credited: you are on lap ' .. lap)
   end
@@ -9515,6 +9520,14 @@ function M.setLuckyDog(enabled)
   end
 end
 
+-- The laps back rule: whether every lapped car takes all its laps back under a
+-- caution.
+function M.setLapsBack(enabled)
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetLapsBack', jsonEncode({ enabled = enabled == true }))
+  end
+end
+
 -- How the next caution freezes the order: 'line' or 'call'.
 function M.setCautionMode(mode)
   if mode ~= 'line' and mode ~= 'call' then return end
@@ -9578,6 +9591,16 @@ function M.setResultsSave(which, on)
   if (which ~= 'server' and which ~= 'admins') or type(on) ~= 'boolean' then return end
   if inMultiplayer() then
     TriggerServerEvent('RM_SetResultsSave', jsonEncode({ [which] = on }))
+  end
+end
+
+-- Online features: whether the server goes online by itself (update checks,
+-- Update and restart, Discord posts). The server checks the tier, saves it to
+-- config.json and answers with onlineFeatures on RM_Update.
+function M.setOnlineFeatures(on)
+  if type(on) ~= 'boolean' then return end
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetOnlineFeatures', jsonEncode({ on = on }))
   end
 end
 

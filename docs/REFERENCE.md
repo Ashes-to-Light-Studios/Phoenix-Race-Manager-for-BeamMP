@@ -1627,7 +1627,8 @@ Under **Race back to the line**, press **Caution** while a race is running and:
 4. **Cars a lap or more down sort to the bottom**, in the order the lapped cars
    came back &mdash; wherever they happen to be on the road.
 5. Optionally the **free pass** gives the first car a lap down its lap back
-   before the green.
+   before the green, or **laps back** gives every lapped car all of its laps
+   back.
 6. **Restart** is *called*, and the green falls somewhere on the leader's run to
    the line. It can be waved off until it does.
 
@@ -1659,8 +1660,8 @@ call**, pressing Caution makes it official at once:
   more lap on the leader's counter is not enough.
 - The field is told positions are frozen and to hold their place. Nobody is
   told to race back.
-- The free pass, if it is on, goes out straight away, because the whole field
-  is locked at the call.
+- The free pass or laps back, if it is on, goes out straight away, because the
+  whole field is locked at the call.
 - Laps under the caution count from the leader's next crossing.
 
 The snapshot is only as exact as the last position reports, which each car
@@ -1695,8 +1696,8 @@ is make sure a pass gains nothing, and make sure everyone knows about it.
   and the list all say so.
 - **Only real race passes count.** Cars are compared by race distance, so a
   lead-lap car going by a backmarker, or a backmarker getting ahead on the road,
-  is no pass. The free pass car is never reported, because it is meant to drop
-  to the tail of the lead lap.
+  is no pass. A car given laps back (the free pass, or laps back) is never
+  reported, because it is meant to drop to the tail of the lead lap.
 - **Passes while racing back to the line are the rule, not a pass.** Under
   Race back to the line, a car is only watched once its own place has locked.
 
@@ -1721,6 +1722,38 @@ caution, which is not a prize anybody is racing for.
 One car per caution. The whole field is told, and so is the driver's own client:
 the credited lap has to reach both sides, or the driver's live position and gap
 would quietly stop working for the rest of the race.
+
+#### Laps back
+
+The free pass for the whole field, for leagues that want every caution to bring
+everyone back into the race. Off by default; switch **Laps back** on in Race
+settings. When the last car has locked (at once, if the caution is frozen at the
+call), **every car a lap or more down takes all of its laps back** and restarts
+at the **tail of the lead lap**. A car two laps down gets two.
+
+- **The order does not change, only the lap.** The lapped cars restart behind the
+  whole lead lap in the order they locked: a car one down ahead of a car two
+  down, then first back to the line first.
+- **Every caution, every lapped car.** A car that locks after the field was
+  closed, for example one that was off the track, gets its laps back as it locks.
+- **It covers the free pass.** The first car a lap down is one of the lapped
+  cars, so with both switched on only laps back runs.
+- **It is a runtime setting**, like the free pass: it can be switched on or off
+  at any time, a caution included. Switched on during a caution, it applies to
+  that caution's field, at the latest when the restart is called. To make it the
+  server's default, set `"lapsBack": true` in
+  `Resources/Server/PhoenixRM Server/Data/config.json`.
+- **The whole field is told** who got how many laps, each driver's client is told
+  the lap it is now on, and a driver who drives past the field on the way to the
+  tail is not reported as passing under caution.
+- **The results file lists every lap handed back**, free pass and laps back
+  alike, for example `Laps back, caution 2: Cara +1 lap, Dan +2 laps`. A
+  lead-lap finish that was not all driven says so.
+
+The server cannot move a car, so getting to the tail is the driver's job, as it
+is for the free pass. The board holds the frozen order until the green whatever
+happens on the road; **at the green it goes back to the road**, so a credited car
+that is still in front of the lead lap is placed where it actually is.
 
 #### The restart, and calling it off
 
@@ -3477,10 +3510,11 @@ release, changing nothing. Update by hand or with an installer once. On your own
 
 ### Updating from the game
 
-On a server you run on your own machine, set `"onlineFeatures": true` in
-`Resources/Server/PhoenixRM Server/Data/config.json` and restart it. Then, when the
-server starts, it asks GitHub for the newest Phoenix Race Manager release, once,
-in the background. If that release is newer than the one the server runs:
+On a server you run on your own machine, turn **Online features** on (see
+[Online features](#online-features) below), or set `"onlineFeatures": true` in
+`Resources/Server/PhoenixRM Server/Data/config.json` and restart the server.
+Then, when the server starts, it asks GitHub for the newest Phoenix Race Manager
+release, once, in the background. If that release is newer than the one the server runs:
 
 - The server console says so.
 - An admin who logs in is asked, in a band at the top of the app: **Update and
@@ -3533,7 +3567,7 @@ install by hand.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `onlineFeatures` | `false` | `true` lets the server go online by itself: update checks, **Update and restart** and Discord posts. Set in `config.json` only; the Admin panel cannot change it. Leave it off on a rented game server ([Game hosts](#game-hosts)) |
+| `onlineFeatures` | `false` | `true` lets the server go online by itself: update checks, **Update and restart** and Discord posts. Also the **Online features** row on the **Admin** tab, which writes it here ([Online features](#online-features)). Leave it off on a rented game server ([Game hosts](#game-hosts)) |
 | `updateCheck` | `true` | With `onlineFeatures` on, `false` still keeps updates off GitHub: no check, no band, no button |
 | `updateRepo` | `Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG` | Where to look, as owner/name. A fork can point it at its own releases |
 
@@ -3565,9 +3599,33 @@ console shows `Resolving timed out` on a `POST to
 https://auth.beammp.com/pkToUser`.
 
 Nothing tells such a host apart from one that is fine, so `onlineFeatures` is
-off as shipped and only the server's owner can turn it on, in `config.json`.
-Turn it on only on a machine you run yourself. If that error shows up with it
-on, set it back to `false` and restart the server.
+off as shipped. Turn it on, from the Admin tab or in `config.json`, only on a
+machine you run yourself. If that error shows up with it on, set it back to
+`false` in `config.json` and restart the server: once players are being kicked,
+nobody can get in to turn it off from the game.
+
+### Online features
+
+The **Online features** row on the **Admin** tab turns `onlineFeatures` on and
+off without editing `config.json`. Everyone logged in sees whether it is on;
+changing it needs the **admin** password, as installing an update does.
+
+- **Turn on** asks first, and says why: only for a server on your own machine,
+  because some game hosts cut a server off the internet when it goes online by
+  itself ([Game hosts](#game-hosts)).
+- **Turning it on reaches nothing by itself.** The server next goes online when
+  an admin presses **Check now** or logs in, when a session closes with a
+  Discord webhook set, or when the server next starts.
+- **Turn off** works at once, except while an update is downloading or
+  installing: stop it on the **Updates** row first. A Discord post waiting to go
+  out is dropped.
+- **It is saved to `config.json`**, so it survives a restart, and every admin
+  logged in is told who changed it. If the server cannot write the file, the
+  admins are told it reverts on restart.
+
+If turning it on gets the server cut off, players are kicked with **Invalid
+key** and cannot rejoin to turn it off again. Set `"onlineFeatures": false` in
+`config.json` through the host's file manager, and restart the server.
 
 Saving results is not affected: the server's copy is a file in `Data/results/`
 and an admin's copy travels over BeamMP's own connection.
@@ -3646,8 +3704,9 @@ whose last board is cleared loses its file.
 ## Posting results to Discord
 
 An optional add-on: as each session closes, the server posts its results to a
-Discord channel through a webhook. **It is off until the server's owner sets
-`"onlineFeatures": true` in `config.json`, and then until a webhook is set.**
+Discord channel through a webhook. **It is off until
+[Online features](#online-features) is turned on (or `"onlineFeatures": true` in
+`config.json`), and then until a webhook is set.**
 Until both, the server never contacts Discord. Leave it off on a rented game
 server: a post goes online the same way the update check that got a server cut
 off did (see [Game hosts](#game-hosts)).
