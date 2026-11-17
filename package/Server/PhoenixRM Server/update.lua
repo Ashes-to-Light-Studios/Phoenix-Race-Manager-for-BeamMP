@@ -1,7 +1,8 @@
 -- Race Manager: UPDATES FROM GITHUB, as its own module.
 --
 -- OFF UNLESS THE OWNER SAID SO: nothing here reaches the network without
--- onlineFeatures in config.json (see M.online). With it, at startup the server
+-- onlineFeatures (config.json, or Online features on the Admin tab; see
+-- M.online). With it, at startup the server
 -- asks GitHub for the newest release, in the background.
 -- A newer one is offered to the admins: the panel asks, and the Admin tab has
 -- Update and restart, which downloads the release zip, checks it, swaps the
@@ -127,12 +128,13 @@ end
 -- A game host (Pterodactyl, 0.23.3) cut a server off the internet after its
 -- startup check, BeamMP's own player login included, so every join was refused
 -- until a restart. No sign tells such a host apart, so the network is used only
--- when the owner turned onlineFeatures on in config.json, which the panel
--- cannot change.
+-- when onlineFeatures is on: off as shipped, set in config.json or by the admin
+-- tier on the Admin tab, which asks first (main.lua, RM_onSetOnlineFeatures).
 function M.online() return cfg('onlineFeatures', false) == true end
 function M.checks() return M.online() and cfg('updateCheck', true) ~= false end
 
-M.OFF = 'In-game updates are off on this server (onlineFeatures in config.json)'
+M.OFF = 'In-game updates are off on this server (Online features on the Admin tab, '
+  .. 'or onlineFeatures in config.json)'
 
 -- ---------------------------------------------------------------------------
 -- Text, versions and the release
