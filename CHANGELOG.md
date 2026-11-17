@@ -6,6 +6,16 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Changed
+
+- **The repository is now Phoenix-Race-Manager-for-BeamMP.** In-game updates
+  look for releases there, and a `config.json` that names the old
+  `Phoenix-Race-Manager-for-BeamNG` is updated to the new name when the server
+  starts. A fork's own `updateRepo` is kept. Links in the README, the reference
+  and the website point at the new name.
+
 ## 0.26.0 - Laps back, and online features from the Admin tab
 
 #### Added

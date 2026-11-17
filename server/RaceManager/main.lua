@@ -153,7 +153,7 @@ local CFG = {
   onlineFeatures  = false,
   -- Updates from GitHub. See update.lua. false never contacts GitHub at all.
   updateCheck     = true,
-  updateRepo      = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG',  -- owner/name
+  updateRepo      = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP',  -- owner/name
 }
 -- Forward declarations: the layout store's validators are needed by the grid
 -- hold code above them.
@@ -5889,10 +5889,13 @@ local function applyConfigTable(data)
   -- owner/name and nothing else: it becomes part of a URL a download job runs.
   if type(data.updateRepo) == 'string' then
     local repo = data.updateRepo
-    -- The repo's old home. Every config.json saved before the move names it,
-    -- and only GitHub's redirect still reaches it.
-    if repo:lower() == 'aosjay13/beamng-race-manager-by-phoenix' then
-      repo = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG'
+    -- The repo's old names. Every config.json saved before a move or rename
+    -- names one, and only GitHub's redirect still reaches it. A fork's own
+    -- repo is kept.
+    local was = repo:lower()
+    if was == 'aosjay13/beamng-race-manager-by-phoenix'
+        or was == 'ashes-to-light-studios/phoenix-race-manager-for-beamng' then
+      repo = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP'
     end
     if #repo <= 140 and repo:match('^[%w][%w%-]*/[%w%-%._]+$') and not repo:find('..', 1, true) then
       CFG.updateRepo = repo; applied = applied + 1

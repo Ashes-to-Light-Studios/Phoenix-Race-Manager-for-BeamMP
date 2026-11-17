@@ -25,7 +25,7 @@ local host
 
 local IS_WINDOWS = package.config:sub(1, 1) == '\\'
 
-M.REPO          = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG'
+M.REPO          = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP'
 M.COUNTDOWN     = 10       -- seconds of warning before everyone is disconnected
 M.SETTLE        = 2        -- then this long, for download streams to close
 M.CHECK_SECONDS = 30       -- curl's limit for asking GitHub

@@ -3476,7 +3476,7 @@ when it does (see [Game hosts](#game-hosts)). The **Updates** row on the
 ### Updating by hand
 
 1. Download `RaceManager-vX.Y.Z.zip` from
-   [Releases](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/releases/latest).
+   [Releases](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP/releases/latest).
 2. Stop the server.
 3. Upload the zip into the server's `Resources/` folder and extract it there,
    replacing the old files.
@@ -3569,7 +3569,7 @@ install by hand.
 |---|---|---|
 | `onlineFeatures` | `false` | `true` lets the server go online by itself: update checks, **Update and restart** and Discord posts. Also the **Online features** row on the **Admin** tab, which writes it here ([Online features](#online-features)). Leave it off on a rented game server ([Game hosts](#game-hosts)) |
 | `updateCheck` | `true` | With `onlineFeatures` on, `false` still keeps updates off GitHub: no check, no band, no button |
-| `updateRepo` | `Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG` | Where to look, as owner/name. A fork can point it at its own releases |
+| `updateRepo` | `Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP` | Where to look, as owner/name. A fork can point it at its own releases. A `config.json` naming one of the repo's old names is updated to this one when the server starts |
 
 A release must be tagged `vX.Y.Z` and carry `RaceManager-vX.Y.Z.zip` laid out
 the way the package workflow builds it. Anything else is refused, with the
