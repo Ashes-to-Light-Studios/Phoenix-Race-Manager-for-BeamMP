@@ -456,13 +456,14 @@ angular.module('beamng.apps')
       // The menu bar
       // ------------------------------------------------------------------
       // menu.open: null, 'tab' (adminTab), or a shared panel ('practice',
-      // 'records', 'cup', 'garage', 'maps'); menu.group is the open dropdown. Not
+      // 'records', 'feed', 'cup', 'garage', 'maps'); menu.group is the open dropdown. Not
       // remembered: the board is what to come back to.
       $scope.menu = { open: null, group: null };
       var TAB_TITLES = { race: 'Race rules', quali: 'Qualifying', grid: 'Grid and heats',
                          track: 'Track', garage: 'Garage List', cup: 'Cup',
                          derby: 'Demo Derby', drag: 'Drag racing', admin: 'Admin' };
       var PANEL_TITLES = { practice: 'Practice', records: 'Lap records',
+                           feed: 'Broadcast feed',
                            cup: 'Cup standings', garage: 'Garage', maps: 'Map vote' };
       // STILL THERE TO SHOW. A panel can go away while open: a vote starts, the
       // cup is switched off, the admin logs out. Without this the board stays
@@ -472,6 +473,7 @@ angular.module('beamng.apps')
           case 'tab':      return $scope.isAdmin;
           case 'practice': return $scope.canPractice() || !!$scope.practice || !!$scope.practiceComplete;
           case 'records':  return true;
+          case 'feed':     return true;
           case 'cup':      return !$scope.isAdmin && !!$scope.cup.enabled;
           case 'garage':   return !$scope.isAdmin && $scope.garageSpawnable.length > 0;
           case 'maps':     return !$scope.isAdmin && !!$scope.maps.voting && !$scope.maps.vote;
@@ -522,6 +524,8 @@ angular.module('beamng.apps')
         } else if (name === 'maps') {
           $scope.mapsUi.driverOpen = true;
           $scope.mapsRefresh();
+        } else if (name === 'feed') {
+          bngApi.engineLua('raceManager.feedStatus()');
         }
         pushEditorOpen();
       };
@@ -1867,6 +1871,77 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.broadcast.watching = (data && data.ok) ? data.pid : null;
         });
       });
+
+      // ------------------------------------------------------------------
+      // Broadcast feed: race data for a stream's overlay, served on this PC
+      // ------------------------------------------------------------------
+      // Lua owns the setting (feed.lua): the listener has to come up with the
+      // game, app on screen or not. This panel shows what Lua says and asks it
+      // to change. Open to everyone: it is this PC's own port, serving what this
+      // player already sees, and nothing on the server changes.
+      $scope.feed = { available: true, on: false, running: false, starting: false,
+                      port: 8128, lan: false, error: null, clients: 0, streams: 0,
+                      lanIp: null, urls: {} };
+      $scope.feedUi = { port: '8128', portEditing: false, lanConfirm: false };
+      // Built when the status arrives, not per digest: ng-repeat over a fresh
+      // array of fresh objects never settles.
+      $scope.feedLinks = [];
+      function feedLinksFor(f) {
+        var u = f.urls || {};
+        var list = [
+          { label: 'Overlay: order', url: u.tower },
+          { label: 'Overlay: grid', url: u.grid },
+          { label: 'Overlay: banner', url: u.banner },
+          { label: 'Data (JSON)', url: u.json },
+          { label: 'Live stream', url: u.stream }
+        ];
+        if (f.lan && u.lan) {
+          list.push({ label: 'Other PCs: overlay', url: u.lanOverlay });
+          list.push({ label: 'Other PCs: JSON', url: u.lanJson });
+        }
+        return list.filter(function (l) { return !!l.url; });
+      }
+      $scope.$on('RaceManagerFeed', function (event, data) {
+        $scope.$evalAsync(function () {
+          if (!data || typeof data !== 'object') { return; }
+          if (!data.urls) { data.urls = {}; }
+          $scope.feed = data;
+          $scope.feedLinks = feedLinksFor(data);
+          if (!$scope.feedUi.portEditing) { $scope.feedUi.port = String(data.port || ''); }
+          if (data.lan) { $scope.feedUi.lanConfirm = false; }
+        });
+      });
+      $scope.feedToggle = function () {
+        bngApi.engineLua('raceManager.feedSet(' + (!$scope.feed.on) + ', nil, nil)');
+      };
+      // Applied on Enter or leaving the box. Lua checks it and says why not.
+      $scope.feedApplyPort = function () {
+        $scope.feedUi.portEditing = false;
+        var p = parseInt($scope.feedUi.port, 10);
+        if (p === $scope.feed.port) { return; }
+        bngApi.engineLua('raceManager.feedSet(nil, ' + (isNaN(p) ? -1 : p) + ', nil)');
+      };
+      $scope.feedLanAsk = function () { $scope.feedUi.lanConfirm = true; };
+      $scope.feedLanCancel = function () { $scope.feedUi.lanConfirm = false; };
+      $scope.feedLanSet = function (on) {
+        $scope.feedUi.lanConfirm = false;
+        bngApi.engineLua('raceManager.feedSet(nil, nil, ' + (on === true) + ')');
+      };
+      $scope.feedStatusText = function () {
+        var f = $scope.feed;
+        if (f.available === false) { return 'Not available in this version of the game.'; }
+        if (f.running) {
+          var n = f.clients || 0;
+          return 'On: port ' + f.port + (f.lan ? ', this PC and the local network. ' : ', this PC only. ')
+            + (n ? (n + (n === 1 ? ' reader' : ' readers') + ' connected.') : 'Nothing reading it yet.');
+        }
+        if (f.starting) { return 'Starting: waiting for port ' + f.port + '...'; }
+        return 'Off. Race data for your stream\'s overlay, served by this game on this PC.';
+      };
+      // A click on a link selects it, ready to copy.
+      $scope.feedSelect = function ($event) {
+        try { $event.target.select(); } catch (e) { /* not an input */ }
+      };
 
       // Places gained or lost since the lights. It sits alongside the gap rather
       // than in place of it: one says how the race has moved, the other how far
@@ -6031,6 +6106,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // And the ladder, for everybody: it is pushed only on change, and a driver
       // has no tab to pull it from.
       bngApi.engineLua('raceManager.dragRequestState()');
+      // The broadcast feed's status, for the menu's ON tag.
+      bngApi.engineLua('raceManager.feedStatus()');
       // Re-assert the editor flags on mount (Lua was told "closed" on teardown).
       pushEditorOpen();
     }]

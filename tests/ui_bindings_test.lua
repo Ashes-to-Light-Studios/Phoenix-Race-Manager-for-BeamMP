@@ -1121,9 +1121,28 @@ for _, field in ipairs({ 'alias', 'currentLap', 'finishTime', 'id', 'jokerLap',
     'the controller reads ' .. field .. ' off a driver row, so it must be on the wire')
 end
 
+-- The broadcast feed (lua/ge/extensions/raceManager/feed.lua) reads driver rows
+-- as `src`: every field it reads must be on the wire too, or that column of a
+-- stream graphic is null with no error anywhere.
+do
+  local fh = io.open('lua/ge/extensions/raceManager/feed.lua', 'r')
+  local feedSrc = fh and fh:read('*a') or ''
+  if fh then fh:close() end
+  local feedFields = {}
+  for field in feedSrc:gmatch('src%.([%w_]+)') do feedFields[field] = true end
+  expect(feedFields.lastLap and feedFields.lastLapOn and feedFields.pitStops,
+    'found the broadcast feed\'s driver row reads')
+  for field in pairs(feedFields) do
+    expect(onWire[field],
+      'the broadcast feed reads src.' .. field .. ' but the server does not send it - '
+        .. 'add it to DRIVER_WIRE_FIELDS or the feed sends null for it')
+  end
+end
+
 -- The converse: fields that exist only for this plugin's own bookkeeping must
--- NOT be shipped. Each of these is read solely inside the server.
-for _, field in ipairs({ 'pitStops', 'holdCorrections',
+-- NOT be shipped. Each of these is read solely inside the server. (pitStops was
+-- one until 0.27.0: the broadcast feed reads it, see below.)
+for _, field in ipairs({ 'holdCorrections',
                          'holdCorrectedAt', 'distNext' }) do
   expect(not onWire[field],
     field .. ' is server-side bookkeeping and should not be broadcast to every '

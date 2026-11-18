@@ -121,6 +121,33 @@ leaves the server (the panel gets the last digits of its id, and curl reads it
 from a config file, not its command line), and only a URL rebuilt from checked
 parts is stored, so nothing an admin types reaches a shell.
 
+**The broadcast feed is the client's, so it works on any host.** Overlay
+software wants the race pushed to it live, and the server has no way to push
+anything: no HTTP client, and the one way out (curl in a process of its own) is
+what got a server cut off on a rented host (`onlineFeatures`). But every client
+already holds the race: `RM_Update` arrives about three times a second while a
+session runs. So `lua/ge/extensions/raceManager/feed.lua` serves it on the
+streamer's own PC with LuaSocket (the library BeamMP's own client mod talks to
+its launcher with), non-blocking and polled from `onUpdate`: one comparison a
+frame while it is off. Four rules hold it together:
+
+- **A schema, not the wire format.** The document is rebuilt from `RM_Update`
+  through fixed key lists (`SESSION_KEYS`, `DRIVER_KEYS`...) by the module's own
+  encoder (fixed key order, explicit `null`, `[]` for an empty list). Nothing off
+  those lists leaves the game, so an admin's targeted fields never do.
+  `tests/feed_test.lua` checks that and that REFERENCE names every key;
+  `tests/ui_bindings_test.lua` checks every row field it reads is on the wire.
+- **No new event.** What the feed needed from the server (`lastLap`,
+  `lastLapOn`, `pitStops`) rides `DRIVER_WIRE_FIELDS`, for the same bind-once
+  reason as update state.
+- **Events are differences.** A lap, the joker, a pit stop, a flag: found by
+  comparing consecutive snapshots, each on its own field, so one that lands
+  between two broadcasts is still caught. None from the first snapshot.
+- **Its port outlives nothing.** The listener sits in a `_G` slot a reloaded
+  copy closes before binding, `onExtensionUnloaded` closes it, and BeamMP
+  unloads the mod on leaving a server. `reuseaddr` is never set on Windows,
+  where it lets two programs share a port.
+
 **Lap records are a consumer of results, like the cup.** `finishSession` calls
 them once per session through `race.recordsSession`, after the joker ruling.
 The file on disk is the board: every read opens it and every write reads it

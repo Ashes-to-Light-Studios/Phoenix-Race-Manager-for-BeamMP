@@ -1,0 +1,860 @@
+-- Headless test for THE BROADCAST FEED (lua/ge/extensions/raceManager/feed.lua):
+-- the race served on the streamer's own PC for overlay software.
+--
+--   * Off as shipped: nothing is opened until it is turned on.
+--   * The listener: this PC only unless LAN is on, never reuseaddr on Windows,
+--     a port in use retried and then explained.
+--   * HTTP: whole and split requests, the routes, CORS, HEAD, the limits, and
+--     a Host from outside this PC and the local network turned away.
+--   * The schema: every key always present, the app's formatting, and NOTHING
+--     admin-only ever forwarded.
+--   * Server-Sent Events: the latest frame wins for a slow reader, keepalives,
+--     a reader that hangs up is dropped.
+--   * Events, found by comparing snapshots: none on the first, each kind on its
+--     own edge, a capped ring.
+--   * The docs name every key (docs/REFERENCE.md, "Broadcast feed").
+--
+-- A fake LuaSocket stands in for the network; nothing is opened for real.
+--
+-- Run from the repo root: lua5.3 tests/feed_test.lua
+
+local checks, fails = 0, 0
+local function check(cond, msg)
+  checks = checks + 1
+  if not cond then fails = fails + 1; print('FAIL: ' .. msg) end
+end
+
+-- ===========================================================================
+-- A JSON reader that keeps what the feed promises: null, and [] apart from {}
+-- ===========================================================================
+local NULL = setmetatable({}, { __tostring = function () return 'null' end })
+local ARRAY = {}
+local function isArray(t) return getmetatable(t) == ARRAY end
+
+local function parseJson(text)
+  local pos = 1
+  local function ws() pos = text:find('[^ \t\r\n]', pos) or (#text + 1) end
+  local function str()
+    assert(text:sub(pos, pos) == '"', 'string expected at ' .. pos)
+    pos = pos + 1
+    local out = {}
+    while true do
+      local c = text:sub(pos, pos)
+      if c == '"' then pos = pos + 1; break end
+      if c == '' then error('unterminated string') end
+      if c == '\\' then
+        local n = text:sub(pos + 1, pos + 1)
+        if n == 'u' then
+          out[#out + 1] = utf8.char(tonumber(text:sub(pos + 2, pos + 5), 16))
+          pos = pos + 6
+        else
+          out[#out + 1] = ({ b = '\b', f = '\f', n = '\n', r = '\r', t = '\t' })[n] or n
+          pos = pos + 2
+        end
+      else
+        assert(c:byte() >= 32, 'raw control character in a string at ' .. pos)
+        out[#out + 1] = c
+        pos = pos + 1
+      end
+    end
+    return table.concat(out)
+  end
+  local value
+  function value()
+    ws()
+    local c = text:sub(pos, pos)
+    if c == '{' then
+      local t = {}
+      pos = pos + 1; ws()
+      if text:sub(pos, pos) == '}' then pos = pos + 1; return t end
+      while true do
+        ws()
+        local k = str()
+        ws(); assert(text:sub(pos, pos) == ':', ': expected at ' .. pos); pos = pos + 1
+        t[k] = value(); ws()
+        local d = text:sub(pos, pos); pos = pos + 1
+        if d == '}' then return t end
+        assert(d == ',', ', expected at ' .. pos)
+      end
+    elseif c == '[' then
+      local t = setmetatable({}, ARRAY)
+      pos = pos + 1; ws()
+      if text:sub(pos, pos) == ']' then pos = pos + 1; return t end
+      while true do
+        t[#t + 1] = value(); ws()
+        local d = text:sub(pos, pos); pos = pos + 1
+        if d == ']' then return t end
+        assert(d == ',', ', expected at ' .. pos)
+      end
+    elseif c == '"' then return str()
+    elseif text:sub(pos, pos + 3) == 'true' then pos = pos + 4; return true
+    elseif text:sub(pos, pos + 4) == 'false' then pos = pos + 5; return false
+    elseif text:sub(pos, pos + 3) == 'null' then pos = pos + 4; return NULL
+    end
+    local s, e = text:find('^-?%d+%.?%d*[eE]?[-+]?%d*', pos)
+    assert(s, 'bad value at ' .. pos .. ': ' .. text:sub(pos, pos + 20))
+    pos = e + 1
+    return tonumber(text:sub(s, e))
+  end
+  local v = value()
+  ws()
+  assert(pos > #text, 'trailing data at ' .. pos)
+  return v
+end
+
+-- ===========================================================================
+-- A fake LuaSocket
+-- ===========================================================================
+local fake = {
+  created = 0, servers = {}, pending = {},
+  bindError = nil,        -- every bind fails with this while set
+}
+
+local function newClient(chunks, sendCap)
+  local c = { inq = chunks or {}, out = {}, closed = false, peerClosed = false,
+              sendCap = sendCap, opts = {} }
+  function c:settimeout() end
+  function c:setoption(k, v) self.opts[k] = v; return 1 end
+  function c:receive(n)
+    if #self.inq > 0 then
+      local chunk = table.remove(self.inq, 1)
+      if #chunk > n then
+        table.insert(self.inq, 1, chunk:sub(n + 1))
+        return chunk:sub(1, n)
+      end
+      if #chunk == n then return chunk end
+      return nil, 'timeout', chunk
+    end
+    if self.peerClosed then return nil, 'closed', '' end
+    return nil, 'timeout', ''
+  end
+  function c:send(data, i)
+    i = i or 1
+    if self.peerClosed then return nil, 'closed', i - 1 end
+    local avail = #data - i + 1
+    local n = self.sendCap and math.min(self.sendCap, avail) or avail
+    if n > 0 then self.out[#self.out + 1] = data:sub(i, i + n - 1) end
+    if n < avail then return nil, 'timeout', i + n - 1 end
+    return #data
+  end
+  function c:close() self.closed = true end
+  function c:output() return table.concat(self.out) end
+  return c
+end
+
+local function newServer()
+  local s = { opts = {}, closed = false }
+  function s:setoption(k, v) self.opts[k] = v; return 1 end
+  function s:bind(host, port)
+    if fake.bindError then return nil, fake.bindError end
+    self.host, self.port = host, port
+    return 1
+  end
+  function s:listen(n) self.backlog = n; return 1 end
+  function s:settimeout() end
+  function s:accept()
+    if self.closed then return nil, 'closed' end
+    local c = table.remove(fake.pending, 1)
+    if c then return c end
+    return nil, 'timeout'
+  end
+  function s:close() self.closed = true end
+  return s
+end
+
+local socketModule = {
+  tcp = function ()
+    fake.created = fake.created + 1
+    local s = newServer()
+    fake.servers[#fake.servers + 1] = s
+    return s
+  end,
+  udp = function ()
+    return {
+      setpeername = function () return 1 end,
+      getsockname = function () return '192.168.1.50', 50000 end,
+      close = function () end,
+    }
+  end,
+}
+package.preload.socket = function () return socketModule end
+
+-- ===========================================================================
+-- BeamNG stubs
+-- ===========================================================================
+jit = { os = 'Windows' }
+local files = {}
+jsonReadFile = function (path) return files[path] end
+jsonWriteFile = function (path, data) files[path] = data; return true end
+local statusPushes = {}
+guihooks = { trigger = function (name, data)
+  if name == 'RaceManagerFeed' then statusPushes[#statusPushes + 1] = data end
+end }
+log = function () end
+local overlayOnDisk = true
+FS = { fileExists = function (_, path) return overlayOnDisk and path:find('overlay.html', 1, true) ~= nil end }
+readFile = function (path)
+  if path:find('overlay.html', 1, true) then return '<!doctype html><title>PRM overlay</title>' end
+end
+
+local function loadFeed()
+  local f = dofile('lua/ge/extensions/raceManager/feed.lua')
+  f.init({ build = '9.9.9' })
+  return f
+end
+
+local feed = loadFeed()
+local S = feed.feedDebug()
+local function lastStatus() return statusPushes[#statusPushes] end
+local function pump(n)
+  for _ = 1, n or 1 do feed.feedUpdate(0.05) end
+end
+local function currentServer() return fake.servers[#fake.servers] end
+
+-- An HTTP exchange: the request goes in, the reader hangs up after the answer.
+local function parseResponse(raw)
+  local headEnd = raw:find('\r\n\r\n', 1, true)
+  if not headEnd then return { raw = raw } end
+  local head = raw:sub(1, headEnd - 1)
+  local r = { raw = raw, body = raw:sub(headEnd + 4), headers = {} }
+  r.code = tonumber(head:match('^HTTP/1%.1 (%d+)'))
+  for k, v in head:gmatch('\r\n([^:\r\n]+):%s*([^\r\n]*)') do r.headers[k:lower()] = v end
+  return r
+end
+local function exchange(raw, chunks)
+  local c = newClient(chunks or { raw })
+  fake.pending[#fake.pending + 1] = c
+  pump(6)
+  c.peerClosed = true
+  pump(2)
+  return parseResponse(c:output()), c
+end
+local function get(path, hostHeader, method)
+  return exchange(string.format('%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: test\r\n\r\n',
+    method or 'GET', path, hostHeader or '127.0.0.1:8128'))
+end
+local function live()
+  local r = get('/live.json')
+  return parseJson(r.body), r
+end
+
+-- ===========================================================================
+-- A race, as RM_Update brings it (admin-only fields included, as an admin's
+-- targeted send carries them)
+-- ===========================================================================
+local function race(over)
+  local d = {
+    rmProtocol = 2, serverBuild = '0.27.0', phase = 'racing', sessionKind = 'race',
+    sessionLaps = 5, totalLaps = 5, raceMode = 'laps', flag = 'green',
+    jokerEnabled = true, entrants = 6, raceClock = 125.4, raceTime = 140,
+    layoutName = 'Club Circuit', pointToPoint = false, paceLap = false, pacing = false,
+    caution = false, cautionPending = false, restartPending = false, finalLap = false,
+    qualiOutLap = false, heatCount = 0,
+    bestLapPid = 1, bestLapTime = 83.456,
+    -- Never to be forwarded:
+    youAreAdmin = true, youRole = 'admin', resultsPath = 'C:/Users/secret/results',
+    resultsSave = { server = true, admins = true }, onlineFeatures = { on = true },
+    prmUpdate = { latest = '1.0.0' }, prmDiscord = { webhookTail = '1234' },
+    cautionPasses = { { passer = 'Bob', passed = 'Cara' } },
+    drivers = {
+      { id = 1, name = 'Alice', alias = 'Ace', status = 'racing', position = 1, gridPos = 3,
+        currentLap = 3, lastLap = 83.456, lastLapOn = 2, raceBest = 83.456, lapsLed = 2,
+        jokerTaken = 1, jokerLap = 2, resets = 1 },
+      { id = 2, name = 'Bob', status = 'racing', position = 2, gridPos = 1, currentLap = 3,
+        gap = 1.234, intv = 1.234, lastLap = 84.0, lastLapOn = 2, raceBest = 84.0,
+        jokerTaken = 2, jokerLap = 3, pitStops = 1, down = 0, idown = 0 },
+      { id = 3, name = 'Cara', status = 'racing', position = 3, gridPos = 2, currentLap = 3,
+        gap = 62.345, intv = 61.11, lastLapOn = 2, down = 0, idown = 0, penaltySeconds = 5 },
+      { id = 4, name = 'Dan', status = 'racing', position = 4, gridPos = 4, currentLap = 2,
+        gap = 90, intv = 20, down = 1, idown = 1, lastLapOn = 1 },
+      { id = 5, name = 'Eve', status = 'racing', position = 5, gridPos = 5, currentLap = 1,
+        gap = 150, intv = 30, down = 2, idown = 1 },
+      { id = 6, name = 'Fay', status = 'dnf', outReason = 'retired', position = 6, gridPos = 6,
+        currentLap = 1 },
+      { id = 0, name = 'Admin', status = 'waiting', spectating = true },
+    },
+  }
+  for k, v in pairs(over or {}) do d[k] = v end
+  return d
+end
+local function rowOf(state, id)
+  for _, r in ipairs(state.drivers) do if r.id == id then return r end end
+end
+local function driver(doc, id)
+  for _, r in ipairs(doc.drivers) do if r.id == id then return r end end
+end
+local function copy(t)
+  if type(t) ~= 'table' then return t end
+  local o = {}
+  for k, v in pairs(t) do o[k] = copy(v) end
+  return o
+end
+
+-- ===========================================================================
+-- 1. Off as shipped
+-- ===========================================================================
+feed.feedBoot()
+pump(5)
+check(fake.created == 0, 'off as shipped: no socket is opened at boot')
+feed.feedState(race())
+check(fake.created == 0, 'and a race arriving opens none either')
+feed.feedStatus()
+check(lastStatus() and lastStatus().on == false and lastStatus().running == false,
+  'the panel hears it is off')
+check(lastStatus().port == 8128, 'on the default port 8128')
+
+-- ===========================================================================
+-- 2. On: this PC only, no reuseaddr on Windows, saved
+-- ===========================================================================
+feed.feedSet(true)
+local srv = currentServer()
+check(fake.created == 1 and srv.host == '127.0.0.1' and srv.port == 8128,
+  'turned on, it listens on 127.0.0.1:8128 (got ' .. tostring(srv and srv.host) .. ')')
+check(srv.opts.reuseaddr == nil, 'never reuseaddr on Windows (it lets a second program share the port)')
+check(files['settings/raceManager/feed.json'] and files['settings/raceManager/feed.json'].on == true,
+  'the setting is saved in the user folder')
+local st = lastStatus()
+check(st.running == true and st.error == nil, 'the panel hears it is running')
+check(st.urls.json == 'http://127.0.0.1:8128/live.json'
+  and st.urls.tower == 'http://127.0.0.1:8128/overlay?view=tower'
+  and st.urls.stream == 'http://127.0.0.1:8128/stream', 'and is given the URLs to copy')
+check(st.urls.lan == nil, 'with no LAN address while LAN is off')
+
+-- ===========================================================================
+-- 3. The race, held while it was off, is there at once
+-- ===========================================================================
+local doc, resp = live()
+check(resp.code == 200, '/live.json answers 200')
+check(resp.headers['content-type'] == 'application/json; charset=utf-8', 'as JSON')
+check(tonumber(resp.headers['content-length']) == #resp.body, 'with a true Content-Length')
+check(resp.headers['access-control-allow-origin'] == '*', 'readable from any overlay page (CORS)')
+check(resp.headers['cache-control'] == 'no-store', 'never cached')
+check(doc.feed == 1 and doc.source == 'Phoenix Race Manager', 'schema 1, named')
+check(doc.build == '9.9.9' and doc.serverBuild == '0.27.0', 'both builds stamped')
+check(doc.connected == true, 'connected: the race held while off was used')
+check(type(doc.seq) == 'number' and doc.seq >= 1 and type(doc.epoch) == 'number', 'seq and epoch')
+
+-- NOTHING ADMIN-ONLY, anywhere in the body.
+for _, secret in ipairs({ 'youAreAdmin', 'youRole', 'resultsPath', 'C:/Users/secret',
+    'resultsSave', 'onlineFeatures', 'prmUpdate', 'prmDiscord', 'webhookTail',
+    'cautionPasses', 'rmProtocol' }) do
+  check(not resp.body:find(secret, 1, true), 'the feed never forwards ' .. secret)
+end
+
+-- Every key, always present.
+local schema = feed.SCHEMA_KEYS
+for _, k in ipairs(schema.session) do
+  check(doc.session[k] ~= nil, 'session.' .. k .. ' is always present')
+end
+check(#doc.drivers == 6, 'six drivers: the spectator is counted, not listed (got ' .. #doc.drivers .. ')')
+check(doc.session.spectators == 1, 'one spectator')
+for _, row in ipairs(doc.drivers) do
+  for _, k in ipairs(schema.drivers) do
+    check(row[k] ~= nil, 'drivers[' .. tostring(row.id) .. '].' .. k .. ' is always present')
+  end
+end
+check(isArray(doc.drivers) and isArray(doc.grid) and isArray(doc.events), 'lists are lists')
+check(#doc.events == 0, 'no events from the first snapshot (no replaying the race as news)')
+
+-- The session.
+local s = doc.session
+check(s.phase == 'racing' and s.phaseText == 'Racing' and s.kind == 'race' and s.mode == 'laps',
+  'phase, its words, kind and mode')
+check(s.lap == 3 and s.lapTarget == 5 and s.lapText == '3/5' and s.lapsToGo == 3,
+  'the leader\'s lap: 3/5, three to go counting this one')
+check(s.flag == 'green' and s.flagText == 'GREEN FLAG', 'green flag')
+check(s.clock == 125.4 and s.clockText == '02:05', 'the race clock, mm:ss')
+check(s.layout == 'Club Circuit', 'the layout')
+check(s.jokerEnabled == true and s.heat == NULL, 'joker on, no heats')
+check(s.fastestLap ~= NULL and s.fastestLap.id == 1 and s.fastestLap.name == 'Ace'
+  and s.fastestLap.text == '1:23.456', 'the fastest lap, by display name')
+check(s.gridSource == 'locked', 'the grid is the real one')
+
+-- The drivers, formatted as the app formats them.
+local a, b, c, dn, e, f = driver(doc, 1), driver(doc, 2), driver(doc, 3), driver(doc, 4),
+  driver(doc, 5), driver(doc, 6)
+check(a.name == 'Ace' and a.account == 'Alice', 'the display name first, the account beside it')
+check(a.posText == 'P1' and a.gapText == '' and a.intervalText == '', 'the leader has no gap')
+check(a.gained == 2 and a.gainedText == '+2', 'P3 on the grid to P1: +2')
+check(b.gained == -1 and b.gainedText == '-1', 'P1 to P2: -1')
+check(a.lastLap == 83.456 and a.lastLapText == '1:23.456', 'last lap m:ss.sss')
+check(a.bestLapText == '1:23.456' and a.fastest == true and b.fastest == false, 'best lap, fastest marked')
+check(a.jokerText == 'L2' and b.jokerText == '×2!' and c.jokerText == '', 'joker: L2, ×2!, none')
+check(b.pitStops == 1 and a.pitStops == 0, 'pit stops, zero not null')
+check(b.gapText == '+1.2' and b.intervalText == '+1.2', 'a gap under a minute: +s.s')
+check(c.gapText == '+1:02.3', 'over a minute: +m:ss.s')
+check(dn.gapText == '+1 LAP' and dn.lapsDown == 1, 'a lap down: +1 LAP')
+check(e.gapText == '+2 LAPS' and e.intervalText == '+1 LAP', 'two down to the leader, one to the car ahead')
+check(c.penalty == 5 and a.resets == 1, 'penalty seconds and resets')
+check(f.out == true and f.posText == '-' and f.gapText == '' and f.statusText == 'DNF'
+  and f.outReason == 'retired', 'a DNF: out, no place, no gap, the reason')
+check(a.lapText == '3/5' and dn.lapText == '2/5', 'each driver\'s lap')
+
+-- The grid, sorted by slot.
+check(#doc.grid == 6 and doc.grid[1].slot == 1 and doc.grid[1].id == 2
+  and doc.grid[2].id == 3 and doc.grid[3].id == 1, 'the grid, slot order')
+
+-- The parts.
+local r = get('/drivers.json')
+local drivers = parseJson(r.body)
+check(r.code == 200 and isArray(drivers) and #drivers == 6, '/drivers.json is the list at the root')
+r = get('/grid.json')
+check(isArray(parseJson(r.body)), '/grid.json too')
+r = get('/session.json')
+check(parseJson(r.body).phase == 'racing', '/session.json is the session')
+r = get('/events.json')
+check(isArray(parseJson(r.body)), '/events.json is the event list')
+
+-- ===========================================================================
+-- 4. HTTP: routes, methods, limits, Host
+-- ===========================================================================
+r = get('/nope')
+check(r.code == 404, 'an unknown path is 404')
+r = get('/live.json', nil, 'POST')
+check(r.code == 405 and r.headers.allow == 'GET, HEAD, OPTIONS', 'POST is 405: read only')
+r = get('/live.json', nil, 'OPTIONS')
+check(r.code == 204 and r.headers['access-control-allow-private-network'] == 'true'
+  and r.headers['access-control-allow-methods'] == 'GET, HEAD, OPTIONS', 'OPTIONS answers the preflight')
+r = get('/live.json', nil, 'HEAD')
+check(r.code == 200 and r.body == '' and tonumber(r.headers['content-length']) > 0,
+  'HEAD: the headers, no body')
+r = get('/live.json?cb=123')
+check(r.code == 200 and parseJson(r.body).feed == 1, 'a query string is ignored')
+r = get('/')
+check(r.code == 200 and r.body:find('/overlay?view=tower', 1, true), 'the index links the overlays')
+r = get('/overlay?view=tower')
+check(r.code == 200 and r.headers['content-type'] == 'text/html; charset=utf-8'
+  and r.body:find('PRM overlay', 1, true), 'the overlay page is served from the game\'s files')
+r = get('/favicon.ico')
+check(r.code == 204, 'no favicon, no error')
+
+for _, h in ipairs({ 'localhost:8128', '127.0.0.1', '192.168.1.5:8128', 'streampc',
+    'streampc.local', '[::1]:8128', 'box.home.arpa' }) do
+  check(get('/live.json', h).code == 200, 'Host ' .. h .. ' is this PC or the local network')
+end
+for _, h in ipairs({ 'evil.example', 'evil.example:8128', 'attacker.com' }) do
+  check(get('/live.json', h).code == 403, 'Host ' .. h .. ' is turned away (DNS rebinding)')
+end
+r = exchange('GET /live.json HTTP/1.0\r\n\r\n')
+check(r.code == 200, 'no Host at all (HTTP/1.0) is answered')
+
+-- A request in three pieces.
+r = exchange(nil, { 'GET /live.j', 'son HTTP/1.1\r\nHo', 'st: 127.0.0.1\r\n\r\n' })
+check(r.code == 200 and parseJson(r.body).feed == 1, 'a request split over three reads')
+
+-- Too big a head.
+r = exchange('GET /live.json HTTP/1.1\r\nX-Pad: ' .. string.rep('a', 9000) .. '\r\n\r\n')
+check(r.code == 431, 'a head over 8 KB is 431')
+
+-- A reader that never finishes its request is dropped.
+do
+  local slow = newClient({ 'GET /live.json HTTP/1.1\r\n' })
+  fake.pending[#fake.pending + 1] = slow
+  pump(4)
+  check(not slow.closed, 'a request still coming is waited for')
+  pump(120)
+  check(slow.closed and slow:output() == '', 'and dropped after 5 s with nothing sent')
+end
+
+-- A served reader that does not hang up is closed for it.
+do
+  local c2 = newClient({ 'GET /live.json HTTP/1.1\r\n\r\n' })
+  fake.pending[#fake.pending + 1] = c2
+  pump(4)
+  check(parseResponse(c2:output()).code == 200 and not c2.closed,
+    'served: the reader is given the chance to hang up first')
+  pump(50)
+  check(c2.closed, 'and closed for it after 2 s')
+end
+
+-- ===========================================================================
+-- 5. Server-Sent Events
+-- ===========================================================================
+local sse = newClient({ 'GET /stream HTTP/1.1\r\nHost: localhost:8128\r\n\r\n' })
+fake.pending[#fake.pending + 1] = sse
+pump(2)
+local out = sse:output()
+check(out:find('HTTP/1.1 200 OK\r\n', 1, true) == 1, 'the stream answers 200')
+check(out:find('Content-Type: text/event-stream; charset=utf-8', 1, true), 'as an event stream')
+check(out:find('retry: 2000\n\n', 1, true), 'with a reconnect delay')
+local function frames(text)
+  local list = {}
+  for id, data in text:gmatch('id: (%d+)\nevent: state\ndata: ([^\n]*)\n\n') do
+    list[#list + 1] = { id = tonumber(id), doc = parseJson(data) }
+  end
+  return list
+end
+local fr = frames(out)
+check(#fr == 1 and fr[1].doc.feed == 1, 'and the current snapshot at once')
+check(not sse.closed, 'the stream stays open')
+
+-- A new state goes out as a frame.
+local st2 = race({ raceClock = 126.0 })
+feed.feedState(st2)
+pump(1)
+fr = frames(sse:output())
+check(#fr == 2 and fr[2].id > fr[1].id and fr[2].doc.session.clock == 126,
+  'each change is a frame, ids rising')
+
+-- Unchanged state: no frame.
+feed.feedState(copy(st2))
+pump(1)
+check(#frames(sse:output()) == 2, 'the same state again sends nothing')
+
+-- A slow reader: blocked, then two states; only the latest goes when it drains.
+sse.sendCap = 0
+feed.feedState(race({ raceClock = 127.0 }))
+pump(1)
+feed.feedState(race({ raceClock = 128.0 }))
+pump(1)
+sse.sendCap = nil
+pump(1)
+fr = frames(sse:output())
+check(#fr == 3 and fr[3].doc.session.clock == 128,
+  'a slow reader skips to the latest frame (got ' .. #fr .. ' frames)')
+
+-- A frame half sent when a newer one arrives: finished first, then the newer.
+sse.sendCap = 40
+feed.feedState(race({ raceClock = 129.0 }))
+pump(1)
+sse.sendCap = 0
+feed.feedState(race({ raceClock = 130.0 }))
+pump(1)
+sse.sendCap = nil
+pump(2)
+fr = frames(sse:output())
+check(#fr == 5 and fr[4].doc.session.clock == 129 and fr[5].doc.session.clock == 130,
+  'a half-sent frame is finished, then the newest follows')
+
+-- Quiet: a keepalive.
+pump(320)
+check(sse:output():find('\n: ka\n\n', 1, true), 'a keepalive after 15 s of quiet')
+
+-- More than 16 readers: the next is told to wait.
+local extra = {}
+for i = 1, 15 do
+  extra[i] = newClient({ 'GET /stream HTTP/1.1\r\n\r\n' })
+  fake.pending[#fake.pending + 1] = extra[i]
+end
+pump(5)
+check(#S.clients == 16, 'sixteen readers (got ' .. #S.clients .. ')')
+local over = newClient({ 'GET /stream HTTP/1.1\r\n\r\n' })
+fake.pending[#fake.pending + 1] = over
+pump(1)
+check(over:output():find('503', 1, true) and over.closed, 'the seventeenth gets a 503')
+for i = 1, 15 do extra[i].peerClosed = true end
+feed.feedState(race({ raceClock = 131.0 }))
+pump(2)
+check(#S.clients == 1, 'readers that hung up are dropped on the next send')
+pump(60)
+check(lastStatus().clients == 1 and lastStatus().streams == 1, 'and the panel hears the count')
+
+-- ===========================================================================
+-- 6. Events
+-- ===========================================================================
+local function lastEvents(doc0) return doc0.events end
+local function findEvent(doc0, kind, id)
+  for i = #doc0.events, 1, -1 do
+    local ev = doc0.events[i]
+    if ev.type == kind and (id == nil or ev.id == id) then return ev end
+  end
+end
+local base = race({ raceClock = 200 })
+feed.feedState(base)
+local before = live()
+local seq0 = before.seq
+
+local nxt = copy(base)
+nxt.raceClock = 201
+local ra = rowOf(nxt, 1)
+ra.lastLapOn, ra.lastLap, ra.raceBest, ra.currentLap = 3, 82.9, 82.9, 4
+nxt.bestLapTime = 82.9
+local rb = rowOf(nxt, 2)
+rb.jokerTaken, rb.jokerLap = 3, 4
+rb.pitStops = 2
+local rc = rowOf(nxt, 3)
+rc.penaltySeconds = 10
+local rd = rowOf(nxt, 4)
+rd.status, rd.outReason = 'dsq', 'contact'
+feed.feedState(nxt)
+doc = live()
+check(doc.seq > seq0, 'seq rises')
+local ev = findEvent(doc, 'lap', 1)
+check(ev and ev.lap == 3 and ev.time == 82.9 and ev.timeText == '1:22.900' and ev.pb == true
+  and ev.name == 'Ace' and ev.text == 'Ace: lap 3 1:22.900', 'a lap: number, time, personal best')
+ev = findEvent(doc, 'fastest')
+check(ev and ev.id == 1 and ev.timeText == '1:22.900', 'a new fastest lap')
+ev = findEvent(doc, 'joker', 2)
+check(ev and ev.lap == 4 and ev.count == 3 and ev.text == 'Bob takes the joker on lap 4', 'the joker')
+ev = findEvent(doc, 'pit', 2)
+check(ev and ev.stops == 2, 'a pit stop')
+ev = findEvent(doc, 'penalty', 3)
+check(ev and ev.seconds == 5 and ev.total == 10, 'a penalty: what was added and the total')
+ev = findEvent(doc, 'out', 4)
+check(ev and ev.status == 'dsq' and ev.reason == 'contact', 'out: disqualified, and why')
+for i = 2, #doc.events do
+  check(doc.events[i].seq > doc.events[i - 1].seq, 'event seq rises')
+end
+for _, e0 in ipairs(doc.events) do
+  for _, k in ipairs(schema.events[e0.type]) do
+    check(e0[k] ~= nil, 'event ' .. e0.type .. '.' .. k .. ' is always present')
+  end
+end
+
+-- The caution, the flag, the leader, the finish, the session.
+local n2 = copy(nxt)
+n2.flag, n2.cautionPending = 'yellow', true
+feed.feedState(n2)
+doc = live()
+ev = findEvent(doc, 'caution')
+check(ev and ev.state == 'called', 'a caution called')
+ev = findEvent(doc, 'flag')
+check(ev and ev.flag == 'yellow' and ev.from == 'green' and ev.text == 'CAUTION', 'the flag goes yellow')
+local n3 = copy(n2)
+n3.cautionPending, n3.caution, n3.cautionLaps = false, true, 1
+feed.feedState(n3)
+ev = findEvent(live(), 'caution')
+check(ev and ev.state == 'out', 'the caution made official')
+local n4 = copy(n3)
+n4.caution, n4.flag = false, 'green'
+-- Bob takes the lead.
+rowOf(n4, 1).position, rowOf(n4, 2).position = 2, 1
+table.sort(n4.drivers, function (x, y) return (x.position or 99) < (y.position or 99) end)
+feed.feedState(n4)
+doc = live()
+ev = findEvent(doc, 'caution')
+check(ev and ev.state == 'ended', 'the caution over')
+ev = findEvent(doc, 'leader')
+check(ev and ev.id == 2 and ev.prevId == 1 and ev.text == 'Bob leads, from Ace', 'a new leader')
+local n5 = copy(n4)
+rowOf(n5, 2).status, rowOf(n5, 2).finishTime = 'finished', 425.5
+n5.flagOut = true
+feed.feedState(n5)
+doc = live()
+ev = findEvent(doc, 'finish', 2)
+check(ev and ev.position == 1 and ev.timeText == '7:05.500' and ev.text == 'Bob finishes P1', 'a finish')
+check(doc.session.flag == 'checkered' and findEvent(doc, 'flag').flag == 'checkered', 'the checkered flag')
+local n6 = copy(n5)
+n6.phase = 'finished'
+feed.feedState(n6)
+ev = findEvent(live(), 'session')
+check(ev and ev.from == 'racing' and ev.to == 'finished' and ev.text == 'Race Over', 'the session ends')
+
+-- The countdown.
+local grid = race({ phase = 'countdown' })
+feed.feedState(grid)
+feed.feedCountdown(3)
+doc = live()
+check(doc.session.countdown == 3, 'the countdown number rides the session')
+ev = findEvent(doc, 'countdown')
+check(ev and ev.count == 3, 'and each number is an event')
+feed.feedCountdown(0)
+check(findEvent(live(), 'go') ~= nil, 'GO')
+feed.feedState(race({ phase = 'racing' }))
+check(live().session.countdown == NULL, 'the number goes with the countdown')
+
+-- The ring holds 30.
+for i = 1, 40 do
+  local t = race({ raceClock = 300 + i })
+  rowOf(t, 2).pitStops = 10 + i
+  feed.feedState(t)
+end
+doc = live()
+check(#doc.events == 30, 'the ring holds the last 30 events (got ' .. #doc.events .. ')')
+
+-- ===========================================================================
+-- 7. Formatting cases
+-- ===========================================================================
+-- Behind the pace car.
+local paced = race({ paceLap = true, pacing = true, flag = 'yellow' })
+for _, row in ipairs(paced.drivers) do row.outLap = true; row.currentLap = 1 end
+feed.feedState(paced)
+doc = live()
+check(driver(doc, 1).lapText == 'PACE' and doc.session.lapText == 'PACE', 'the formation lap reads PACE')
+check(doc.session.flag == 'yellow' and doc.session.flagText == 'PACE LAP', 'under the pace car')
+local pacedOn = race({ paceLap = true })
+rowOf(pacedOn, 1).currentLap = 4
+feed.feedState(pacedOn)
+check(driver(live(), 1).lapText == '3/5', 'and a racing lap is crossings minus the formation')
+
+-- A timed race: no target until the last lap is known.
+local timed = race({ raceMode = 'timed', raceTimeLimit = 600, raceLeft = 61.2 })
+feed.feedState(timed)
+doc = live()
+check(doc.session.lapTarget == NULL and doc.session.lapText == '3' and doc.session.mode == 'timed',
+  'a timed race has no lap target')
+check(doc.session.timeLeft == 61.2 and doc.session.timeLeftText == '01:02', 'time left, rounded up')
+timed.lastLapNum = 7
+feed.feedState(timed)
+check(live().session.lapTarget == 7, 'until the last lap is set')
+
+-- White flag on the last lap.
+local white = race()
+rowOf(white, 1).currentLap = 5
+feed.feedState(white)
+check(live().session.flag == 'white', 'the leader on the last lap: white')
+feed.feedState(race({ flag = 'red' }))
+check(live().session.flag == 'red' and live().session.flagText == 'RED FLAG', 'red outranks it')
+
+-- Qualifying: gaps between best laps.
+local q = race({ sessionKind = 'quali', phase = 'qualifying', qualiOutLap = true, sessionLaps = 3,
+  qualiTime = 75, qualiTimeLimit = 600, qualiLeft = 525 })
+q.drivers = {
+  { id = 1, name = 'Alice', status = 'qualifying', position = 1, currentLap = 3, qualiBest = 60.0 },
+  { id = 2, name = 'Bob', status = 'qualifying', position = 2, currentLap = 2, qualiBest = 61.25 },
+  { id = 3, name = 'Cara', status = 'qualifying', position = 3, currentLap = 1, outLap = true },
+}
+feed.feedState(q)
+doc = live()
+check(driver(doc, 2).gapText == '+1.3' and driver(doc, 2).intervalText == '+1.3',
+  'qualifying gap: best lap to best lap')
+check(driver(doc, 1).gapText == '' and driver(doc, 3).gapText == '', 'none for pole or no time')
+check(driver(doc, 1).lapText == '2/3' and driver(doc, 3).lapText == 'OUT', 'qualifying laps: 2/3, OUT')
+check(driver(doc, 1).bestLapText == '1:00.000' and driver(doc, 1).gained == NULL,
+  'best lap is the qualifying lap; no places gained in qualifying')
+check(doc.session.phaseText == 'Qualifying' and doc.session.lapText == '', 'no shared lap in qualifying')
+check(doc.session.timeLeftText == '08:45', 'qualifying time left')
+
+-- The provisional grid from qualifying, before one is called.
+local waiting = race({ phase = 'waiting' })
+waiting.drivers = {
+  { id = 1, name = 'Alice', status = 'waiting', qualiBest = 60.0 },
+  { id = 2, name = 'Bob', status = 'waiting', qualiBest = 61.0 },
+  { id = 3, name = 'Cara', status = 'waiting' },
+}
+feed.feedState(waiting)
+doc = live()
+check(doc.session.gridSource == 'quali' and #doc.grid == 2 and doc.grid[1].id == 1
+  and doc.grid[2].qualiBestText == '1:01.000', 'a provisional grid in qualifying order')
+
+-- Encoder edges.
+local weird = race()
+rowOf(weird, 1).alias = 'A "quoted"\n\tname\1'
+rowOf(weird, 2).gap = 0 / 0
+rowOf(weird, 3).gap = 1 / 3
+feed.feedState(weird)
+local raw = get('/live.json').body
+doc = parseJson(raw)
+check(driver(doc, 1).name == 'A "quoted"\n\tname\1', 'quotes, newlines and control characters survive')
+check(driver(doc, 2).gap == NULL, 'NaN is null, not invalid JSON')
+check(raw:find('"gap":0.333', 1, true) ~= nil, 'three decimals at most')
+
+-- ===========================================================================
+-- 8. LAN, Linux, ports
+-- ===========================================================================
+feed.feedSet(nil, nil, true)
+srv = currentServer()
+check(srv.host == '0.0.0.0' and srv.port == 8128, 'LAN on: listens on every interface')
+st = lastStatus()
+check(st.lan == true and st.lanIp == '192.168.1.50' and st.urls.lan == 'http://192.168.1.50:8128'
+  and st.urls.lanOverlay == 'http://192.168.1.50:8128/overlay', 'and says the address other PCs use')
+check(fake.servers[#fake.servers - 1].closed, 'the old listener was closed first')
+feed.feedSet(nil, nil, false)
+check(currentServer().host == '127.0.0.1', 'LAN off: this PC only again')
+
+jit.os = 'Linux'
+feed.feedSet(true, 8200)
+check(currentServer().opts.reuseaddr == true and currentServer().port == 8200,
+  'elsewhere reuseaddr is set (TIME_WAIT after a reload), on the new port')
+jit.os = 'Windows'
+
+local pushes = #statusPushes
+feed.feedSet(nil, 80)
+check(lastStatus().error and lastStatus().error:find('1024', 1, true) and #statusPushes > pushes,
+  'a port under 1024 is refused and said why')
+check(files['settings/raceManager/feed.json'].port == 8200, 'and not saved')
+feed.feedSet(nil, 'abc')
+check(lastStatus().error ~= nil, 'nor a port that is not a number')
+
+fake.bindError = 'address already in use'
+feed.feedSet(true, 9000)
+check(lastStatus().starting == true and not lastStatus().running, 'a port in use: retried')
+pump(120)
+check(lastStatus().starting == false and lastStatus().running == false
+  and lastStatus().error == 'Port 9000 is in use by another program. Pick another port.',
+  'then explained (got ' .. tostring(lastStatus().error) .. ')')
+fake.bindError = 'permission denied'
+feed.feedSet(true, 9001)
+pump(10)
+check(lastStatus().error and lastStatus().error:find('reserved', 1, true),
+  'a port Windows keeps for itself is explained as such')
+fake.bindError = nil
+feed.feedSet(true, 8128)
+check(lastStatus().running == true and lastStatus().error == nil, 'a free port: running, error cleared')
+
+-- ===========================================================================
+-- 9. Leaving, stopping, reloading
+-- ===========================================================================
+feed.feedOffline()
+doc = live()
+check(doc.connected == false and doc.session.phase == 'offline' and #doc.drivers == 0
+  and #doc.grid == 0, 'left the server: not connected, nothing listed')
+check(findEvent(doc, 'session').to == 'offline', 'and said as an event')
+
+local reader = newClient({ 'GET /stream HTTP/1.1\r\n\r\n' })
+fake.pending[#fake.pending + 1] = reader
+pump(2)
+local listener = currentServer()
+feed.feedStop('unload')
+check(listener.closed and reader.closed and #S.clients == 0, 'unload closes the listener and every reader')
+check(files['settings/raceManager/feed.json'].on == true, 'and leaves the setting on')
+local created = fake.created
+pump(10)
+check(fake.created == created, 'and opens nothing more')
+feed.feedBoot()
+check(fake.created == created + 1 and lastStatus().running, 'the next load brings it back')
+
+-- A reloaded copy closes the old listener before taking the port.
+local oldListener = currentServer()
+local feed2 = loadFeed()
+check(oldListener.closed, 'a reloaded module closes the listener the old copy left')
+feed2.feedBoot()
+check(currentServer() ~= oldListener and not currentServer().closed, 'and listens itself')
+feed2.feedStop('unload')
+
+-- The overlay missing from the install: a page that points at the data.
+overlayOnDisk = false
+feed = feed2
+S = feed.feedDebug()
+feed.feedBoot()
+r = get('/overlay')
+check(r.code == 200 and r.body:find('/live.json', 1, true), 'no overlay file: a page that points at the data')
+feed.feedStop('unload')
+
+-- ===========================================================================
+-- 10. The docs name every key
+-- ===========================================================================
+do
+  local fh = io.open('docs/REFERENCE.md', 'r')
+  local docs = fh and fh:read('*a') or ''
+  if fh then fh:close() end
+  local from = docs:find('\n## Broadcast feed', 1, true) or docs:find('\n### Broadcast feed', 1, true)
+  check(from ~= nil, 'docs/REFERENCE.md has a "Broadcast feed" section')
+  local section = from and docs:sub(from) or ''
+  local stop = section:find('\n## ', 3, true)
+  if stop then section = section:sub(1, stop) end
+  local function documented(key)
+    return section:find('`' .. key .. '`', 1, true) ~= nil
+  end
+  for group, keys in pairs(schema) do
+    if group == 'events' then
+      for kind, list in pairs(keys) do
+        check(documented(kind), 'the docs name the ' .. kind .. ' event')
+        for _, k in ipairs(list) do
+          check(documented(k), 'the docs name event key ' .. k .. ' (' .. kind .. ')')
+        end
+      end
+    else
+      for _, k in ipairs(keys) do
+        check(documented(k), 'the docs name ' .. group .. '.' .. k)
+      end
+    end
+  end
+  for _, route in ipairs({ '/live.json', '/drivers.json', '/grid.json', '/session.json',
+      '/events.json', '/stream', '/overlay' }) do
+    check(documented(route), 'the docs name the route ' .. route)
+  end
+end
+
+print(string.format('feed_test: %d checks, %d failures', checks, fails))
+if fails > 0 then os.exit(1) end

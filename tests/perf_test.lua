@@ -192,6 +192,43 @@ check((pushes['RaceManagerRoute'] or 0) <= 4,
   'the flag and route state are pushed on change, not on a schedule')
 
 -- ---------------------------------------------------------------------------
+-- 1b. The broadcast feed, on, costs the UI nothing
+-- ---------------------------------------------------------------------------
+-- It serves sockets, not the app: one second of racing with it listening (a
+-- fake socket with nobody reading) is the same pushes as without it, and the
+-- panel hears at most the one status it was turned on with.
+do
+  local fakeServer = {
+    setoption = function () return 1 end, bind = function () return 1 end,
+    listen = function () return 1 end, settimeout = function () end,
+    accept = function () return nil, 'timeout' end, close = function () end,
+  }
+  package.loaded.socket = nil
+  package.preload.socket = function ()
+    return { tcp = function () return fakeServer end }
+  end
+  RM.feedSet(true)
+  serverState({ phase = 'racing', sessionKind = 'race', totalLaps = 5,
+    maxResets = -1, flag = 'green', drivers = {} })
+  resetCounters()
+  for i = 1, 60 do
+    veh.y = veh.y + 0.6
+    RM.onUpdate(1 / 60)
+    -- The server's three state broadcasts a second.
+    if i % 20 == 0 then
+      serverState({ phase = 'racing', sessionKind = 'race', totalLaps = 5,
+        maxResets = -1, flag = 'green', raceClock = i / 60, drivers = {} })
+    end
+  end
+  check(pushTotal - (pushes['RaceManagerUpdate'] or 0) <= racingPushes,
+    string.format('the feed on adds no UI pushes to a second of racing (%d against %d)',
+      pushTotal - (pushes['RaceManagerUpdate'] or 0), racingPushes))
+  check((pushes['RaceManagerFeed'] or 0) == 0,
+    'and no feed status pushes while nothing changes')
+  RM.feedStop('unload')
+end
+
+-- ---------------------------------------------------------------------------
 -- 2. The start lights cost nothing after the countdown
 -- ---------------------------------------------------------------------------
 -- The lamps are markup gated on `countdown !== null` and animate with a CSS

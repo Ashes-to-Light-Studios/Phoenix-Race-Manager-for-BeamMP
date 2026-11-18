@@ -54,7 +54,7 @@ local ui     = readFile('ui/modules/apps/RaceManager/app.js')
 -- of these -- and the merge is a quoted string in a list, which on its own
 -- proves nothing about whether the module actually has the function.
 local clientModules = {}
-for _, m in ipairs({ 'derby', 'drag', 'maps', 'records', 'render', 'lights', 'radar' }) do
+for _, m in ipairs({ 'derby', 'drag', 'maps', 'records', 'render', 'lights', 'radar', 'feed' }) do
   clientModules[#clientModules + 1] = readFile('lua/ge/extensions/raceManager/' .. m .. '.lua')
 end
 

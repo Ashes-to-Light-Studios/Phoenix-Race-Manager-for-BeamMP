@@ -128,7 +128,10 @@ field runs without you, your car stays put as a ghost, and you watch with
 BeamNG's own camera controls. Streaming the night? **📺 Broadcast** then swaps
 the app for a [spectator's board](docs/REFERENCE.md#broadcast-board-spectators):
 the whole field, who is out and why, cup standings, and click a name to put the
-camera on that car.
+camera on that car. For your stream's own graphics, **Feed** on the menu bar
+serves the race to OBS, vMix or a page of your own from your PC, with a
+ready-made overlay included: see [Broadcast feed](docs/REFERENCE.md#broadcast-feed).
+It works on a rented server, because nothing runs on the server for it.
 
 **2. Build a track.** Open **Track** on the menu bar, then drive the course. At
 each timing gate, drive through it *in the direction of travel* and press
@@ -257,6 +260,7 @@ expect without touching any of it.
 | **[Results on Discord](docs/REFERENCE.md#posting-results-to-discord)** | Paste a channel's webhook URL on the Admin tab and every race, derby and drag tournament posts its results there as it closes, with the full results file attached. Qualifying too if you want it. For a server on your own machine (**Online features** on the Admin tab), and off until a webhook is set. |
 | **[Drag racing](docs/REFERENCE.md#drag-racing-parallel-game-mode)** | A tournament ladder down a drag strip: single or double elimination, or a points shootout. Two to eight cars a pass with any number going through, a christmas tree with real red lights, reaction times, elapsed times and trap speeds, and dial-in bracket racing. Scores into the cup on a table of its own. The strip is an ordinary point-to-point layout saved with the type Drag, so the track editor already builds one, and a practice pass lets one driver try it before a field turns up. |
 | **[Broadcast board](docs/REFERENCE.md#broadcast-board-spectators)** | A spectator's board for streaming: the whole field, the drivers who are out and why, cup standings, and click a name to put the camera on that car in orbit. |
+| **[Broadcast feed](docs/REFERENCE.md#broadcast-feed)** | Live race data for your stream's overlay software: positions, the starting grid, laps and last laps, gaps, who has taken the joker, pit stops, flags and a feed of what just happened, as JSON and a live stream on `http://127.0.0.1:8128`, plus a ready-made overlay for an OBS Browser Source. Served by your own game, so it works on a rented server: nothing runs on the server for it. |
 | **[Race Lights (PRM)](docs/REFERENCE.md#race-lights-prm)** | An optional second app with the start lights, the flags and the drag tree in a box you place anywhere on screen. GET READY is a steady caption, so the green is the first thing that changes. Start sounds for the countdown, the green and the tree, mutable from the panel. |
 | **[Radar (PRM)](docs/REFERENCE.md#radar-prm)** | An optional third app: the cars around you out to 25 m, at their real size and angle, red under 2 m and amber under 6 m with the gap shown, side-by-side spotter bars, ghosts as outlines, and in a race each car's position with lapped cars in blue. Fades away when nobody is near. |
 | **[Menu bar](docs/REFERENCE.md#the-menu-bar)** | Practice, records, the garage, the cup and every admin panel open from one row under the title and step out of the way when closed, so the board keeps the room. |

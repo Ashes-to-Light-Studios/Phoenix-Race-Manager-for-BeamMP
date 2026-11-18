@@ -1,0 +1,444 @@
+<!doctype html>
+<!--
+  Phoenix Race Manager: the optional BROADCAST OVERLAY.
+
+  Served by the game itself (lua/ge/extensions/raceManager/feed.lua) at
+  http://127.0.0.1:8128/overlay, for an OBS Browser Source or any browser.
+  It reads the same feed your own graphics would: /stream (Server-Sent
+  Events), falling back to polling /live.json.
+
+  Views, by query string:
+    ?view=tower    running order (default)     &rows=N  &gap=leader|interval
+    ?view=grid     the starting grid
+    ?view=banner   one line: flag, lap or clock, fastest lap
+    ?view=results  the classification
+    ?view=ticker   what just happened (laps, the joker, pit stops, flags)
+  And for any view: &class=GT3 (one class), &scale=1.5, &theme=light,
+  &poll=1 (no stream), &src=http://192.168.1.20:8128 (another PC's feed).
+
+  Everything is drawn with textContent: driver names are typed by players,
+  and nothing a player types may run inside your streaming software.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRM overlay</title>
+<style>
+  :root {
+    --bg: rgba(12, 14, 20, 0.86);
+    --bg-alt: rgba(26, 29, 38, 0.86);
+    --fg: #f2f4f8;
+    --muted: #9aa3b2;
+    --accent: #ff7a1a;
+    --purple: #b06cff;
+    --gain: #3ddc84;
+    --loss: #ff5c5c;
+    --line: rgba(255, 255, 255, 0.08);
+    --flag-green: #1db954;
+    --flag-yellow: #ffd400;
+    --flag-red: #e53935;
+    --flag-white: #f5f5f5;
+    --scale: 1;
+  }
+  :root[data-theme="light"] {
+    --bg: rgba(248, 249, 252, 0.92);
+    --bg-alt: rgba(232, 235, 242, 0.92);
+    --fg: #121722;
+    --muted: #5b6475;
+    --line: rgba(0, 0, 0, 0.08);
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--fg);
+    font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-size: calc(16px * var(--scale));
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .wrap { padding: 0.75em; display: inline-block; }
+  .hidden { display: none !important; }
+
+  /* Waiting for the game */
+  .waiting {
+    display: inline-flex; align-items: center; gap: 0.6em;
+    background: var(--bg); padding: 0.5em 0.9em; border-radius: 0.3em;
+    font-size: 0.85em; color: var(--muted);
+  }
+  .waiting::before {
+    content: ""; width: 0.6em; height: 0.6em; border-radius: 50%;
+    background: var(--accent); animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+
+  /* Header strip shared by tower, grid and results */
+  .head {
+    display: flex; align-items: stretch; background: var(--bg);
+    border-radius: 0.3em 0.3em 0 0; overflow: hidden; min-width: 17em;
+  }
+  .head .flag { width: 0.45em; flex: none; }
+  .head .title { padding: 0.45em 0.7em; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; flex: 1; white-space: nowrap; }
+  .head .meta { padding: 0.45em 0.7em; color: var(--muted); font-weight: 700; white-space: nowrap; }
+  .flag.green { background: var(--flag-green); }
+  .flag.yellow { background: var(--flag-yellow); }
+  .flag.red { background: var(--flag-red); }
+  .flag.white { background: var(--flag-white); }
+  .flag.checkered {
+    background: repeating-conic-gradient(#111 0 25%, #f5f5f5 0 50%) 0 0 / 0.5em 0.5em;
+  }
+  .flag.none { background: var(--muted); opacity: 0.4; }
+  .flagtext { padding: 0.25em 0.7em; font-size: 0.75em; font-weight: 800; letter-spacing: 0.08em; }
+  .flagtext.yellow { background: var(--flag-yellow); color: #111; }
+  .flagtext.red { background: var(--flag-red); color: #fff; }
+  .flagtext.white { background: var(--flag-white); color: #111; }
+  .flagtext.checkered { background: #111; color: #fff; }
+
+  /* Tower */
+  .rows { background: var(--bg); border-radius: 0 0 0.3em 0.3em; overflow: hidden; }
+  .row {
+    display: flex; align-items: center; height: 1.85em; border-top: 1px solid var(--line);
+    transition: background-color 0.6s;
+  }
+  .row:nth-child(even) { background: var(--bg-alt); }
+  .row.moved-up { background: rgba(61, 220, 132, 0.28); }
+  .row.moved-down { background: rgba(255, 92, 92, 0.22); }
+  .row.out { opacity: 0.55; }
+  .pos {
+    width: 1.9em; text-align: center; font-weight: 800; flex: none;
+  }
+  .row:first-child .pos { color: var(--accent); }
+  .bar { width: 0.22em; height: 1.2em; background: var(--accent); flex: none; border-radius: 0.1em; opacity: 0.8; }
+  .name { flex: 1; padding: 0 0.55em; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 6em; max-width: 11em; }
+  .gap { width: 5.2em; text-align: right; padding-right: 0.55em; color: var(--muted); font-weight: 600; font-size: 0.9em; white-space: nowrap; }
+  .row:first-child .gap { color: var(--fg); }
+  .badges { display: flex; gap: 0.25em; padding-right: 0.45em; flex: none; min-width: 1.6em; justify-content: flex-end; }
+  .badge {
+    font-size: 0.68em; font-weight: 800; padding: 0.08em 0.35em; border-radius: 0.2em;
+    background: var(--line); color: var(--fg); white-space: nowrap;
+  }
+  .badge.joker { background: var(--accent); color: #111; }
+  .badge.pit { background: #3b82f6; color: #fff; }
+  .badge.fast { background: var(--purple); color: #fff; }
+  .badge.out { background: var(--flag-red); color: #fff; }
+
+  /* Grid */
+  .gridbox { background: var(--bg); border-radius: 0 0 0.3em 0.3em; padding: 0.5em 0.6em 0.7em; }
+  .gridrow { display: flex; gap: 0.6em; }
+  .slot {
+    flex: 1; display: flex; align-items: center; gap: 0.5em; background: var(--bg-alt);
+    border-left: 0.2em solid var(--accent); border-radius: 0.2em; padding: 0.35em 0.55em;
+    margin-top: 0.45em; min-width: 9.5em;
+  }
+  .gridrow .slot:nth-child(2) { margin-top: 1.25em; }
+  .slot .n { font-weight: 800; color: var(--accent); width: 1.4em; }
+  .slot .who { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .slot .t { color: var(--muted); font-size: 0.8em; }
+
+  /* Banner */
+  .banner {
+    display: inline-flex; align-items: stretch; background: var(--bg); border-radius: 0.3em; overflow: hidden;
+  }
+  .banner > div { padding: 0.45em 0.8em; display: flex; flex-direction: column; justify-content: center; white-space: nowrap; }
+  .banner .flag { padding: 0; width: 0.5em; }
+  .banner .k { font-size: 0.62em; color: var(--muted); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+  .banner .v { font-weight: 800; font-size: 1.1em; }
+  .banner .sep { border-left: 1px solid var(--line); }
+  .banner .fast .v { color: var(--purple); }
+
+  /* Results */
+  table.results { border-collapse: collapse; background: var(--bg); border-radius: 0 0 0.3em 0.3em; overflow: hidden; min-width: 26em; }
+  table.results td { padding: 0.3em 0.6em; border-top: 1px solid var(--line); white-space: nowrap; }
+  table.results tr:nth-child(even) td { background: var(--bg-alt); }
+  table.results td.p { font-weight: 800; text-align: center; width: 1.6em; }
+  table.results td.nm { font-weight: 700; }
+  table.results td.num { text-align: right; color: var(--muted); }
+  table.results td.best.fast { color: var(--purple); font-weight: 700; }
+  table.results td.gain { color: var(--gain); text-align: right; }
+  table.results td.loss { color: var(--loss); text-align: right; }
+
+  /* Ticker */
+  .ticker { display: flex; flex-direction: column; gap: 0.35em; align-items: flex-start; }
+  .toast {
+    background: var(--bg); border-left: 0.25em solid var(--accent); border-radius: 0.2em;
+    padding: 0.4em 0.75em; font-weight: 700; animation: in 0.35s ease-out;
+    transition: opacity 0.8s;
+  }
+  .toast.joker { border-left-color: var(--accent); }
+  .toast.pit { border-left-color: #3b82f6; }
+  .toast.fastest { border-left-color: var(--purple); }
+  .toast.flag, .toast.caution { border-left-color: var(--flag-yellow); }
+  .toast.out, .toast.penalty { border-left-color: var(--flag-red); }
+  .toast.finish, .toast.leader { border-left-color: var(--flag-green); }
+  .toast.fading { opacity: 0; }
+  @keyframes in { from { transform: translateX(-1em); opacity: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="root">
+  <div class="waiting" id="waiting">Waiting for Phoenix Race Manager…</div>
+  <div id="view"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var q = new URLSearchParams(location.search);
+  var VIEW = (q.get('view') || 'tower').toLowerCase();
+  var ROWS = Math.max(1, Math.min(60, parseInt(q.get('rows'), 10) || 20));
+  var GAP = (q.get('gap') || 'leader').toLowerCase() === 'interval' ? 'interval' : 'leader';
+  var CLASS = q.get('class') || '';
+  var POLL_ONLY = q.get('poll') === '1';
+  var SRC = (q.get('src') || '').replace(/\/+$/, '');
+  var TICKER_HOLD = Math.max(2, parseFloat(q.get('hold')) || 8) * 1000;
+  var TICKER_MAX = Math.max(1, Math.min(10, parseInt(q.get('max'), 10) || 4));
+  var scale = parseFloat(q.get('scale'));
+  if (scale > 0 && scale < 10) { document.documentElement.style.setProperty('--scale', String(scale)); }
+  if ((q.get('theme') || '').toLowerCase() === 'light') { document.documentElement.setAttribute('data-theme', 'light'); }
+
+  var waitingEl = document.getElementById('waiting');
+  var viewEl = document.getElementById('view');
+
+  // ---------------------------------------------------------------- helpers
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) { e.className = cls; }
+    if (text !== undefined && text !== null) { e.textContent = String(text); }
+    return e;
+  }
+  function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+  function inClass(d) { return !CLASS || d.class === CLASS; }
+
+  function header(title, meta, flag) {
+    var h = el('div', 'head');
+    h.appendChild(el('div', 'flag ' + (flag || 'none')));
+    h.appendChild(el('div', 'title', title));
+    if (meta) { h.appendChild(el('div', 'meta', meta)); }
+    return h;
+  }
+  function sessionMeta(s) {
+    if (s.kind === 'quali') { return s.timeLeftText || s.clockText || s.phaseText; }
+    if (s.lapText) { return (s.lapText === 'PACE' ? '' : 'LAP ') + s.lapText; }
+    return s.timeLeftText || s.clockText || s.phaseText;
+  }
+
+  // --------------------------------------------------------------- the views
+  var lastPos = {};      // id -> position, for the moved flash
+  function tower(doc) {
+    var s = doc.session;
+    var frag = document.createDocumentFragment();
+    var title = s.kind === 'quali' ? 'Qualifying' : (s.phase === 'finished' ? 'Result' : (s.layout || 'Race'));
+    frag.appendChild(header(title, sessionMeta(s), s.flag));
+    if (s.flagText && s.flag !== 'green') {
+      var ft = el('div', 'flagtext ' + s.flag, s.flagText);
+      frag.appendChild(ft);
+    }
+    var rows = el('div', 'rows');
+    var list = doc.drivers.filter(inClass).slice(0, ROWS);
+    list.forEach(function (d, i) {
+      var r = el('div', 'row' + (d.out ? ' out' : ''));
+      var was = lastPos[d.id];
+      if (was && d.position && was !== d.position && !d.out) {
+        r.classList.add(d.position < was ? 'moved-up' : 'moved-down');
+        setTimeout(function () { r.classList.remove('moved-up', 'moved-down'); }, 1200);
+      }
+      r.appendChild(el('div', 'pos', CLASS && d.classPos ? d.classPos : (d.out ? '–' : (d.position || i + 1))));
+      r.appendChild(el('div', 'bar'));
+      r.appendChild(el('div', 'name', d.name));
+      var gap;
+      if (d.out) { gap = d.statusText; }
+      else if (s.kind === 'quali') { gap = (i === 0 || !d.gapText) ? (d.bestLapText || 'NO TIME') : d.gapText; }
+      else if (i === 0) { gap = d.status === 'finished' ? d.finishText : (s.phase === 'finished' ? d.finishText : 'LEADER'); }
+      else { gap = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText || ''; }
+      r.appendChild(el('div', 'gap', gap));
+      var b = el('div', 'badges');
+      if (d.fastest) { b.appendChild(el('span', 'badge fast', 'FL')); }
+      if (s.jokerEnabled && d.jokerTaken > 0) { b.appendChild(el('span', 'badge joker', d.jokerTaken > 1 ? 'J×' + d.jokerTaken : 'J')); }
+      // PIT, not P1: on a broadcast "P1" is a position.
+      if (d.pitStops > 0) { b.appendChild(el('span', 'badge pit', d.pitStops > 1 ? 'PIT×' + d.pitStops : 'PIT')); }
+      if (d.penalty > 0) { b.appendChild(el('span', 'badge out', '+' + d.penalty + 's')); }
+      r.appendChild(b);
+      rows.appendChild(r);
+    });
+    doc.drivers.forEach(function (d) { lastPos[d.id] = d.position; });
+    frag.appendChild(rows);
+    return frag;
+  }
+
+  function grid(doc) {
+    var s = doc.session;
+    var frag = document.createDocumentFragment();
+    var title = s.gridSource === 'quali' ? 'Provisional grid' : 'Starting grid';
+    frag.appendChild(header(title, s.layout || '', 'none'));
+    var box = el('div', 'gridbox');
+    var list = doc.grid.filter(inClass).slice(0, ROWS);
+    if (!list.length) { box.appendChild(el('div', 'slot', 'No grid yet')); }
+    for (var i = 0; i < list.length; i += 2) {
+      var row = el('div', 'gridrow');
+      [list[i], list[i + 1]].forEach(function (g) {
+        if (!g) { row.appendChild(el('div', 'slot hidden')); return; }
+        var c = el('div', 'slot');
+        c.appendChild(el('span', 'n', g.slot));
+        c.appendChild(el('span', 'who', g.name));
+        if (g.qualiBestText) { c.appendChild(el('span', 't', g.qualiBestText)); }
+        row.appendChild(c);
+      });
+      box.appendChild(row);
+    }
+    frag.appendChild(box);
+    return frag;
+  }
+
+  function banner(doc) {
+    var s = doc.session;
+    var b = el('div', 'banner');
+    b.appendChild(el('div', 'flag ' + (s.flag || 'none')));
+    function cell(k, v, cls) {
+      if (v === null || v === undefined || v === '') { return; }
+      var c = el('div', 'sep' + (cls ? ' ' + cls : ''));
+      c.appendChild(el('span', 'k', k));
+      c.appendChild(el('span', 'v', v));
+      b.appendChild(c);
+    }
+    cell(s.kind === 'quali' ? 'Qualifying' : 'Session', s.flagText && s.flag !== 'green' ? s.flagText : s.phaseText);
+    if (s.kind !== 'quali' && s.lapText) { cell('Lap', s.lapText); }
+    if (s.timeLeftText) { cell('Time left', s.timeLeftText); }
+    else if (s.clockText) { cell('Time', s.clockText); }
+    if (s.countdown) { cell('Start', s.countdown); }
+    if (s.fastestLap) { cell('Fastest lap', s.fastestLap.name + '  ' + s.fastestLap.text, 'fast'); }
+    return b;
+  }
+
+  function results(doc) {
+    var s = doc.session;
+    var frag = document.createDocumentFragment();
+    var over = s.phase === 'finished';
+    var title = s.kind === 'quali' ? (over ? 'Qualifying result' : 'Qualifying')
+      : (over ? 'Result' : 'Standings');
+    frag.appendChild(header(title, s.layout || '', s.flag));
+    var t = el('table', 'results');
+    doc.drivers.filter(inClass).slice(0, ROWS).forEach(function (d, i) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'p', d.out ? '–' : (CLASS && d.classPos ? d.classPos : d.position)));
+      tr.appendChild(el('td', 'nm', d.name));
+      if (s.kind === 'quali') {
+        tr.appendChild(el('td', 'num', d.bestLapText || 'no time'));
+        tr.appendChild(el('td', 'num', i === 0 ? '' : d.gapText));
+      } else {
+        tr.appendChild(el('td', 'num', d.out ? d.statusText : (i === 0 ? d.finishText : (d.gapText || d.finishText))));
+        tr.appendChild(el('td', 'num best' + (d.fastest ? ' fast' : ''), d.bestLapText));
+        var g = d.gained;
+        tr.appendChild(el('td', g > 0 ? 'gain' : (g < 0 ? 'loss' : 'num'), d.gainedText));
+      }
+      t.appendChild(tr);
+    });
+    frag.appendChild(t);
+    return frag;
+  }
+
+  // The ticker keeps its own list: an event shows for TICKER_HOLD, once.
+  var seenSeq = null;      // events up to here were on screen before we looked
+  var shown = [];          // { seq, node, until }
+  var tickerBox = null;
+  function ticker(doc) {
+    if (!tickerBox) { tickerBox = el('div', 'ticker'); }
+    var events = doc.events || [];
+    if (seenSeq === null) {
+      // The first look: what already happened is not news.
+      seenSeq = events.length ? events[events.length - 1].seq : 0;
+    }
+    events.forEach(function (e) {
+      if (e.seq <= seenSeq) { return; }
+      seenSeq = e.seq;
+      if (!e.text) { return; }
+      if (CLASS && e.id !== null && doc.drivers.some(function (d) { return d.id === e.id && d.class !== CLASS; })) { return; }
+      var node = el('div', 'toast ' + e.type, e.text);
+      tickerBox.insertBefore(node, tickerBox.firstChild);
+      shown.unshift({ seq: e.seq, node: node, until: Date.now() + TICKER_HOLD });
+    });
+    while (shown.length > TICKER_MAX) {
+      var old = shown.pop();
+      if (old.node.parentNode) { old.node.parentNode.removeChild(old.node); }
+    }
+    return tickerBox;
+  }
+  setInterval(function () {
+    var now = Date.now();
+    shown = shown.filter(function (s) {
+      if (now < s.until) { return true; }
+      s.node.classList.add('fading');
+      setTimeout(function () { if (s.node.parentNode) { s.node.parentNode.removeChild(s.node); } }, 900);
+      return false;
+    });
+  }, 250);
+
+  var VIEWS = { tower: tower, grid: grid, banner: banner, results: results, ticker: ticker };
+  var render = VIEWS[VIEW] || tower;
+
+  // ------------------------------------------------------------ the data
+  var lastSeq = -1, lastEpoch = null;
+  function show(doc) {
+    if (!doc || typeof doc !== 'object' || doc.feed !== 1) { return; }
+    if (doc.epoch === lastEpoch && doc.seq <= lastSeq) { return; }
+    lastEpoch = doc.epoch; lastSeq = doc.seq;
+    var live = doc.connected === true;
+    waitingEl.classList.toggle('hidden', live);
+    viewEl.classList.toggle('hidden', !live);
+    if (!live) { return; }
+    var out = render(doc);
+    if (out !== tickerBox || viewEl.firstChild !== tickerBox) {
+      clear(viewEl);
+      viewEl.appendChild(out);
+    }
+  }
+  function offline() {
+    waitingEl.classList.remove('hidden');
+    viewEl.classList.add('hidden');
+  }
+
+  var pollTimer = null, failures = 0;
+  function poll() {
+    fetch(SRC + '/live.json', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (doc) { failures = 0; show(doc); })
+      .catch(function () { failures += 1; if (failures > 2) { offline(); } });
+  }
+  function startPolling() {
+    if (pollTimer) { return; }
+    poll();
+    pollTimer = setInterval(poll, 1000);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function connect() {
+    if (POLL_ONLY || typeof EventSource === 'undefined') { startPolling(); return; }
+    var es = new EventSource(SRC + '/stream');
+    var opened = false, errors = 0;
+    // No stream in 5 s (a browser source out of connections, a proxy): poll,
+    // and try the stream again later.
+    var giveUp = setTimeout(function () { if (!opened) { es.close(); startPolling(); setTimeout(retry, 15000); } }, 5000);
+    function retry() { stopPolling(); connect(); }
+    es.addEventListener('open', function () { opened = true; errors = 0; stopPolling(); });
+    es.addEventListener('state', function (ev) {
+      opened = true;
+      try { show(JSON.parse(ev.data)); } catch (e) { /* a torn frame: the next one is whole */ }
+    });
+    es.addEventListener('error', function () {
+      errors += 1;
+      if (errors >= 3) {
+        clearTimeout(giveUp);
+        es.close();
+        offline();
+        startPolling();
+        setTimeout(retry, 15000);
+      }
+    });
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

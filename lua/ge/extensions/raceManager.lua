@@ -6356,6 +6356,20 @@ do
   end
 end
 
+-- The broadcast feed: race data for a stream's overlay, served on this PC from
+-- the RM_Update every client already gets, so nothing changes on the server
+-- (and it works on a rented host). See feed.lua.
+do
+  local feed = require('raceManager/feed')
+  feed.init({ build = RM_BUILD })
+  for _, name in ipairs({
+    'feedBoot', 'feedSet', 'feedStatus', 'feedState', 'feedCountdown',
+    'feedOffline', 'feedStop', 'feedUpdate',
+  }) do
+    M[name] = feed[name]
+  end
+end
+
 -- Props get their host here, once groundAt and the renderer exist.
 props.init({
   groundAt = groundAt, ownVehicle = ownVehicle, palette = render.palette,
@@ -6427,6 +6441,7 @@ function M.onUpdate(dt)
   -- The Radar app: a scan four times a second alone, twenty with a car near.
   if M.radarUpdate then M.radarUpdate(dt) end
   M.splashUpdate(dt)        -- the welcome splash, only while it is up
+  M.feedUpdate(dt)          -- the broadcast feed: one comparison while it is off
   -- Props: the world follows props.list; the overlay only on the Props tab.
   props.update(dt)
   props.draw()
@@ -8710,6 +8725,8 @@ local function onServerUpdate(rawData)
   end
   guihooks.trigger('RaceManagerUpdate', data)
   if M.lightsSync then M.lightsSync() end
+  -- The broadcast feed reads it, never writes it (and is guarded inside).
+  if M.feedState then M.feedState(data) end
 end
 
 -- The server assigned a starting slot: stand on it and hold for the countdown.
@@ -8959,6 +8976,7 @@ local function onServerCountdown(rawData)
   if count and count <= 0 then releaseGridHold('race') end
   guihooks.trigger('RaceManagerCountdown', data)
   if M.lightsCountdown then M.lightsCountdown(count) end
+  if M.feedCountdown then M.feedCountdown(count) end
 end
 
 -- The map's layouts, with checkpoint arrays for the panel's preview.
@@ -9923,6 +9941,8 @@ end
 
 function M.onExtensionLoaded()
   bindServerHandlers()
+  -- The broadcast feed, if it was left on.
+  M.feedBoot()
   log('I', 'raceManager', 'Race Manager client bridge loaded (build ' .. RM_BUILD
     .. ', multiplayer=' .. tostring(inMultiplayer()) .. ')')
 end
@@ -10009,6 +10029,8 @@ local function resetToIdle(reason)
 end
 
 function M.onExtensionUnloaded()
+  -- The feed's port goes with the extension; the setting stays.
+  M.feedStop('unload')
   -- Resident across sessions (manual unload), so purge explicitly.
   resetToIdle('extension unloaded')
   -- No frame is coming to take the props out.
@@ -10032,6 +10054,8 @@ local function onSessionLeave()
   log('I', 'raceManager', 'BeamMP session ended: clearing local race state')
   nametag.clearAll()
   M.splashReset()
+  -- Readers see "not connected" rather than a frozen race.
+  M.feedOffline()
   resetToIdle('BeamMP session ended')
 end
 
