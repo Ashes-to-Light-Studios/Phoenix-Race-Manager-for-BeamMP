@@ -2922,6 +2922,225 @@ The board is resizable and fades with the ◑ slider like every other panel, and
 it keeps **its own stored size**: a stream graphic and a driver's leaderboard
 are not the same thing to measure.
 
+## Broadcast feed
+
+Live race data for your stream's overlay software: the running order, the
+starting grid, laps and lap times, gaps, who has taken the joker, pit stops,
+flags, and what just happened. Your own game serves it **on your own PC**, so a
+browser source in OBS, a vMix data source, or a page you wrote yourself can read
+it as the race runs.
+
+**It works on a rented server.** Nothing runs on the server for it. Every player's
+game already receives the whole race about three times a second over BeamMP's
+own connection; that is how the leaderboard works. The feed takes that copy and
+serves it from your game on `http://127.0.0.1:8128`. The server opens no port,
+starts no process and never goes online by itself (compare
+[Online features](#online-features), which do, and are off on game hosts for
+that reason). Any game connected to the server can run the feed, the race
+director's or a commentator's spectating from another PC.
+
+**It runs while your game is connected to the server.** Leaving the server
+unloads the mod with it, and the feed with it; your overlay shows "waiting"
+until you are back, and picks up again by itself.
+
+### Turning it on
+
+Open **Feed** on the menu bar (everyone has it: it is your own PC's port) and
+press **Turn on**. It stays on, across sessions and game restarts, until you
+turn it off; the setting is kept in your BeamNG user folder
+(`settings/raceManager/feed.json`), not on the server.
+
+- **Port.** 8128 unless you change it. Anything from 1024 to 65535; change it
+  if another program has 8128, and the panel says so if one does.
+- **Other PCs.** Off: only this PC can read the feed. **Allow** lets a second
+  streaming PC on your network read it too, and asks first: Windows will ask to
+  let BeamNG through its firewall (allow **Private** networks). The panel then
+  shows the address the other PC uses.
+- **The links.** Once it is running the panel lists the overlay and data links;
+  click one to select it, ready to copy. It also counts what is reading it.
+
+### What it serves
+
+| Link | What it is |
+|---|---|
+| `/overlay` | The ready-made overlay page (below). For an OBS Browser Source. |
+| `/live.json` | Everything, one JSON document. Poll it as often as you like. |
+| `/stream` | The same document pushed as it changes ([Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)): event `state`, about three a second while a session runs. |
+| `/drivers.json` | Just the running order, a list at the top level (vMix, Companion). |
+| `/grid.json` | Just the starting grid, a list. |
+| `/session.json` | Just the session: lap, clock, flag. |
+| `/events.json` | Just the last 30 events, a list. |
+| `/` | A page with all of these as links. |
+
+Every answer carries `Access-Control-Allow-Origin: *` and `Cache-Control:
+no-store`, so a page from anywhere can read it and nothing caches it. It is read
+only: there is no address that changes anything in the game.
+
+### OBS, vMix and your own graphics
+
+**OBS.** Add a **Browser** source, untick *Local file*, and paste
+`http://127.0.0.1:8128/overlay?view=tower`. Width and height to taste (the page
+is transparent). One source per view you want on screen.
+
+**vMix.** *Data Sources* → *JSON*, URL `http://127.0.0.1:8128/drivers.json`,
+refresh every second, then bind a GT Title's fields to `name`, `posText`,
+`gapText` and so on. Every field has a ready-formatted text version (the ones
+ending in `Text`), so no scripting is needed. Or add the overlay page as a *Web
+Browser* input.
+
+**Your own page.** Listen to the stream, and fall back to polling:
+
+```js
+const feed = new EventSource('http://127.0.0.1:8128/stream');
+feed.addEventListener('state', (e) => {
+  const race = JSON.parse(e.data);
+  // race.session.lapText, race.drivers[0].name, race.events ...
+});
+```
+
+```js
+const race = await (await fetch('http://127.0.0.1:8128/live.json', { cache: 'no-store' })).json();
+```
+
+### The overlay
+
+`/overlay` is a ready-made page you can use as it is. It reads `/stream` and
+falls back to polling `/live.json`. Pick what it shows with the address:
+
+| Address | Shows |
+|---|---|
+| `?view=tower` | The running order: position, name, gap, and badges for the fastest lap (**FL**), the joker (**J**, **J×2**), pit stops (**PIT**) and penalties. Rows flash green or red when they move. |
+| `?view=grid` | The starting grid, two by two. Before a grid is called, the provisional grid from qualifying. |
+| `?view=banner` | One line: flag, session, lap, clock or time left, fastest lap. |
+| `?view=results` | The classification: gap, best lap and places gained. |
+| `?view=ticker` | What just happened, a few lines at a time: laps, the joker, pit stops, flags, the lead. |
+
+Add any of: `&rows=10` (how many drivers), `&gap=interval` (to the car ahead
+rather than the leader), `&class=GT4` (one class), `&scale=1.5`, `&theme=light`,
+`&poll=1` (no stream), `&src=http://192.168.1.20:8128` (another PC's feed). Names
+are drawn as text, never as HTML: a driver called `<script>` is just a name.
+
+### The data
+
+Everything below is **always there**: a value that is not known is `null`, a
+count with nothing in it is `0`, and a list with nothing in it is `[]`. Times
+are seconds. Every field ending in `Text` is the same value formatted the way
+the app shows it (`1:23.456`, `+1.2`, `+1:02.3`, `+1 LAP`, `+2 LAPS`, `3/10`,
+`PACE`), or `""` when there is nothing to show.
+
+**The document.** `feed` is the schema version, `1`. `source` is
+`"Phoenix Race Manager"`, `build` the client's version and `serverBuild` the
+server's. `seq` goes up by one with every change, and `epoch` is when the feed
+started (a new `epoch` means `seq` started again). `ts` is when this copy was
+made. `connected` is `false` until the race arrives and after leaving the
+server. Then `session`, `drivers`, `grid` and `events`.
+
+**`session`**
+
+| Field | Meaning |
+|---|---|
+| `phase` | `waiting`, `grid`, `countdown`, `qualifying`, `racing`, `finished`, or `offline` when not connected. `phaseText` is the app's word for it. |
+| `kind` | `race` or `quali`. |
+| `mode` | A race's `laps`, `timed` or `endurance`; `null` in qualifying. |
+| `pointToPoint` | A sprint stage rather than a circuit. |
+| `layout` | The loaded layout's name. |
+| `lap`, `lapTarget`, `lapText` | The lap the leader is on, the lap the race ends on (`null` in a timed race until the last lap is known), and both as text (`3/10`, `PACE`). Blank in qualifying. |
+| `lapsToGo` | Laps still to run counting this one: `1` on the last lap. |
+| `clock`, `clockText` | The race clock from the green (qualifying's clock in qualifying). |
+| `timeLimit`, `timeLeft`, `timeLeftText` | A timed race's or qualifying's limit and what is left. |
+| `clockStopped` | The clock is stopped under red. |
+| `flag`, `flagText` | The flag the broadcast should show: `none`, `green`, `yellow`, `red`, `white` (the leader's last lap) or `checkered`. `flagText` says why: `CAUTION`, `PACE LAP`, `FINAL LAP`, `RED FLAG`... |
+| `caution`, `cautionPending`, `cautionLaps` | A caution is out (positions frozen), called but not yet official, and the laps run under it. |
+| `pacing`, `restartPending`, `greenReady` | Behind the pace car; a restart called; GET READY is out. |
+| `finalLap`, `raceExpired`, `finishCloseIn` | The final lap called; a timed race's clock ran out; seconds until the finish closes. |
+| `countdown` | 3, 2, 1 during the start countdown, otherwise `null`. |
+| `jokerEnabled` | The joker lap is in force. |
+| `heat` | In a heat program, the heat running (`current`) and how many there are (`count`); otherwise `null`. |
+| `fastestLap` | The session's fastest lap: the driver's `id` and `name`, the `time` and its `text`; or `null`. |
+| `entrants`, `spectators` | Drivers in the session, and players watching (counted, never listed). |
+| `gridSource` | `locked` once the grid is called, `quali` for a provisional grid from qualifying times, otherwise `null`. |
+
+**`drivers`**, in running order (qualifying: by best lap). Spectators are left out.
+
+| Field | Meaning |
+|---|---|
+| `id` | The player's id on the server, the key to everything else. |
+| `name`, `account` | The display name (the alias, if one is set) and the BeamMP account name. |
+| `position`, `posText` | Place, and `P3` (or `-` once out). |
+| `class`, `classPos` | Class and place in it, when classes are used. |
+| `status`, `statusText` | `racing`, `qualifying`, `finished`, `dnf`, `dsq`, `gridded`, `called`, `waiting`, and the app's word for it. |
+| `out`, `outReason` | Retired or disqualified, and the ruling. |
+| `gridPos`, `gained`, `gainedText` | Starting slot, and places gained since (`+2`, `-1`). |
+| `lap`, `lapText` | The lap this driver is on (`3/10`, `PACE`, `OUT`). |
+| `lapsLed` | Laps led. |
+| `lastLap`, `lastLapText` | The lap just completed. `null` when it set no time: a race's standing-start lap, a cut lap. |
+| `bestLap`, `bestLapText` | Best lap this session (the qualifying lap in qualifying). |
+| `qualiBest`, `qualiBestText` | Best qualifying lap. |
+| `fastest` | Holds the session's fastest lap. |
+| `gap`, `gapText` | Behind the leader. In qualifying, best lap to pole's. |
+| `interval`, `intervalText` | Behind the car ahead. |
+| `lapsDown` | Laps behind the leader. |
+| `jokerTaken`, `jokerLap`, `jokerText` | How many times the joker was taken, the lap, and `L4` (or `×2!` twice). |
+| `pitStops` | Pit stops this session. |
+| `finishTime`, `finishText` | Race time at the flag. |
+| `penalty` | Time penalties, in seconds. |
+| `resets` | Resets used. |
+
+**`grid`**: `slot`, `id`, `name`, `class`, `qualiBest`, `qualiBestText`, in slot
+order.
+
+**`events`**: the last 30 things that happened, oldest first. Each has `seq`
+(rising; use it to tell new from seen), `type`, `ts`, `clock` (the race clock),
+the driver's `id` and `name` (`null` for the session's own), and a ready-made
+`text` line. None are made from the first copy after the feed starts, so a feed
+turned on mid-race does not replay the race as news.
+
+| `type` | Also carries | When |
+|---|---|---|
+| `session` | `from`, `to`, `kind` | The phase changes. |
+| `countdown` | `count` | Each number of the start countdown. |
+| `go` | | The start. |
+| `abort` | | The start is called off. |
+| `flag` | `flag`, `from` | The flag changes. |
+| `caution` | `state` (`called`, `out`, `withdrawn`, `ended`), `laps` | A caution is called, made official, withdrawn or over. |
+| `lap` | `lap`, `time`, `timeText`, `pb` | A driver completes a lap; `pb` when it is their best. |
+| `fastest` | `time`, `timeText` | A new fastest lap of the session. |
+| `joker` | `lap`, `count` | A driver takes the joker. |
+| `pit` | `stops`, `lap` | A driver pits. |
+| `leader` | `prevId`, `prevName` | The lead changes (in qualifying, provisional pole). |
+| `finish` | `position`, `time`, `timeText` | A driver takes the flag. |
+| `out` | `status`, `reason` | A driver retires or is disqualified. |
+| `penalty` | `seconds`, `total` | A time penalty: what was added, and the total. |
+
+**What is never in it.** The feed is built from the lists above and nothing
+else. Anything that only an admin's game receives (passwords, the results folder
+on the server, the Discord webhook, update state) never reaches it, even when
+the game serving it is an admin's.
+
+**Changes.** New fields may be added without a new `feed` number; a field is
+never renamed, removed or changed in meaning without one. Read the fields you
+use and ignore the rest.
+
+### Troubleshooting
+
+- **"Port 8128 is in use by another program."** Pick another port in the panel
+  and use it in your links.
+- **"Port N is reserved on this PC."** Windows keeps some port ranges for
+  Hyper-V and WSL. Pick another, well away from it (8128, 9128, 18128...).
+- **Use `127.0.0.1`, not `localhost`.** Some PCs try `localhost` as IPv6 first,
+  and the feed listens on IPv4.
+- **The overlay says "Waiting for Phoenix Race Manager...".** The game is not
+  connected to a Race Manager server, or the feed is off. It reconnects by
+  itself.
+- **Another PC cannot reach it.** **Allow** must be on, Windows must have let
+  BeamNG through its firewall on a **Private** network, and the address is the
+  one the panel shows, not `127.0.0.1`.
+- **A page on the internet gets 403.** The feed only answers requests addressed
+  to this PC or the local network, which keeps a web page from reading it
+  through a borrowed name.
+- **Many OBS sources stall.** A browser holds about six connections to one
+  address. Use fewer overlay sources, or add `&poll=1` to some.
+
 ## Cup points
 
 A **cup** is a championship run across several events. It can be **all races,
@@ -3189,6 +3408,7 @@ these were collapsed sections.
 | **Drag** | admins | The drag tournament: format, lanes, the tree, dial-ins and the bracket |
 | **Practice** | everyone | Timed laps on your own, on an approved track (see [Free practice](#free-practice)) |
 | **Records** | everyone | The lap records board for each layout on this map |
+| **Feed** | everyone | The broadcast feed: race data for your stream's overlay, served on this PC (see [Broadcast feed](#broadcast-feed)) |
 | **Map** | drivers | Call a vote to switch maps, while voting is open |
 | **Admin** | admins | Master passwords, results housekeeping, the map switch, display names |
 | 🔊 | everyone | Start sounds on or off (see [Race Lights (PRM)](#race-lights-prm)) |

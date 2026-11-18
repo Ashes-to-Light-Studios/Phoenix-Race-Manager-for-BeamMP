@@ -526,6 +526,11 @@ local function newRecord(pid)
     -- field is spread round the circuit.
     outLap     = false,
     raceBest   = nil,        -- best race lap (seconds)
+    -- The broadcast feed (client feed.lua): the last lap's time (nil when it set
+    -- none: the standing start, a cut lap) and the crossing it was completed on,
+    -- which tells a new lap from the same time twice.
+    lastLap    = nil,
+    lastLapOn  = nil,
     currentLap = 0,          -- lap the driver is currently on (1-based once racing)
     lapsLed    = 0,          -- laps this driver crossed the line first on
     finishTime = nil,        -- server race clock at final-lap completion
@@ -1160,6 +1165,9 @@ local DRIVER_WIRE_FIELDS = {
   -- Checkpoint skips: warnings spent, penalty seconds, lift units owed and the
   -- seconds left to serve them. Zero goes out as nil (driverForWire).
   'checkpointWarningsUsed', 'penaltySeconds', 'liftOwed', 'liftWindowLeft',
+  -- The broadcast feed (client feed.lua): the last lap, the crossing it was
+  -- completed on, and pit stops. Zero stops go out as nil (driverForWire).
+  'lastLap', 'lastLapOn', 'pitStops',
 }
 
 -- The projection buffer lives ON the record and is reused: no allocation per
@@ -1179,6 +1187,7 @@ local function driverForWire(rec)
   if wire.checkpointWarningsUsed == 0 then wire.checkpointWarningsUsed = nil end
   if wire.penaltySeconds == 0 then wire.penaltySeconds = nil end
   if wire.liftOwed == 0 then wire.liftOwed = nil end
+  if wire.pitStops == 0 then wire.pitStops = nil end
   return wire
 end
 
@@ -1241,7 +1250,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.26.0'
+local RM_BUILD = '0.27.0'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -3030,6 +3039,7 @@ formGrid = function (kind, byName)
       rec.finishTime, rec.lapsDone, rec.atLine = nil, nil, nil
       rec.currentLap, rec.lapsLed = 0, 0
       rec.dnfPos, rec.heldPos, rec.outReason = nil, nil, nil
+      rec.lastLap, rec.lastLapOn, rec.pitStops = nil, nil, 0
       rec.splits, rec.splitLap, rec.splitCp = nil, nil, nil
       -- ...and no penalty or lift from it on the board. (Qualifying's cut
       -- laps stay, with the qualiBest they belong to.)
@@ -3079,6 +3089,7 @@ formGrid = function (kind, byName)
     rec.gridPos    = gridPos
     rec.status     = 'gridded'
     rec.raceBest   = nil
+    rec.lastLap, rec.lastLapOn = nil, nil
     rec.currentLap = 0
     rec.lapsLed    = 0
     rec.finishTime = nil
@@ -3873,6 +3884,8 @@ local function releaseField(pacing)
       rec.status     = runningStatus()
       rec.currentLap = 1
       rec.raceBest   = nil
+      rec.lastLap, rec.lastLapOn = nil, nil
+      rec.pitStops   = 0
       rec.lapsLed    = 0
       rec.finishTime = nil
       rec.lapsDone, rec.atLine = nil, nil
@@ -4932,6 +4945,12 @@ function RM_onLap(pid, rawData)
     print(string.format('[RaceManager] %s: lap %d was cut (time not counted)',
       rec.name, rec.currentLap or 0))
   end
+  -- The broadcast feed's last lap: this crossing's time, or none (the launch, a
+  -- cut lap), and the crossing, so a feed tells a new lap from the same time
+  -- twice. (rec.lastLapOn is not the lastLap flag further down this function.)
+  rec.lastLap = (lapTime and lapTime > 0 and lapTime < math.huge)
+    and math.floor(lapTime * 1000 + 0.5) / 1000 or nil
+  rec.lastLapOn = rec.currentLap
   if lapTime and lapTime > 0 then
     if not rec.raceBest or lapTime < rec.raceBest then
       rec.raceBest = lapTime

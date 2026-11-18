@@ -589,6 +589,52 @@
     </div>
   </div>
 
+  <!-- ================= Broadcast feed (everyone) =========================
+       Race data for a stream's overlay (OBS, vMix, a page of your own),
+       served by this game on this PC from what every client already gets:
+       nothing runs on the server, so it works on a rented host. Lua keeps the
+       setting (feed.lua); this panel shows it and asks for changes. -->
+  <div class="rm-records rm-feed rm-pop" ng-if="menu.open === 'feed' && menuShowing()">
+    <div class="rm-mapvote-row">
+      <span class="rm-layouts-hint">{{ feedStatusText() }}</span>
+      <button class="rm-btn rm-btn-mini rm-btn-start" ng-if="!feed.on"
+              ng-disabled="feed.available === false" ng-click="feedToggle()"
+              title="Serve the race on this PC for overlay software. Stays on until you turn it off.">Turn on</button>
+      <button class="rm-btn rm-btn-mini" ng-if="feed.on" ng-click="feedToggle()"
+              title="Close the port. Overlays reading it show 'waiting'.">Turn off</button>
+    </div>
+    <div class="rm-maps-error" ng-if="feed.error">{{ feed.error }}</div>
+    <div class="rm-mapvote-row">
+      <span class="rm-layouts-hint">Port</span>
+      <input type="number" class="rm-login-input rm-feed-port" min="1024" max="65535"
+             ng-model="feedUi.port" ng-focus="feedUi.portEditing = true"
+             ng-blur="feedApplyPort()" ng-keydown="$event.keyCode === 13 && feedApplyPort()"
+             title="1024 to 65535. Change it if another program has 8128.">
+      <span class="rm-layouts-hint">Other PCs:</span>
+      <button class="rm-btn rm-btn-mini" ng-if="!feed.lan && !feedUi.lanConfirm" ng-click="feedLanAsk()"
+              title="Let a second streaming PC on your network read the feed">Allow</button>
+      <span class="rm-confirm rm-maps-rename" ng-if="feedUi.lanConfirm && !feed.lan">
+        Other PCs on your network will be able to read the race data, and Windows
+        may ask to let BeamNG through its firewall (allow Private networks). Allow?
+        <button class="rm-btn rm-btn-mini rm-btn-start" ng-click="feedLanSet(true)">Yes, allow</button>
+        <button class="rm-btn rm-btn-mini" ng-click="feedLanCancel()">Cancel</button>
+      </span>
+      <button class="rm-btn rm-btn-mini" ng-if="feed.lan" ng-click="feedLanSet(false)"
+              title="Serve this PC only again">This PC only</button>
+    </div>
+    <div class="rm-feed-urls" ng-if="feed.running">
+      <div class="rm-feed-url" ng-repeat="l in feedLinks track by l.label">
+        <span class="rm-feed-url-label">{{ l.label }}</span>
+        <input type="text" class="rm-login-input rm-feed-url-input" readonly
+               value="{{ l.url }}" ng-click="feedSelect($event)" title="Click to select, then copy">
+      </div>
+    </div>
+    <div class="rm-cup-hint">
+      Add an overlay link as an OBS Browser Source, or point your own graphics at
+      the JSON. It runs while this game is connected to the server.
+    </div>
+  </div>
+
   <div class="rm-cup-driver rm-pop" ng-if="menu.open === 'cup' && !isAdmin && cup.enabled && menuShowing()">
     <div class="rm-cup-head">
       <span class="rm-cup-title">{{ cup.name || 'Cup' }}: standings</span>
@@ -957,6 +1003,9 @@
     <button class="rm-btn rm-btn-mini" ng-class="{'rm-admin-tab-active': menu.open === 'records'}"
             ng-click="menuPanel('records')"
             title="Each driver's best lap on every saved layout of this map">Records</button>
+    <button class="rm-btn rm-btn-mini" ng-class="{'rm-admin-tab-active': menu.open === 'feed'}"
+            ng-click="menuPanel('feed')"
+            title="Race data for your stream's overlay (OBS, vMix), served on this PC">Feed <span class="rm-tab-count" ng-if="feed.running">ON</span></button>
     <button class="rm-btn rm-btn-mini" ng-if="!isAdmin && maps.voting && !maps.vote" ng-class="{'rm-admin-tab-active': menu.open === 'maps'}"
             ng-click="menuPanel('maps')"
             title="Call a vote to switch the server to another map">Map</button>
@@ -6816,6 +6865,17 @@
     background: rgba(171, 71, 188, 0.05);
   }
   .rm-records .rm-cup-title { color: #ce93d8; }
+  /* The broadcast feed: the records band, in a broadcast blue. */
+  .rm-records.rm-feed {
+    border-bottom-color: rgba(66, 133, 244, 0.3);
+    background: rgba(66, 133, 244, 0.05);
+  }
+  .rm-feed .rm-mapvote-row + .rm-mapvote-row { margin-top: 4px; }
+  .rm-feed-port { width: 64px; min-width: 64px; }
+  .rm-feed-urls { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 4px; }
+  .rm-feed-url { display: flex; align-items: center; gap: 6px; }
+  .rm-feed-url-label { width: 112px; flex: none; font-size: 10px; color: var(--rm-muted, #9aa0a6); }
+  .rm-feed-url-input { flex: 1; min-width: 0; font-family: monospace; }
   .rm-records-list { margin-top: 5px; max-height: 180px; overflow-y: auto; }
   .rm-records-time { width: 64px; text-align: right; color: #e8eaed; font-weight: 700; }
   .rm-records-gap { width: 50px; text-align: right; color: var(--rm-muted, #9aa0a6); font-size: 10px; }

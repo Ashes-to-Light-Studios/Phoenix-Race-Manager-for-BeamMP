@@ -6,6 +6,44 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.27.0 - Broadcast feed
+
+#### Added
+
+- **Broadcast feed: live race data for your stream's overlay.** **Feed** on the
+  menu bar serves the race from your own game to overlay software on your PC
+  (OBS, vMix, a page of your own): the running order, the starting grid, laps
+  and last laps, best laps, gaps and intervals, who has taken the joker and
+  when, pit stops, flags, the caution and the countdown. It comes as one JSON
+  document (`/live.json`), the same pushed as it changes (`/stream`,
+  Server-Sent Events), and lists for tools that want them (`/drivers.json`,
+  `/grid.json`, `/session.json`, `/events.json`). Every value has a ready
+  formatted text version, so a vMix title binds it with no scripting. An event
+  list says what just happened (a lap and its time, the joker, a pit stop, a
+  new leader, the fastest lap, a flag, a finish), each with a sequence number.
+  **It works on a rented server**: nothing runs on the server for it. Every
+  game already receives the race over BeamMP's own connection, and yours serves
+  that copy on `http://127.0.0.1:8128`, so the server opens no port and never
+  goes online. Off until you turn it on; the port is yours to change, and
+  **Allow** lets a second streaming PC on your network read it. Nothing only an
+  admin's game receives is ever in it. See
+  [Broadcast feed](docs/REFERENCE.md#broadcast-feed).
+- **A ready-made overlay.** `/overlay` on the same feed, for an OBS Browser
+  Source: the running order with badges for the fastest lap, the joker and pit
+  stops (`?view=tower`), the starting grid (`?view=grid`), a one-line banner
+  with the flag, lap and clock (`?view=banner`), the classification
+  (`?view=results`) and a ticker of what just happened (`?view=ticker`).
+  Transparent, scalable, one class at a time if you want, and it reconnects on
+  its own. See [The overlay](docs/REFERENCE.md#the-overlay).
+
+#### Changed
+
+- **Each driver row now carries the last lap and pit stops.** `lastLap` (the
+  lap just completed, to the millisecond, or none when it set no time: a race's
+  standing-start lap, a cut lap), `lastLapOn` (the crossing it was) and
+  `pitStops` ride the state broadcast for every client, for the feed. Zero pit
+  stops go out as nothing, like the other tallies.
+
 ## 0.26.0 - Laps back, and online features from the Admin tab
 
 #### Added
