@@ -3548,16 +3548,36 @@ Angular bindings, so it adds nothing to the work the main panel does.
 
 ## Switching maps
 
-The **Map** row on the **Admin** panel changes the map the server runs. BeamMP reads
-its map and its list of client mods once, at startup, so a switch always means a
-restart:
+The **Map** row on the **Admin** panel changes the map the server runs. How
+depends on whether the map is **already loaded**:
+
+**Already loaded: no restart.** A stock level, or a map whose zip was in
+`Resources/Client/` when the server started, is marked **no restart** in the map
+menus. BeamMP hands every joining player the map in its settings, and Race
+Manager changes that setting in the running server:
 
 1. A 10 second countdown, shown to everyone. **Stop** cancels it.
+2. The server's map is set, then everyone is disconnected with a message to
+   rejoin now. They rejoin straight onto the new map; the server list shows it
+   within a few seconds.
+3. The old map's track, start grid and derby arena are cleared, as a restart
+   would have cleared them. Load a layout for the new map as usual.
+
+**Not loaded yet: a restart.** BeamMP lists and hashes the client mods once, at
+startup, so a map waiting in `custom_maps/` cannot be offered to players until
+the server starts again:
+
+1. The same countdown.
 2. Everyone is disconnected with a message saying which map is coming and to
    rejoin in about a minute. New joins are turned away until the restart.
 3. The map zips move, the `Map` line in `ServerConfig.toml` is rewritten, and
    the server restarts (see [How the server restarts](#how-the-server-restarts)).
-4. After the restart the Map row says whether the switch took.
+4. After the restart the Map row says whether the switch took, and on a game
+   panel how long the server was down.
+
+A switch with no restart needs BeamMP-Server 3.6 or newer. A host can turn it
+off (`BEAMMP_PROVIDER_DISABLE_MP_SET`, see [Game hosts](#game-hosts)); the Map
+row then says every switch restarts.
 
 Either admin tier can switch: switching back undoes it, and choosing the
 night's venue is part of running it. Nothing is switched while a race,
@@ -3575,10 +3595,16 @@ Server Management Tool's folders, so the tool and Race Manager agree:
 | `custom_maps/` beside `BeamMP-Server.exe` | Map zips that are not running. Put new maps here. |
 | `Resources/Client/` | The running map's zip, with your vehicle mods |
 
-On a switch, the old map's zip moves to `custom_maps/` and the new one moves into
-`Resources/Client/`, so players only ever download the map in use. Vehicle mods
-are never touched. If a move fails, everything is put back and the server keeps
-running the old map.
+On a switch that restarts, the old map's zip moves to `custom_maps/` and the new
+one moves into `Resources/Client/`. Vehicle mods are never touched, and other map
+zips in `Resources/Client/` stay where they are. If a move fails, everything is
+put back and the server keeps running the old map.
+
+**Keep the maps you switch between often in `Resources/Client/`** and they all
+switch with no restart. The cost: a player downloads every zip in that folder the
+first time they join (the launcher keeps them after that), so a few maps there is
+fine, a whole library is a long first join. A switch with no restart moves no
+zips at all.
 
 Map zips anywhere else, such as a `Resources/Maps/` folder, are not listed. Move
 them into `custom_maps/`.
@@ -3675,6 +3701,25 @@ old console window closes and a new one opens on the new map. The helper is
 `Data/relaunch.cmd` (`relaunch.sh` on Linux); it waits up to five minutes for the
 old server to exit and is deleted on the next start.
 
+**On a game panel** (Pterodactyl, Pelican and the hosts built on them):
+
+- **The panel starts the server again.** A server that stops by itself counts
+  as crashed, and the panel's crash restart brings it back, usually within
+  seconds. Some hosts turn that off; then the server stays down until you start
+  it from the panel. The kick message says so, and after the next start the Map
+  row says how long it was down.
+- **Not twice in a minute.** A panel does not restart a server that stopped
+  again less than a minute after its last restart. So a switch or an update
+  right after the server started waits until it has run 75 seconds, and the
+  countdown says why.
+- **The map you chose is kept.** A panel writes its own **Map** setting into
+  `ServerConfig.toml` every time it starts the server. Race Manager remembers a
+  map chosen in game (`Data/mapPin.json`) with the map the server started on,
+  and at the next start, if the panel put that one back, sets the chosen map
+  again. The Map row says it did, and that the panel's setting still differs:
+  set it there to make the choice permanent. If you change the panel's Map
+  setting yourself, that wins and the remembered choice is dropped.
+
 **Linux:** `relaunch` works for a server started from a shell. In a container,
 `auto` already picks `exit`: when the server stops, the container stops with it
 and takes the helper along, so the host has to start it again. On a game panel
@@ -3688,10 +3733,17 @@ fight it for the port.
 
 ## Updating from the Admin tab
 
-**Off unless the server's owner turns it on.** As shipped, Race Manager never
-goes online by itself, because some game hosts cut a server off the internet
-when it does (see [Game hosts](#game-hosts)). The **Updates** row on the
-**Admin** panel then shows the version running and how to update by hand.
+Three ways, all from the **Updates** row on the **Admin** panel:
+
+- **[Install from this PC](#installing-from-your-pc)**: you download the
+  release, your game sends it to the server, and the server installs it and
+  restarts. The server never goes online, so this is the one for a rented
+  server.
+- **[Update and restart](#updating-from-the-game)**: the server downloads the
+  release itself. Off unless the owner turns **Online features** on, because
+  some game hosts cut a server off the internet when it goes online by itself
+  (see [Game hosts](#game-hosts)).
+- **[By hand](#updating-by-hand)**: stop, upload, extract, start.
 
 ### Updating by hand
 
@@ -3706,6 +3758,36 @@ Tracks, results and settings in `Data/` are kept, and players get the new
 version as they rejoin. If a release removes a file from
 `Resources/Server/PhoenixRM Server/`, delete it there too: BeamMP runs every
 `.lua` in that folder.
+
+Upload with the server stopped. BeamMP reloads plugin files the moment they
+change, so files uploaded into a running server take effect at once, beside a
+client mod that is still the old one: the console asks for a restart.
+
+### Installing from your PC
+
+For a server you cannot reach the files of, or one that must not go online by
+itself. Admin password only, from 0.28.0 on both ends (the first move to 0.28.0
+is by hand or with an installer).
+
+1. Download `RaceManager-vX.Y.Z.zip` from the release page on your own PC.
+2. On the **Updates** row, **Open folder** opens `settings/raceManager/update/`
+   in your BeamNG user folder. Put the zip there and press **Refresh**.
+3. **Send to server.** Your game checks the zip first, then sends it over
+   BeamMP's own connection, a piece at a time (about 16 seconds for a release).
+   Nothing is installed yet, and nobody is disconnected.
+4. The server checks it the way it checks a download: every file's checksum,
+   the client zip and the plugin, that every plugin file compiles, and that the
+   version in its name is the one inside. Then the row shows the version, the
+   size and its **SHA-256**. Compare that with the one on the release page.
+5. **Install and restart** asks first, then runs the same countdown, swap and
+   restart as [Update and restart](#updating-from-the-game): the old files go to
+   `_attic/`, and on a game panel the panel starts the server again. **Discard**
+   drops it.
+
+A release that is not newer than the server needs **Install anyway**. The
+upload is held in the server's memory only, and nothing is written until you
+press Install. It is let go after ten minutes, after 30 seconds without a piece
+arriving, or if you stop it. It works with **Online features** off.
 
 **From 0.23.x or older, the folders are renamed.** Until 0.24.0 the plugin was
 `Resources/Server/PhoenixRM Server/` and the client mod `Resources/Client/PhoenixRM Client.zip`;
@@ -3824,6 +3906,17 @@ machine you run yourself. If that error shows up with it on, set it back to
 `false` in `config.json` and restart the server: once players are being kicked,
 nobody can get in to turn it off from the game.
 
+**On a rented server, everything still works without it.** Update with
+[Install from this PC](#installing-from-your-pc). Switch maps from the Map row:
+maps already loaded switch with no restart, and the others restart through the
+panel's crash restart, with the map you chose kept even though the panel writes
+its own (see [How the server restarts](#how-the-server-restarts)).
+
+**`BEAMMP_PROVIDER_DISABLE_MP_SET`.** A host can stop plugins changing server
+settings (BeamMP 3.9.2 and later). Then no map switches without a restart, and on
+a game panel the panel's own **Map** setting decides the map: the Map row says
+so, and a switch to a map in `custom_maps/` is refused with that advice.
+
 ### Online features
 
 The **Online features** row on the **Admin** tab turns `onlineFeatures` on and
@@ -3836,9 +3929,10 @@ changing it needs the **admin** password, as installing an update does.
 - **Turning it on reaches nothing by itself.** The server next goes online when
   an admin presses **Check now** or logs in, when a session closes with a
   Discord webhook set, or when the server next starts.
-- **Turn off** works at once, except while an update is downloading or
-  installing: stop it on the **Updates** row first. A Discord post waiting to go
-  out is dropped.
+- **Turn off** works at once, except while the updater is on the network (a
+  check, or a download): stop it on the **Updates** row first. An upload from an
+  admin's PC uses no network and does not stand in the way. A Discord post
+  waiting to go out is dropped.
 - **It is saved to `config.json`**, so it survives a restart, and every admin
   logged in is told who changed it. If the server cannot write the file, the
   admins are told it reverts on restart.

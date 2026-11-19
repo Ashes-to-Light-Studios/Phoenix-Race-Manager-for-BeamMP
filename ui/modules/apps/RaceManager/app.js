@@ -2356,6 +2356,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (data.prmUpdate && typeof data.prmUpdate === 'object') {
             $scope.prmUpdate = data.prmUpdate;
             if (data.prmUpdate.phase !== 'idle') { $scope.updateUi.confirm = false; }
+            if (data.prmUpdate.phase !== 'ready') { $scope.uploadUi.confirm = false; }
+            // The folder, looked in once an admin who may install is here.
+            if (data.prmUpdate.canUpdate && !$scope.uploadUi.listed) {
+              $scope.uploadUi.listed = true;
+              $scope.uploadRefresh();
+            }
           }
           // And the Discord add-on, when the server has it.
           if (data.prmDiscord && typeof data.prmDiscord === 'object') {
@@ -4502,13 +4508,42 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         switch ($scope.maps.restart) {
           case 'watch':    return "Restart: the Management Tool's config check.";
           case 'relaunch': return 'Restart: Race Manager starts the server again.';
-          case 'exit':     return 'Restart: your service manager, when the server stops.';
+          case 'exit':
+            return $scope.maps.panel ? 'Restart: your hosting panel, when the server stops.'
+              : 'Restart: your service manager, when the server stops.';
           case 'manual':   return 'Restart: by hand.';
           default:
             // auto, in a container: the old server's exit stops it (maps.lua).
+            if ($scope.maps.panel) {
+              return 'Restart: your hosting panel starts the server again when it stops (most do; if it '
+                + 'stays down, start it from the panel).';
+            }
             if ($scope.maps.container) { return 'Restart: your host, when the server stops.'; }
             return 'Restart: the Management Tool if it started the server, otherwise Race Manager.';
         }
+      };
+      // What Switch Map will do to the field, for the confirm.
+      $scope.mapsConfirmText = function () {
+        var m = $scope.mapsUi.pick;
+        if (m && m.instant) { return 'Everyone is disconnected and rejoins straight onto it: no restart.'; }
+        return 'Everyone is disconnected and the server restarts'
+          + ($scope.maps.panel ? ' (your hosting panel starts it again).' : '.');
+      };
+      // How the last self-stop went on a game panel (maps.lua, hostRestart).
+      $scope.mapsHostRestartText = function () {
+        var h = $scope.maps.hostRestart;
+        if (!$scope.maps.panel || !h || typeof h.secs !== 'number') { return ''; }
+        if (h.auto) { return 'Last restart: your hosting panel started the server again in ' + h.secs + 's.'; }
+        return 'Last restart: the server was down ' + Math.round(h.secs / 60) + ' min, so your hosting '
+          + 'panel did not start it again by itself. After a switch that restarts, start it from the panel.';
+      };
+      // Why every switch restarts on this server.
+      $scope.mapsLiveText = function () {
+        if ($scope.maps.liveWhy === 'blocked') {
+          return 'Your host does not let plugins change the map, so every switch restarts the server'
+            + ($scope.maps.panel ? ', and on a game panel the Map setting in the panel decides.' : '.');
+        }
+        return 'This BeamMP-Server is older than 3.6, so every switch restarts the server.';
       };
 
       // ------------------------------------------------------------------
@@ -4548,6 +4583,72 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         bngApi.engineLua('raceManager.updateCheck()');
       };
       $scope.updateToggleNotes = function () { $scope.updateUi.notes = !$scope.updateUi.notes; };
+
+      // ------------------------------------------------------------------
+      // Install from this PC (upload.lua here, update.lua on the server)
+      // ------------------------------------------------------------------
+      // This PC's side (the folder, the sending) comes on RaceManagerUpload;
+      // the server's (received, checked, ready) on prmUpdate.
+      $scope.uploadUi = {
+        local: { phase: 'idle', files: [], dir: 'settings/raceManager/update' },
+        confirm: false, listed: false
+      };
+      $scope.$on('RaceManagerUpload', function (event, data) {
+        $scope.$evalAsync(function () {
+          if (!data || typeof data !== 'object') { return; }
+          if (!data.files) { data.files = []; }
+          $scope.uploadUi.local = data;
+        });
+      });
+      $scope.uploadRefresh = function () { bngApi.engineLua('raceManager.uploadList()'); };
+      $scope.uploadOpenFolder = function () { bngApi.engineLua('raceManager.uploadOpenFolder()'); };
+      $scope.uploadSend = function (name) {
+        bngApi.engineLua('raceManager.uploadStart(' + luaStr(name) + ')');
+      };
+      $scope.uploadStop = function () { bngApi.engineLua('raceManager.uploadCancel()'); };
+      $scope.uploadBusy = function () {
+        var p = $scope.uploadUi.local.phase;
+        return p === 'sending' || p === 'waiting';
+      };
+      // The server still receiving or checking an upload.
+      $scope.uploadOnServer = function () {
+        var u = $scope.prmUpdate;
+        return !!(u && u.upload && (u.phase === 'receiving'
+          || (u.phase === 'verifying' && u.upload.state === 'verifying')));
+      };
+      $scope.uploadReady = function () {
+        var u = $scope.prmUpdate;
+        return !!(u && u.phase === 'ready' && u.source === 'upload');
+      };
+      $scope.uploadAskInstall = function () { $scope.uploadUi.confirm = true; };
+      $scope.uploadAskCancel = function () { $scope.uploadUi.confirm = false; };
+      $scope.uploadInstall = function () {
+        var u = $scope.prmUpdate;
+        $scope.uploadUi.confirm = false;
+        if (!$scope.uploadReady()) { return; }
+        bngApi.engineLua('raceManager.uploadInstall(' + luaStr(u.target) + ', '
+          + (u.targetNewer ? 'false' : 'true') + ')');
+      };
+      $scope.uploadDiscard = function () {
+        $scope.uploadUi.confirm = false;
+        $scope.updateCancel();
+      };
+      $scope.uploadSize = function (n) {
+        if (typeof n !== 'number') { return ''; }
+        return n >= 1048576 ? (n / 1048576).toFixed(2) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+      };
+      $scope.uploadProgressText = function () {
+        var l = $scope.uploadUi.local, u = $scope.prmUpdate;
+        if (u && u.phase === 'verifying') { return 'The server is checking it…'; }
+        if (l.phase === 'waiting') { return 'Sent. Waiting for the server to check it…'; }
+        if (l.phase === 'sending' && l.total) {
+          return 'Sending ' + (l.name || '') + ': ' + (l.sent || 0) + ' of ' + l.total + ' pieces…';
+        }
+        if (u && u.upload && u.phase === 'receiving') {
+          return 'The server has ' + (u.upload.got || 0) + ' of ' + (u.upload.total || 0) + ' pieces…';
+        }
+        return '';
+      };
       // Seconds since 1970 (the server's os.time) as this PC's local time.
       $scope.updateWhen = function (sec) {
         if (!sec) { return ''; }

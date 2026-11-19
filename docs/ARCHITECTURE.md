@@ -75,16 +75,34 @@ handlers are installed by `init()`, and each one's test checks that loading the
 file alone defines nothing. A new module must do the same
 unless its name sorts before `main`.
 
-**Map switching restarts the server**, because BeamMP reads its map and hashes
-`Resources/Client` only at startup. The module moves map zips between
-`custom_maps/` and `Resources/Client/` (the BeamMP Server Management Tool's
-layout), rewrites only the `Map` value in `ServerConfig.toml`, and restarts by
-whichever means is available: the Management Tool's config watch, a detached
-helper that waits for this process to exit and starts it again, or `exit()` for
-a service manager. See [Switching maps](REFERENCE.md#switching-maps).
+**Map switching is instant when the map is already loaded, and a restart
+otherwise.** BeamMP hands each joiner the map in its settings, and `MP.Set`
+changes that in the running server (`MP.Get` reads it back, 3.6+); but it lists
+and hashes `Resources/Client` only at startup. So `maps.lua` keeps what the
+process started with (`boot()`: the map and the zips in `Resources/Client`,
+taken once and kept on the module across hot reloads). A stock level or one of
+those zips is `MP.Set`, verified, then a kick, with `host.mapChanged` clearing
+the old map's track and arena. Anything else moves zips between `custom_maps/`
+and `Resources/Client/` (the Management Tool's layout), rewrites only the `Map`
+value in `ServerConfig.toml`, and restarts by whichever means is available: the
+Management Tool's config watch, a detached helper that waits for this process to
+exit and starts it again, or `exit()` for a service manager or a game panel's
+crash restart. A game panel rewrites `Map` at every start, so a map chosen in
+game is pinned (`Data/mapPin.json`, against the map the process started on) and
+set again at the next start only if the panel put that one back. See [Switching
+maps](REFERENCE.md#switching-maps).
 
-**Updates restart the server the same way**, through `maps.lua`'s helper and
-`exit()`, never its config watch. Three choices in `update.lua` are load-bearing:
+**Hot reload runs onInit again in the same Lua state**, whenever a plugin file
+changes on a running server: required modules stay cached, and BeamMP does not
+de-duplicate timers. Every timer is cancelled before it is created, or guarded
+by its module's `ticking` flag.
+
+**Updates restart the server the same way**, through `maps.lua`'s helper, its
+`exit()` or the Management Tool's config watch. The release comes from GitHub, or
+from an admin's PC: `upload.lua` on the client sends it in numbered base64
+pieces on `RM_UpdateUpload`, paced and windowed against the server's count on
+`prmUpdate`, and it joins the same check and swap held in memory until Install.
+Three choices in `update.lua` are load-bearing:
 
 - **Downloads run in a process of their own** (curl, or wget on Linux) that
   leaves a `.done` file holding its exit code, polled once a second, so the Lua

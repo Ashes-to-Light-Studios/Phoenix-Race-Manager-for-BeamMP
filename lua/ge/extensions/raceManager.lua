@@ -6370,6 +6370,19 @@ do
   end
 end
 
+-- Install from this PC: a release zip sent to the server over BeamMP's own
+-- connection, for a server that cannot download it. See upload.lua.
+do
+  local upload = require('raceManager/upload')
+  upload.init({ inMultiplayer = inMultiplayer })
+  for _, name in ipairs({
+    'uploadList', 'uploadOpenFolder', 'uploadStart', 'uploadCancel', 'uploadInstall',
+    'uploadStatus', 'uploadAck', 'uploadUpdate',
+  }) do
+    M[name] = upload[name]
+  end
+end
+
 -- Props get their host here, once groundAt and the renderer exist.
 props.init({
   groundAt = groundAt, ownVehicle = ownVehicle, palette = render.palette,
@@ -6442,6 +6455,7 @@ function M.onUpdate(dt)
   if M.radarUpdate then M.radarUpdate(dt) end
   M.splashUpdate(dt)        -- the welcome splash, only while it is up
   M.feedUpdate(dt)          -- the broadcast feed: one comparison while it is off
+  M.uploadUpdate(dt)        -- Install from this PC: one comparison unless sending
   -- Props: the world follows props.list; the overlay only on the Props tab.
   props.update(dt)
   props.draw()
@@ -8727,6 +8741,8 @@ local function onServerUpdate(rawData)
   if M.lightsSync then M.lightsSync() end
   -- The broadcast feed reads it, never writes it (and is guarded inside).
   if M.feedState then M.feedState(data) end
+  -- An upload from this PC hears how far the server got (admins' sends only).
+  if M.uploadAck then M.uploadAck(data.prmUpdate) end
 end
 
 -- The server assigned a starting slot: stand on it and hold for the countdown.
@@ -10031,6 +10047,8 @@ end
 function M.onExtensionUnloaded()
   -- The feed's port goes with the extension; the setting stays.
   M.feedStop('unload')
+  -- An upload in progress stops here; the server gives it up on its own.
+  if M.uploadCancel then M.uploadCancel(true) end
   -- Resident across sessions (manual unload), so purge explicitly.
   resetToIdle('extension unloaded')
   -- No frame is coming to take the props out.
@@ -10056,6 +10074,7 @@ local function onSessionLeave()
   M.splashReset()
   -- Readers see "not connected" rather than a frozen race.
   M.feedOffline()
+  if M.uploadCancel then M.uploadCancel(true) end
   resetToIdle('BeamMP session ended')
 end
 

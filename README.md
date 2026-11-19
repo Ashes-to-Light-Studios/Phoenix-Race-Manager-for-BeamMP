@@ -50,10 +50,16 @@ the server's `_attic/` folder, move out leftovers of older installs that would
 run beside the new one, and never touch your tracks, results or settings. Run
 either again to update.
 
-**Updating on a hosting panel:** download the new `RaceManager-vX.Y.Z.zip`, stop
-the server, upload the zip into `Resources/` and extract it there over the old
-files, delete the zip and start the server. Your tracks, results and settings
-are kept.
+**Updating on a hosting panel:** from 0.28.0 on, use **Install from this PC** on
+the **Admin** tab: download the new `RaceManager-vX.Y.Z.zip` on your PC, put it in
+the folder the Updates row opens, and press **Send to server**, then **Install
+and restart**. Your game sends it over BeamMP's own connection, the server checks
+and installs it, and your panel starts it again. The server never goes online.
+See [Installing from your PC](docs/REFERENCE.md#installing-from-your-pc).
+
+By hand instead (and for the first move to 0.28.0): stop the server, upload the
+zip into `Resources/` and extract it there over the old files, delete the zip and
+start the server. Your tracks, results and settings are kept.
 
 **From 0.23.x or older, the folders are renamed** to `Resources/Client/PhoenixRM
 Client.zip` and `Resources/Server/PhoenixRM Server/`, so you can see what is
@@ -252,8 +258,8 @@ expect without touching any of it.
 | **[Live position tracking](docs/REFERENCE.md#live-position-tracking)** | True running order from laps, checkpoints cleared and distance to the next gate, not just the grid order. |
 | **[Demo Derby](docs/REFERENCE.md#demo-derby-parallel-game-mode)** | A separate last-man-standing mode with its own arena, timers and results, fully isolated from the racing. |
 | **[Ready check](docs/REFERENCE.md#the-ready-check)** | Forming a grid, a derby form-up and a drag pass call the drivers instead of teleporting them into place: each presses **Ready**, and the board shows who has. Admins see the count, can Ready All or place one driver, and are asked before starting without somebody. Not ready at the start sits that session or derby out, and is a no-show on the strip. |
-| **[Map switching and votes](docs/REFERENCE.md#switching-maps)** | Change the server's map from the Admin tab, or let drivers vote for one: it passes only at a percentage of the whole lobby you choose, and a race director can lock voting. Map zips move between `custom_maps` and `Resources/Client`, and the server restarts itself onto the new map, under the BeamMP Server Management Tool or started by hand. |
-| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | For a server on your own machine (**Online features** on the Admin tab): it looks for a newer release on GitHub and asks the admin. **Update and restart** downloads it, checks it against GitHub's SHA-256, keeps the old files, swaps the new ones in and restarts the server. Tracks, the cup and results are untouched. |
+| **[Map switching and votes](docs/REFERENCE.md#switching-maps)** | Change the server's map from the Admin tab, or let drivers vote for one: it passes only at a percentage of the whole lobby you choose, and a race director can lock voting. A map already loaded (a stock level, or a zip in `Resources/Client`) switches with no restart: everyone rejoins straight onto it. Any other map zip moves in from `custom_maps` and the server restarts itself onto it, under the BeamMP Server Management Tool, started by hand, or on a hosting panel, which keeps the map you chose. |
+| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | **Install from this PC**, for any server including a rented one: download the release on your PC and your game sends it to the server, which checks it, shows its SHA-256, keeps the old files, swaps the new ones in and restarts. On your own machine (**Online features** on the Admin tab), **Update and restart** downloads it from GitHub instead. Tracks, the cup and results are untouched. |
 | **[Map display names](docs/REFERENCE.md#map-display-names)** | Show `bark_river_sc` as *Bark River International* in the map menus, the vote and the switch. Display only: no file is renamed. |
 | **[Lap records](docs/REFERENCE.md#lap-records)** | Each driver's fastest lap on every saved layout, per map, kept across restarts and open to everyone. Scored from qualifying and races. An admin can take a time off or clear a board in game, or edit the JSON on the server. |
 | **[Where results go](docs/REFERENCE.md#where-results-go)** | A results file for every race, derby and drag tournament, kept on the server, sent to each admin's PC, both or neither. Two switches on the Admin tab, off until you turn them on. |

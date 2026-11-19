@@ -1,8 +1,22 @@
 -- Race Manager: MAP SWITCHING, as its own module.
 --
--- BeamMP reads its map and hashes Resources/Client once, at startup, so a new
--- map means three things: move the map zips, rewrite the Map line in
--- ServerConfig.toml, and restart. This file does all three.
+-- INSTANT WHEN THE MAP IS ALREADY LOADED. BeamMP hands every joining player the
+-- map in its settings, and MP.Set changes that setting in the running server
+-- (3.6+ for MP.Get to read it back). So a stock level, or a map whose zip was
+-- in Resources/Client when the server started, is a countdown, MP.Set and a
+-- kick: everyone rejoins straight onto it, with no restart.
+--
+-- A RESTART OTHERWISE. BeamMP lists and hashes Resources/Client once, at
+-- startup: a zip moved in later is never offered to anybody. So a map waiting
+-- in custom_maps/ means moving the map zips, rewriting the Map line in
+-- ServerConfig.toml, and restarting. This file does all three.
+--
+-- THE PIN. A game panel (Pterodactyl, Pelican) rewrites the Map line from its
+-- own setting every time it starts the server, so a map chosen in game would
+-- not survive a restart. Data/mapPin.json remembers it, with the map the
+-- server started on at the time; at the next start, if the panel put that one
+-- back, the chosen map is set again. If the setting changed since, the owner
+-- changed it on purpose, and it wins.
 --
 -- NOTHING GLOBAL AT FILE SCOPE. BeamMP runs every .lua in the plugin folder on
 -- its own, alphabetically, and "maps" sorts AFTER "main". A handler defined at
@@ -48,6 +62,7 @@ M.sys = {
   popen   = io.popen,
   execute = os.execute,
   exit    = rawget(_G, 'exit'),
+  getenv  = os.getenv,
 }
 
 -- Seconds of warning before everyone is disconnected.
@@ -55,6 +70,13 @@ M.COUNTDOWN = 10
 -- Seconds between the kick and the file work, so the server has closed any
 -- download streams that would hold a zip open and block the move.
 M.SETTLE = 2
+-- A game panel's crash restart (Pterodactyl's Wings) gives up when the server
+-- stopped less than 60 seconds after the last time: a restart this soon after
+-- starting waits until the server has been up this long.
+M.RESTART_SPACING = 75
+-- A server down longer than this after stopping itself was not restarted by
+-- its host: somebody started it by hand.
+M.SLOW_RESTART = 180
 
 -- Stock levels, from content/levels of BeamNG 0.39. Level names are the ones
 -- the Management Tool writes, so a map chosen in either place matches the
@@ -82,6 +104,15 @@ M.STOCK = {
 M.state = { phase = 'idle' }
 M.last = nil        -- how the previous switch ended, shown on the Admin tab
 M.zipCache = {}     -- [path] = { size = bytes, levels = { ... } }
+-- What this server process started with: { at, map, zips = { [zip] = true } }.
+-- Taken once, the first time it is asked for (warm, at onInit), and kept on the
+-- module, so a hot reload of the plugin files does not take it again.
+M.boot = nil
+M.warmed = nil      -- the pin and the restart record are read once per process
+M.pin = nil         -- { to, label, base, at }: the map chosen in game, see the top
+M.pinned = nil      -- { to, base } once this start set the pinned map again
+M.hostRestart = nil -- { secs, auto, at }: how long the last self-stop was down
+M.setBlocked = nil  -- MP.Set was refused by the host (seen, not configured)
 
 -- ---------------------------------------------------------------------------
 -- Files
@@ -513,6 +544,79 @@ function M.hosting()
 end
 
 -- ---------------------------------------------------------------------------
+-- What the server started with, and switching without a restart
+-- ---------------------------------------------------------------------------
+local function boot()
+  if not M.boot then
+    local zips = {}
+    for _, name in ipairs(zipsIn(clientDir())) do zips[name:lower()] = true end
+    M.boot = { at = os.time(), map = host.getCurrentMap(), zips = zips }
+  end
+  return M.boot
+end
+function M.bootInfo() return boot() end
+
+-- Can this server change its map while it runs? false and why: 'old' (no
+-- MP.Get or MP.Set: BeamMP before 3.6), 'blocked' (the host turned MP.Set off
+-- with BEAMMP_PROVIDER_DISABLE_MP_SET, or it was refused once already).
+function M.liveSet()
+  if not (MP.Get and MP.Set and MP.Settings and MP.Settings.Map ~= nil) then
+    return false, 'old'
+  end
+  local env = (M.sys.getenv or os.getenv)('BEAMMP_PROVIDER_DISABLE_MP_SET')
+  if M.setBlocked or (type(env) == 'string' and (env == '1' or env:lower() == 'true')) then
+    return false, 'blocked'
+  end
+  return true
+end
+
+-- A switch with no restart: a stock level, or a zip that was in
+-- Resources/Client when the server started (the ones BeamMP offers).
+function M.isInstant(e)
+  if type(e) ~= 'table' or not M.liveSet() then return false end
+  if e.where == 'stock' then return true end
+  return e.where == 'client' and type(e.zip) == 'string' and boot().zips[e.zip:lower()] == true
+end
+
+-- Seconds a self-stop has to wait on a game panel (see RESTART_SPACING).
+function M.restartHold(method)
+  if method ~= 'exit' or not M.hosting().panel then return 0 end
+  return math.max(0, boot().at + M.RESTART_SPACING - os.time())
+end
+
+local function dataPath(name) return at(M.paths.data .. '/' .. name) end
+
+local function readJson(path)
+  local text = readFile(path)
+  if not text then return nil end
+  local ok, v = pcall(host.jsonParse, text)
+  return ok and type(v) == 'table' and v or nil
+end
+
+local function writeJson(path, t)
+  host.makeDirectory(at(M.paths.data))
+  local f = io.open(path, 'w')
+  if not f then return false end
+  f:write(host.jsonStringify(t))
+  f:close()
+  return true
+end
+
+function M.clearPin()
+  if exists(dataPath('mapPin.json')) then host.removeFile(dataPath('mapPin.json')) end
+  M.pin = nil
+end
+
+-- Remember a map chosen in game against the map this server started on. The
+-- map it started on needs no pin.
+local function writePin(target)
+  local b = boot()
+  if same(target.name, b.map) then return M.clearPin() end
+  M.pin = { to = target.name, label = target.label, base = b.map, at = os.time() }
+  writeJson(dataPath('mapPin.json'), M.pin)
+end
+
+-- ---------------------------------------------------------------------------
 -- Restarting
 -- ---------------------------------------------------------------------------
 local function cfg(key, fallback)
@@ -682,6 +786,9 @@ end
 
 local function stopServer(why)
   print('[RaceManager] Stopping the server (' .. why .. ')')
+  -- For the next start: how long the server was down says whether the host
+  -- started it again by itself.
+  writeJson(dataPath('lastStop.json'), { at = os.time(), why = why })
   M.sys.exit()
 end
 
@@ -749,17 +856,26 @@ local function snapshot(withList, err)
     voting  = cfg('mapVoting', true) == true,
     votePercent = cfg('mapVotePercent', 60),
     voteWait = math.max(0, M.voteCooldownUntil - os.time()),
+    -- Switching with no restart, and why not when it cannot.
+    instant = s.method == 'instant' or nil,
+    panel   = M.hosting().panel or nil,
+    pin     = M.pin and { to = M.pin.label or M.pin.to, base = M.pin.base } or nil,
+    pinned  = M.pinned,
+    hostRestart = M.hostRestart,
   }
+  out.live, out.liveWhy = M.liveSet()
   if v then
     local yes, no, total, needed = M.tally()
     out.vote = { id = v.id, map = v.target.name, label = v.target.label, by = v.by,
-      yes = yes, no = no, total = total, needed = needed, left = v.left }
+      yes = yes, no = no, total = total, needed = needed, left = v.left,
+      instant = M.isInstant(v.target) or nil }
   end
   if withList then
     local list = {}
     for _, e in ipairs(M.catalog()) do
       list[#list + 1] = { name = e.name, label = e.label, zip = e.zip,
-        where = e.where, current = e.current, default = e.default, custom = e.custom }
+        where = e.where, current = e.current, default = e.default, custom = e.custom,
+        instant = M.isInstant(e) or nil }
     end
     out.list = list
   end
@@ -808,6 +924,9 @@ local function kickEveryone()
   local reason = M.state.method == 'manual'
     and ('Race Manager: switching the map to ' .. label .. '. Rejoin once the server has been restarted.')
     or ('Race Manager: the server is restarting onto ' .. label .. '. Rejoin in about a minute.')
+  if M.state.method == 'exit' and M.hosting().container then
+    reason = reason .. ' If it stays down, start it from your hosting panel.'
+  end
   for pid in pairs(MP.GetPlayers() or {}) do
     if MP.DropPlayer then pcall(MP.DropPlayer, pid, reason) end
   end
@@ -832,21 +951,55 @@ local function begin(name, by)
   local fromEntry
   for _, e in ipairs(list) do if e.current then fromEntry = e end end
 
-  local info = M.probe()
-  local method, grace, note = M.resolveRestart(info)
+  local instant = M.isInstant(target)
+  if not instant and M.hosting().panel then
+    -- A restart on a game panel needs the pin, and the pin needs MP.Set: the
+    -- panel puts its own Map back at every start.
+    local live, why = M.liveSet()
+    if not live then
+      return false, why == 'blocked'
+        and ('Your host does not let plugins change the map. Set ' .. target.label
+          .. ' as the Map in your hosting panel, then restart the server.')
+        or ('Switching to a map in custom_maps on a game panel needs BeamMP-Server 3.6 or '
+          .. 'newer. Or set the Map in your hosting panel.')
+    end
+  end
+  local info, method, grace, note
+  if instant then
+    info, method, grace = {}, 'instant', 0
+    note = 'No restart: everyone is disconnected and rejoins straight onto ' .. target.label .. '.'
+  else
+    info = M.probe()
+    method, grace, note = M.resolveRestart(info)
+  end
+  local hold = M.restartHold(method)
+  if hold > M.COUNTDOWN then
+    note = (note and (note .. ' ') or '') .. 'Waiting until the server has run '
+      .. M.RESTART_SPACING .. ' seconds: a game panel does not restart a server that '
+      .. 'stopped again so soon.'
+  end
+  local left = math.max(M.COUNTDOWN, hold)
   M.lastError = nil
   M.state = {
-    phase = 'countdown', left = M.COUNTDOWN, target = target, fromEntry = fromEntry,
+    phase = 'countdown', left = left, target = target, fromEntry = fromEntry,
     from = host.getCurrentMap(), probe = info, method = method, grace = grace, note = note,
     by = by,
   }
   print(string.format('[RaceManager] Map switch to %s by %s: %s (parent %s, pid %s)',
     target.name, by, method, tostring(info.parent), tostring(info.pid)))
-  MP.SendChatMessage(-1, string.format('[RaceManager] Switching the map to %s (%s). '
-    .. 'Everyone is disconnected in %d seconds and the server restarts.',
-    target.label, by, M.COUNTDOWN))
-  host.notifyField('session', 'Map change to ' .. target.label,
-    'The server restarts in ' .. M.COUNTDOWN .. ' seconds. Rejoin in about a minute.')
+  if instant then
+    MP.SendChatMessage(-1, string.format('[RaceManager] Switching the map to %s (%s). '
+      .. 'Everyone is disconnected in %d seconds: rejoin straight away, no restart.',
+      target.label, by, left))
+    host.notifyField('session', 'Map change to ' .. target.label,
+      'Everyone is disconnected in ' .. left .. ' seconds. Rejoin straight away.')
+  else
+    MP.SendChatMessage(-1, string.format('[RaceManager] Switching the map to %s (%s). '
+      .. 'Everyone is disconnected in %d seconds and the server restarts.',
+      target.label, by, left))
+    host.notifyField('session', 'Map change to ' .. target.label,
+      'The server restarts in ' .. left .. ' seconds. Rejoin in about a minute.')
+  end
   timerOn()
   broadcast()
   return true
@@ -896,6 +1049,9 @@ function M.execute()
   end
   print(string.format('[RaceManager] Map switch: ServerConfig.toml now says %s (%s)',
     value, s.method))
+  -- A panel writes its own Map at the next start: remember this one. Anywhere
+  -- else the config just written holds it.
+  if M.hosting().panel then writePin(target) else M.clearPin() end
 
   if s.method == 'relaunch' then
     if spawnRelauncher(s.probe) then return stopServer('map switch, relaunch') end
@@ -909,6 +1065,37 @@ function M.execute()
   s.phase = 'staged'
   timerOff()
   print('[RaceManager] Map switch staged: restart the server to load ' .. target.label)
+end
+
+-- No restart: the map is already loaded. The setting first, then the kick, so
+-- even the fastest rejoin lands on the new map. Nothing moves and the config is
+-- not written (the Management Tool would restart on it): the pin keeps it.
+function M.executeInstant()
+  local s = M.state
+  local target = s.target
+  local value = '/levels/' .. target.name .. '/info.json'
+  pcall(MP.Set, MP.Settings.Map, value)
+  if not same(host.getCurrentMap(), target.name) then
+    -- Refused without a word: the host blocks MP.Set. Nobody was kicked.
+    M.setBlocked = true
+    return fail('The server did not take the new map: your host does not let plugins '
+      .. 'change it. Set ' .. target.label .. ' as the Map in your hosting panel and restart.')
+  end
+  print(string.format('[RaceManager] Map switched to %s with no restart (%s)', value, tostring(s.by)))
+  -- What belonged to the old map goes, as a restart would have dropped it.
+  if host.mapChanged then
+    local ok, err = pcall(host.mapChanged, 'map switched to ' .. target.label)
+    if not ok then print('[RaceManager] Map switch: clearing the old track failed: ' .. tostring(err)) end
+  end
+  writePin(target)
+  local reason = 'Race Manager: the map is now ' .. target.label .. '. Rejoin now.'
+  for pid in pairs(MP.GetPlayers() or {}) do
+    if MP.DropPlayer then pcall(MP.DropPlayer, pid, reason) end
+  end
+  M.lastError = nil
+  M.last = { ok = true, to = target.label, instant = true, at = os.time() }
+  reset()
+  broadcast()
 end
 
 -- ---------------------------------------------------------------------------
@@ -1044,6 +1231,7 @@ function M.tick()
         'Everyone is disconnected in 5 seconds')
     end
     if s.left > 0 then return broadcast() end
+    if s.method == 'instant' then return M.executeInstant() end
     s.phase, s.left = 'kicking', M.SETTLE
     kickEveryone()
   elseif s.phase == 'kicking' then
@@ -1133,11 +1321,71 @@ function M.onPlayerAuth()
   end
 end
 
--- After a restart: did the switch take?
+-- The pin at a start (see the top): set the chosen map again if the panel put
+-- its own back, follow the setting if somebody changed it since.
+local function applyPin(b)
+  local pin = readJson(dataPath('mapPin.json'))
+  if not pin or type(pin.to) ~= 'string' then return end
+  if same(b.map, pin.to) then return M.clearPin() end   -- the config holds it now
+  if not same(b.map, pin.base) then
+    print('[RaceManager] The Map setting is ' .. tostring(b.map) .. ' now, not '
+      .. tostring(pin.base) .. ': following it rather than ' .. pin.to .. ', chosen in game')
+    return M.clearPin()
+  end
+  local _, byName = M.catalog()
+  local e = byName[pin.to:lower()]
+  if not (e and M.isInstant(e)) then
+    local live, why = M.liveSet()
+    local note = (not live and why == 'blocked')
+      and ('Your host does not let plugins change the map: set ' .. (pin.label or pin.to)
+        .. ' as the Map in your hosting panel.')
+      or ((pin.label or pin.to) .. ' is not in Resources/Client any more, so the server '
+        .. 'stays on ' .. tostring(b.map) .. '.')
+    M.clearPin()
+    M.last = { ok = false, to = pin.label or pin.to, at = os.time(), note = note }
+    print('[RaceManager] Map chosen in game not kept: ' .. note)
+    return
+  end
+  pcall(MP.Set, MP.Settings.Map, '/levels/' .. e.name .. '/info.json')
+  if not same(host.getCurrentMap(), e.name) then
+    M.setBlocked = true
+    M.clearPin()
+    M.last = { ok = false, to = e.label, at = os.time(),
+      note = 'Your host does not let plugins change the map: set ' .. e.label
+        .. ' as the Map in your hosting panel.' }
+    print('[RaceManager] Map chosen in game not kept: MP.Set was refused')
+    return
+  end
+  M.pin = pin
+  M.pinned = { to = e.label, base = b.map }
+  print(string.format('[RaceManager] Kept %s, chosen in game. The Map setting (your hosting '
+    .. "panel's) still says %s: set it there to make the choice permanent.", e.label, tostring(b.map)))
+end
+
+-- After a restart: did the switch take, and did the host start the server again?
 function M.warm()
   for _, name in ipairs({ '/relaunch.cmd', '/relaunch.sh' }) do
     local p = at(M.paths.data .. name)
     if exists(p) then host.removeFile(p) end
+  end
+  -- Once per process: a hot reload runs onInit, and this, again.
+  if not M.warmed then
+    M.warmed = true
+    local b = boot()
+    local stop = readJson(dataPath('lastStop.json'))
+    if stop then
+      host.removeFile(dataPath('lastStop.json'))
+      local secs = tonumber(stop.at) and (b.at - stop.at) or nil
+      if secs and secs >= 0 then
+        M.hostRestart = { secs = secs, auto = secs <= M.SLOW_RESTART, at = b.at }
+        writeJson(dataPath('hostRestart.json'), M.hostRestart)
+        print(string.format('[RaceManager] The server was down %d seconds after stopping itself%s',
+          secs, M.hostRestart.auto and '' or ': its host did not start it again by itself'))
+      end
+    else
+      M.hostRestart = readJson(dataPath('hostRestart.json'))
+    end
+    applyPin(b)
   end
   local text = readFile(pendingPath())
   if not text then return end
@@ -1151,6 +1399,11 @@ function M.warm()
     ok = took, to = rec.label or rec.to, at = rec.at, secs = secs,
     note = not took and ('The server came back on ' .. tostring(now) .. ', not ' .. rec.to) or nil,
   }
+  if took and secs and secs > M.SLOW_RESTART then
+    M.last.note = 'The server was down ' .. math.floor(secs / 60) .. ' min: your host did not '
+      .. 'start it again by itself. After a switch to a map in custom_maps, start it from your '
+      .. 'hosting panel, or keep the maps you use in Resources/Client so they switch with no restart.'
+  end
   if took then
     print(string.format('[RaceManager] Map switch to %s complete%s', rec.to,
       secs and (' (' .. secs .. ' s)') or ''))
