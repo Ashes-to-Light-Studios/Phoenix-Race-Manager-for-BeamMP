@@ -1168,6 +1168,9 @@ local DRIVER_WIRE_FIELDS = {
   -- The broadcast feed (client feed.lua): the last lap, the crossing it was
   -- completed on, and pit stops. Zero stops go out as nil (driverForWire).
   'lastLap', 'lastLapOn', 'pitStops',
+  -- Teams and car numbers (teams.lua): resolved per record in driverForWire,
+  -- nil when unset, so a league without them sends nothing extra.
+  'team', 'number',
 }
 
 -- The projection buffer lives ON the record and is reused: no allocation per
@@ -1178,6 +1181,9 @@ local function driverForWire(rec)
     wire = {}
     rec.wire = wire
   end
+  -- The team and number for this driver's name (memoized on the record).
+  local teamOf = race.teamOf
+  if teamOf then teamOf(rec) end
   for i = 1, #DRIVER_WIRE_FIELDS do
     local key = DRIVER_WIRE_FIELDS[i]
     wire[key] = rec[key]
@@ -1493,6 +1499,10 @@ local function broadcastState(targetPid)
     prmUpdate    = selfAdmin and race.updateSnapshot and race.updateSnapshot(targetPid) or nil,
     -- Admin sends only: the Discord add-on, never its webhook URL.
     prmDiscord   = selfAdmin and race.discordSnapshot and race.discordSnapshot(targetPid) or nil,
+    -- The league's teams (teams.lua): on targeted sends and the one broadcast
+    -- after a change, never the 3 Hz ticks. Admins also get every entry.
+    teams        = race.teamsWire and race.teamsWire(targetPid) or nil,
+    teamEntries  = selfAdmin and race.teamsEntries and race.teamsEntries() or nil,
     drivers      = buildDrivers(),
   })
   MP.TriggerClientEvent(targetPid or -1, 'RM_Update', payload)
@@ -8100,6 +8110,31 @@ end)()
 end)()
 
 -- ===========================================================================
+-- TEAMS AND CAR NUMBERS: its own module, installed the way the others are.
+-- Each driver row carries its team id and number; the list rides RM_Update on
+-- targeted sends and the broadcast after a change (teams.lua).
+-- ===========================================================================
+;(function ()
+  local ok, mod = pcall(require, 'teams')
+  if not (ok and type(mod) == 'table') then
+    print('[RaceManager] teams.lua did not load, so teams and car numbers are off: ' .. tostring(mod))
+    return
+  end
+  mod.init({
+    DATA_DIR = DATA_DIR, requireAuth = requireAuth,
+    jsonParse = jsonParse, jsonStringify = jsonStringify, writeFile = writeLayoutFile,
+    broadcast = function () broadcastState() end,
+    pushAdmins = function ()
+      for pid in pairs(authenticatedPlayers) do broadcastState(pid) end
+    end,
+  })
+  race.teamOf       = mod.lookup
+  race.teamsWire    = mod.wire
+  race.teamsEntries = mod.entries
+  race.teamsWarm    = mod.warm
+end)()
+
+-- ===========================================================================
 -- DRIVER ROSTER (persistent display names)
 -- ===========================================================================
 -- A cup needs points to follow a driver across races and restarts. The anchor
@@ -10232,6 +10267,8 @@ function onInit()
   MP.RegisterEvent('RM_DiscordTest',      'RM_onDiscordTest')
   MP.RegisterEvent('RM_DiscordRetry',     'RM_onDiscordRetry')
   MP.RegisterEvent('RM_DiscordTick',      'RM_DiscordTick')
+  -- Teams and car numbers (teams.lua).
+  MP.RegisterEvent('RM_TeamsSet',         'RM_onTeamsSet')
   -- Cup / series points (see the CUP section).
   MP.RegisterEvent('RM_CupSetEnabled',    'RM_onCupSetEnabled')
   MP.RegisterEvent('RM_CupStart',         'RM_onCupStart')
@@ -10266,6 +10303,7 @@ function onInit()
   if race.mapsWarm then race.mapsWarm() end  -- and whether a map switch took
   if race.updateWarm then race.updateWarm() end  -- an update too, then ask GitHub
   if race.discordWarm then race.discordWarm() end  -- and whether results go to Discord
+  if race.teamsWarm then race.teamsWarm() end      -- and the league's teams and numbers
   print('[RaceManager] Server plugin loaded (build ' .. RM_BUILD
     .. ', circuit edition, map: ' .. getCurrentMap() .. ')')
 end

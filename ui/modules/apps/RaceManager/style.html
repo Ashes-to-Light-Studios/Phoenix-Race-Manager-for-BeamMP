@@ -1,0 +1,1037 @@
+<!doctype html>
+<!--
+  Phoenix Race Manager: the STYLE EDITOR for the broadcast overlay.
+
+  Served by the game (lua/ge/extensions/raceManager/feed.lua) at /style, and
+  opened from the Feed panel with the style key in the address's #fragment:
+  http://127.0.0.1:8128/style#key=...  The page takes the key, drops it from
+  the address bar at once (so it is not on screen or in a screenshot) and
+  keeps it for this tab only. Without the key the page still shows the look
+  and previews changes, but cannot save them.
+
+  Every edit is a draft: the previews on the right show it at once, and
+  nothing changes on stream until Save. The feed checks every value again
+  and says what it refused; every open overlay then updates by itself.
+
+  The page is built with DOM methods only: team names, class names and file
+  names are shown as text, never as markup. Every style key has a field
+  here, named by data-key (tests/feed_test.lua checks that each one does).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PRM overlay style</title>
+<style>
+  :root {
+    --page: #0d0f14;
+    --card: #151821;
+    --card-2: #1c2030;
+    --edge: #262b3a;
+    --text: #e9ecf3;
+    --dim: #9199ab;
+    --accent: #ff7a1a;
+    --ok: #3ddc84;
+    --warn: #ffd166;
+    --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--page); color: var(--text);
+    font: 14px/1.45 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  a { color: var(--accent); }
+  h1 { font-size: 18px; margin: 0; letter-spacing: 0.02em; }
+  h1 .tag { color: var(--accent); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin: 0 0 10px; }
+  p { margin: 0 0 8px; }
+  small, .hint { color: var(--dim); font-size: 12px; }
+  button, .btn {
+    font: inherit; color: var(--text); background: var(--card-2); border: 1px solid var(--edge);
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: #3a4156; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 700; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  button.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
+  input[type=text], input[type=url], select {
+    font: inherit; color: var(--text); background: #0f121a; border: 1px solid var(--edge);
+    border-radius: 6px; padding: 5px 8px; min-width: 0;
+  }
+  input.bad { border-color: var(--bad); }
+  input[type=color] { width: 34px; height: 28px; padding: 0; border: 1px solid var(--edge); border-radius: 6px; background: none; cursor: pointer; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+  .form { color-scheme: dark; }
+
+  /* Top bar */
+  header {
+    position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+    padding: 12px 20px; background: rgba(13, 15, 20, 0.94); border-bottom: 1px solid var(--edge);
+    backdrop-filter: blur(6px);
+  }
+  header .grow { flex: 1; }
+  header .tools { display: flex; flex-wrap: wrap; gap: 8px; }
+  .keystate { font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--edge); color: var(--dim); }
+  .keystate.ok { color: var(--ok); border-color: rgba(61, 220, 132, 0.4); }
+  .keystate.no { color: var(--warn); border-color: rgba(255, 209, 102, 0.4); }
+  .dirty { color: var(--warn); font-size: 12px; }
+  #notes { position: fixed; right: 16px; bottom: 16px; z-index: 9; display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
+  .note { background: var(--card-2); border: 1px solid var(--edge); border-left: 4px solid var(--dim); border-radius: 6px; padding: 9px 12px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  .note.ok { border-left-color: var(--ok); }
+  .note.warn { border-left-color: var(--warn); }
+  .note.bad { border-left-color: var(--bad); }
+  .readonly { margin: 14px 20px 0; padding: 10px 14px; border: 1px solid rgba(255, 209, 102, 0.4); background: rgba(255, 209, 102, 0.08); border-radius: 8px; }
+
+  /* Two columns: the form, and the previews beside it */
+  .layout { display: grid; grid-template-columns: minmax(340px, 560px) minmax(0, 1fr); gap: 20px; padding: 16px 20px 60px; align-items: start; }
+  @media (max-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr); } .previews { position: static !important; max-height: none !important; } }
+  section.card { background: var(--card); border: 1px solid var(--edge); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .fields.one { grid-template-columns: 1fr; }
+  @media (max-width: 520px) { .fields { grid-template-columns: 1fr; } }
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field .lbl { font-size: 12px; color: var(--dim); }
+  .field.wide { grid-column: 1 / -1; }
+  .field.bool { flex-direction: row-reverse; justify-content: flex-end; align-items: center; gap: 8px; }
+  .field.bool .lbl { color: var(--text); font-size: 13px; }
+  .ctl { display: flex; gap: 6px; align-items: center; min-width: 0; }
+  .ctl > select, .ctl > input[type=text], .ctl > input[type=url] { flex: 1; }
+  .ctl output { width: 46px; text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .hex { width: 86px; flex: none !important; font-family: Consolas, Menlo, monospace; }
+
+  .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .preset { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 8px 10px; }
+  .preset .sw { display: flex; gap: 3px; }
+  .preset .sw span { width: 16px; height: 16px; border-radius: 4px; border: 1px solid rgba(255,255,255,.15); }
+
+  .maprows { display: flex; flex-direction: column; gap: 6px; }
+  .maprow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--card-2); border-radius: 6px; padding: 6px 8px; }
+  .maprow .mapname { min-width: 110px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .maprow .ctl { flex: 1; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; background: var(--edge); flex: none; }
+  .addrow { display: flex; gap: 6px; margin-top: 8px; }
+  .addrow input { flex: 1; }
+  .empty { color: var(--dim); font-size: 12px; margin: 0; }
+
+  .files { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .file { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--card-2); border-radius: 6px; padding: 6px 8px; }
+  .file .fname { flex: 1; min-width: 120px; font-family: Consolas, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file .kind { font-size: 11px; color: var(--dim); text-transform: uppercase; }
+  .drop { border: 1px dashed #3a4156; border-radius: 8px; padding: 14px; text-align: center; color: var(--dim); }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .meter { height: 6px; background: var(--card-2); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .meter span { display: block; height: 100%; background: var(--accent); }
+
+  .links { display: flex; flex-direction: column; gap: 6px; }
+  .link { display: flex; gap: 6px; align-items: center; }
+  .link code { flex: 1; font-size: 12px; background: #0f121a; border: 1px solid var(--edge); border-radius: 6px; padding: 5px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Previews */
+  .previews { position: sticky; top: 70px; max-height: calc(100vh - 86px); overflow: auto; }
+  .pvbar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; padding: 5px 10px; font-size: 12px; }
+  .seg button.on { background: var(--accent); color: #111; font-weight: 700; }
+  .pv { border: 1px solid var(--edge); border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+  .pv .pvhead { display: flex; justify-content: space-between; padding: 6px 10px; background: var(--card); font-size: 12px; color: var(--dim); }
+  .pv iframe { display: block; width: 100%; border: 0; background: transparent; }
+  .stage.checker { background: repeating-conic-gradient(#2a2d36 0 25%, #1d2028 0 50%) 0 0 / 22px 22px; }
+  .stage.dark { background: #050608; }
+  .stage.light { background: #e9edf3; }
+  .stage.track { background: linear-gradient(135deg, #2b4a3a, #5b6b7a 60%, #8a7b5a); }
+  textarea { width: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="tag">Phoenix</span> overlay style</h1>
+  <span class="keystate" id="keystate">…</span>
+  <span class="dirty" id="dirty" hidden>Unsaved changes</span>
+  <span class="grow"></span>
+  <div class="tools">
+    <button type="button" class="primary" id="save" disabled title="Ctrl+S">Save</button>
+    <button type="button" id="revert" disabled>Revert</button>
+    <button type="button" id="export">Export</button>
+    <button type="button" id="import">Import</button>
+    <button type="button" id="defaults">Start over</button>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+  </div>
+</header>
+<div class="readonly" id="readonly" hidden>
+  <strong>Read only.</strong> Saving and uploading need the style key. Open this page from the game:
+  Race Manager, Feed panel, <em>Open style editor</em>. You can still try a look here and Export it.
+</div>
+
+<div class="layout">
+<div class="form" id="form">
+
+  <section class="card">
+    <h2>Presets</h2>
+    <p class="hint">A starting point: a preset sets the colors and the shape, and keeps your logos and words.</p>
+    <div class="presets" id="presets"></div>
+  </section>
+
+  <section class="card">
+    <h2>Colors</h2>
+    <div class="fields">
+      <div class="field" data-key="colors.bg" data-type="color"><span class="lbl">Panel</span></div>
+      <div class="field" data-key="colors.bgAlt" data-type="color"><span class="lbl">Panel, every other row</span></div>
+      <div class="field" data-key="colors.fg" data-type="color"><span class="lbl">Text</span></div>
+      <div class="field" data-key="colors.muted" data-type="color"><span class="lbl">Quiet text (gaps, labels)</span></div>
+      <div class="field" data-key="colors.accent" data-type="color"><span class="lbl">Accent (leader, bars, joker)</span></div>
+      <div class="field" data-key="colors.fastest" data-type="color"><span class="lbl">Fastest lap</span></div>
+      <div class="field" data-key="colors.gain" data-type="color"><span class="lbl">Places gained</span></div>
+      <div class="field" data-key="colors.loss" data-type="color"><span class="lbl">Places lost</span></div>
+      <div class="field" data-key="colors.pit" data-type="color"><span class="lbl">Pit stop</span></div>
+      <div class="field" data-key="colors.flagGreen" data-type="color"><span class="lbl">Green flag</span></div>
+      <div class="field" data-key="colors.flagYellow" data-type="color"><span class="lbl">Yellow flag</span></div>
+      <div class="field" data-key="colors.flagRed" data-type="color"><span class="lbl">Red flag</span></div>
+      <div class="field" data-key="colors.flagWhite" data-type="color"><span class="lbl">White flag</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Panel and type</h2>
+    <div class="fields">
+      <div class="field" data-key="opacity" data-type="range" data-min="0" data-max="1" data-step="0.01"><span class="lbl">Panel opacity</span></div>
+      <div class="field" data-key="scale" data-type="range" data-min="0.5" data-max="3" data-step="0.05"><span class="lbl">Size (an overlay link's &amp;scale= wins)</span></div>
+      <div class="field" data-key="radius" data-type="range" data-min="0" data-max="1" data-step="0.05"><span class="lbl">Corner rounding</span></div>
+      <div class="field" data-key="rowHeight" data-type="range" data-min="1.4" data-max="2.8" data-step="0.05"><span class="lbl">Row height</span></div>
+      <div class="field" data-key="nameWidth" data-type="range" data-min="6" data-max="20" data-step="0.5"><span class="lbl">Name width, at most</span></div>
+      <div class="field" data-key="font" data-type="font"><span class="lbl">Font (upload WOFF2, WOFF, TTF or OTF under Files)</span></div>
+      <div class="field" data-key="weight" data-type="select" data-options="regular=Regular|bold=Bold|black=Black"><span class="lbl">Weight</span></div>
+      <div class="field bool" data-key="uppercase" data-type="bool"><span class="lbl">Names in capitals</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Driver rows</h2>
+    <div class="fields">
+      <div class="field" data-key="bar" data-type="select" data-options="team=Team color, else class|class=Class color|accent=Accent|none=No bar"><span class="lbl">Color bar</span></div>
+      <div class="field" data-key="nameFormat" data-type="select" data-options="full=Full name|last=Last name|code=Three-letter code|initialLast=Initial and last name"><span class="lbl">Names</span></div>
+      <div class="field" data-key="numbers" data-type="select" data-options="chip=In a team-colored chip|plain=Plain|off=Hidden"><span class="lbl">Car numbers</span></div>
+      <div class="field bool" data-key="teamLogos" data-type="bool"><span class="lbl">Team logos</span></div>
+      <div class="field bool" data-key="badges" data-type="bool"><span class="lbl">Badges (fastest lap, joker, pit, penalty)</span></div>
+      <div class="field bool" data-key="gained" data-type="bool"><span class="lbl">Places gained, in results</span></div>
+      <div class="field bool" data-key="flash" data-type="bool"><span class="lbl">Flash a row that moves</span></div>
+      <div class="field bool" data-key="flagStripe" data-type="bool"><span class="lbl">Flag color stripe</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Class colors</h2>
+    <p class="hint">Used for the color bar and the number chip when a driver has no team color.</p>
+    <div class="field wide" data-key="classColors" data-type="classmap"></div>
+  </section>
+
+  <section class="card">
+    <h2>Team logos</h2>
+    <p class="hint">Teams, their colors and car numbers come from the server: admins set them in game, on the <em>Teams and numbers</em> tab.
+      A team's logo link is used unless you pick a file of your own for it here.</p>
+    <div class="field wide" data-key="teamLogoOverrides" data-type="logomap"></div>
+  </section>
+
+  <section class="card">
+    <h2>Branding</h2>
+    <div class="fields">
+      <div class="field" data-key="logo" data-type="image"><span class="lbl">League logo (above the tower, grid and results)</span></div>
+      <div class="field" data-key="sponsor" data-type="image"><span class="lbl">Sponsor (below them, and at the banner's end)</span></div>
+      <div class="field" data-key="title" data-type="text" data-max="40"><span class="lbl">Title</span></div>
+      <div class="field" data-key="subtitle" data-type="text" data-max="60"><span class="lbl">Line under the title</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Words</h2>
+    <p class="hint">Every word the overlay shows, for another language or your own style. Leave one empty to hide that badge.</p>
+    <div class="fields">
+      <div class="field" data-key="labels.leader" data-type="text" data-max="24"><span class="lbl">Leader's gap</span></div>
+      <div class="field" data-key="labels.lap" data-type="text" data-max="24"><span class="lbl">Lap</span></div>
+      <div class="field" data-key="labels.noTime" data-type="text" data-max="24"><span class="lbl">No lap time</span></div>
+      <div class="field" data-key="labels.race" data-type="text" data-max="24"><span class="lbl">Race (with no layout name)</span></div>
+      <div class="field" data-key="labels.qualifying" data-type="text" data-max="24"><span class="lbl">Qualifying</span></div>
+      <div class="field" data-key="labels.qualiResult" data-type="text" data-max="24"><span class="lbl">Qualifying result</span></div>
+      <div class="field" data-key="labels.result" data-type="text" data-max="24"><span class="lbl">Result</span></div>
+      <div class="field" data-key="labels.standings" data-type="text" data-max="24"><span class="lbl">Standings</span></div>
+      <div class="field" data-key="labels.startingGrid" data-type="text" data-max="24"><span class="lbl">Starting grid</span></div>
+      <div class="field" data-key="labels.provisionalGrid" data-type="text" data-max="24"><span class="lbl">Provisional grid</span></div>
+      <div class="field" data-key="labels.noGrid" data-type="text" data-max="24"><span class="lbl">No grid yet</span></div>
+      <div class="field" data-key="labels.session" data-type="text" data-max="24"><span class="lbl">Banner: session</span></div>
+      <div class="field" data-key="labels.timeLeft" data-type="text" data-max="24"><span class="lbl">Banner: time left</span></div>
+      <div class="field" data-key="labels.time" data-type="text" data-max="24"><span class="lbl">Banner: time</span></div>
+      <div class="field" data-key="labels.start" data-type="text" data-max="24"><span class="lbl">Banner: start countdown</span></div>
+      <div class="field" data-key="labels.fastestLap" data-type="text" data-max="24"><span class="lbl">Banner: fastest lap</span></div>
+      <div class="field" data-key="labels.pit" data-type="text" data-max="24"><span class="lbl">Pit badge</span></div>
+      <div class="field" data-key="labels.fl" data-type="text" data-max="24"><span class="lbl">Fastest lap badge</span></div>
+      <div class="field" data-key="labels.joker" data-type="text" data-max="24"><span class="lbl">Joker badge</span></div>
+      <div class="field wide" data-key="labels.waiting" data-type="text" data-max="60"><span class="lbl">While the game is not in a session</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Files</h2>
+    <p class="hint">Logos, sponsor art, fonts and a stylesheet, kept in the game's user folder
+      (<code>settings/raceManager/overlay/</code>). PNG, JPG, GIF, WebP, SVG; WOFF2, WOFF, TTF, OTF; CSS.
+      <span id="caps"></span></p>
+    <div class="drop" id="drop">Drop files here, or <button type="button" class="small" id="pick">choose files</button>
+      <input type="file" id="files" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.svg,.woff2,.woff,.ttf,.otf,.css"></div>
+    <div class="meter"><span id="meter" style="width:0"></span></div>
+    <div class="files" id="fileList"></div>
+  </section>
+
+  <section class="card">
+    <h2>Advanced</h2>
+    <div class="fields one">
+      <div class="field" data-key="css" data-type="css"><span class="lbl">Custom stylesheet (a CSS file from Files, loaded after the overlay's own)</span></div>
+    </div>
+    <p class="hint">The overlay's parts have plain class names (.row, .name, .carno, .badge…), and rows carry
+      data-team, data-class and data-pos, so a stylesheet can single out one team or the leader.
+      Colors set here win over a stylesheet's unless it says <code>!important</code>.</p>
+  </section>
+
+  <section class="card">
+    <h2>Overlay links for OBS</h2>
+    <p class="hint">Add each as a Browser Source. Every open one takes a saved style at once.</p>
+    <div class="links" id="links"></div>
+  </section>
+</div>
+
+<div class="previews" id="previews">
+  <div class="pvbar">
+    <span class="seg" id="segData"><button type="button" data-v="sample" class="on">Sample race</button><button type="button" data-v="live">Live</button></span>
+    <span class="seg" id="segBg"><button type="button" data-v="checker" class="on">Checker</button><button type="button" data-v="track">Track</button><button type="button" data-v="dark">Dark</button><button type="button" data-v="light">Light</button></span>
+    <small>The previews show your draft. Live shows the game's session.</small>
+  </div>
+  <div id="frames"></div>
+</div>
+</div>
+
+<div id="notes" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ------------------------------------------------------------- the key
+  // Taken from the #fragment, then out of the address bar at once.
+  var KEY_STORE = 'prm-style-key';
+  var key = '';
+  (function () {
+    var m = /(?:^#|&)key=([a-z0-9]{8,64})(?:&|$)/.exec(location.hash || '');
+    if (m) {
+      key = m[1];
+      try { sessionStorage.setItem(KEY_STORE, key); } catch (e) { /* this tab only, then */ }
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; }
+      return;
+    }
+    try { key = sessionStorage.getItem(KEY_STORE) || ''; } catch (e) { key = ''; }
+    if (!/^[a-z0-9]{8,64}$/.test(key)) { key = ''; }
+  })();
+
+  // ------------------------------------------------------- the defaults
+  // The same as feedstyle.lua D.SPEC and the overlay's own.
+  var DEFAULTS = {
+    colors: {
+      bg: '#0c0e14', bgAlt: '#1a1d26', fg: '#f2f4f8', muted: '#9aa3b2',
+      accent: '#ff7a1a', fastest: '#b06cff', gain: '#3ddc84', loss: '#ff5c5c',
+      pit: '#3b82f6', flagGreen: '#1db954', flagYellow: '#ffd400',
+      flagRed: '#e53935', flagWhite: '#f5f5f5'
+    },
+    opacity: 0.86, scale: 1, radius: 0.3, rowHeight: 1.85, nameWidth: 11,
+    font: 'system', weight: 'bold', uppercase: false,
+    bar: 'team', classColors: {}, nameFormat: 'full', numbers: 'chip', teamLogos: true,
+    teamLogoOverrides: {},
+    badges: true, gained: true, flash: true, flagStripe: true,
+    logo: '', sponsor: '', title: '', subtitle: '',
+    labels: {
+      leader: 'LEADER', lap: 'LAP', noTime: 'NO TIME', race: 'Race', qualifying: 'Qualifying',
+      qualiResult: 'Qualifying result', result: 'Result', standings: 'Standings',
+      startingGrid: 'Starting grid', provisionalGrid: 'Provisional grid', noGrid: 'No grid yet',
+      session: 'Session', timeLeft: 'Time left', time: 'Time', start: 'Start',
+      fastestLap: 'Fastest lap', waiting: 'Waiting for Phoenix Race Manager…',
+      pit: 'PIT', fl: 'FL', joker: 'J'
+    },
+    css: ''
+  };
+  var GROUPS = { colors: true, labels: true };
+  var MAPS = { classColors: true, teamLogoOverrides: true };
+
+  var PRESETS = [
+    { name: 'Phoenix', note: 'the default', set: {
+      colors: { bg: '#0c0e14', bgAlt: '#1a1d26', fg: '#f2f4f8', muted: '#9aa3b2', accent: '#ff7a1a',
+        fastest: '#b06cff', gain: '#3ddc84', loss: '#ff5c5c', pit: '#3b82f6' },
+      opacity: 0.86, radius: 0.3, font: 'system', weight: 'bold', uppercase: false } },
+    { name: 'Midnight', note: 'deep blue', set: {
+      colors: { bg: '#0b1020', bgAlt: '#141b33', fg: '#e8ecff', muted: '#8b93b8', accent: '#4f8cff',
+        fastest: '#c77dff', gain: '#34d399', loss: '#f87171', pit: '#22d3ee' },
+      opacity: 0.9, radius: 0.45, font: 'system', weight: 'bold', uppercase: false } },
+    { name: 'Paddock', note: 'light', set: {
+      colors: { bg: '#f7f7f2', bgAlt: '#e9e9e1', fg: '#15171c', muted: '#5c6370', accent: '#d62828',
+        fastest: '#7b2cbf', gain: '#2a9d8f', loss: '#d62828', pit: '#1d4ed8' },
+      opacity: 0.95, radius: 0.15, font: 'condensed', weight: 'bold', uppercase: true } },
+    { name: 'Neon', note: 'night race', set: {
+      colors: { bg: '#07070c', bgAlt: '#12121f', fg: '#f5f5ff', muted: '#8f8fb3', accent: '#00f0ff',
+        fastest: '#ff2bd6', gain: '#39ff88', loss: '#ff3860', pit: '#ffe600' },
+      opacity: 0.88, radius: 0.6, font: 'rounded', weight: 'black', uppercase: false } },
+    { name: 'Mono', note: 'black and white', set: {
+      colors: { bg: '#111111', bgAlt: '#1c1c1c', fg: '#ffffff', muted: '#9a9a9a', accent: '#ffffff',
+        fastest: '#c8c8c8', gain: '#e0e0e0', loss: '#8a8a8a', pit: '#cfcfcf' },
+      opacity: 0.9, radius: 0, font: 'mono', weight: 'regular', uppercase: true } },
+    { name: 'Carbon', note: 'red on carbon', set: {
+      colors: { bg: '#16181c', bgAlt: '#202328', fg: '#f1f1f1', muted: '#a0a4ab', accent: '#e10600',
+        fastest: '#a855f7', gain: '#22c55e', loss: '#ef4444', pit: '#f59e0b' },
+      opacity: 0.92, radius: 0.1, font: 'condensed', weight: 'black', uppercase: true } }
+  ];
+  var FONT_NAMES = { system: 'System (Segoe UI)', condensed: 'Condensed', mono: 'Monospace', serif: 'Serif', rounded: 'Rounded' };
+  var KINDS = { png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image',
+    woff2: 'font', woff: 'font', ttf: 'font', otf: 'font', css: 'css' };
+  var HEX = /^#[0-9a-f]{6}$/i;
+  var WEB = /^https?:\/\/[^\s"'<>\\`()]+$/;
+  var VIEWS = [
+    { v: 'tower', name: 'Tower', h: 470 },
+    { v: 'banner', name: 'Banner', h: 96 },
+    { v: 'grid', name: 'Grid', h: 340 },
+    { v: 'results', name: 'Results', h: 420 },
+    { v: 'ticker', name: 'Ticker', h: 240 }
+  ];
+
+  // ------------------------------------------------------------ helpers
+  function isObj(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+  function own(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+  function clone(v) { return JSON.parse(JSON.stringify(v)); }
+  function $(id) { return document.getElementById(id); }
+  function clear(n) { while (n.firstChild) { n.removeChild(n.firstChild); } }
+  function h(tag, props, kids) {
+    var e = document.createElement(tag);
+    if (props) {
+      Object.keys(props).forEach(function (k) {
+        var v = props[k];
+        if (v === undefined || v === null || v === false) { return; }
+        if (k === 'text') { e.textContent = String(v); }
+        else if (k === 'cls') { e.className = v; }
+        else if (k.slice(0, 2) === 'on') { e.addEventListener(k.slice(2), v); }
+        else { e.setAttribute(k, v === true ? '' : String(v)); }
+      });
+    }
+    (kids || []).forEach(function (c) {
+      if (c) { e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); }
+    });
+    return e;
+  }
+  function stable(v) {
+    if (Array.isArray(v)) { return '[' + v.map(stable).join(',') + ']'; }
+    if (isObj(v)) {
+      return '{' + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ':' + stable(v[k]); }).join(',') + '}';
+    }
+    return JSON.stringify(v === undefined ? null : v);
+  }
+  function mb(n) { return (n / 1048576).toFixed(n < 1048576 ? 2 : 1) + ' MB'; }
+  function safeName(n) { return typeof n === 'string' && n !== '__proto__' && n !== 'constructor' && n !== 'prototype'; }
+
+  // Any style-shaped object -> every key, the defaults for what it lacks.
+  // The feed checks values on Save; the overlay checks them in the preview.
+  function whole(s) {
+    var o = clone(DEFAULTS);
+    if (!isObj(s)) { return o; }
+    Object.keys(DEFAULTS).forEach(function (k) {
+      if (!own(s, k)) { return; }
+      if (GROUPS[k]) {
+        if (isObj(s[k])) { Object.keys(o[k]).forEach(function (sk) { if (own(s[k], sk)) { o[k][sk] = s[k][sk]; } }); }
+      } else if (MAPS[k]) {
+        o[k] = {};
+        if (isObj(s[k])) { Object.keys(s[k]).forEach(function (mk) { if (safeName(mk)) { o[k][mk] = s[k][mk]; } }); }
+      } else {
+        o[k] = s[k];
+      }
+    });
+    return o;
+  }
+
+  // -------------------------------------------------------------- state
+  var saved = whole(null);     // the style the feed has
+  var draft = whole(null);     // what this page shows
+  var assets = { files: [], total: 0, maxBytes: 4194304, maxFiles: 64, maxTotal: 33554432, rev: 0 };
+  var teams = [];              // the league's, from the server
+  var liveClasses = [];        // classes seen in the session
+  var syncs = [];              // each field's "show the draft" function
+  var saving = false;
+
+  function isDirty() { return stable(draft) !== stable(saved); }
+  function updateDirty() {
+    var dirty = isDirty();
+    $('dirty').hidden = !dirty;
+    $('save').disabled = !key || !dirty || saving;
+    $('revert').disabled = !dirty;
+  }
+  function changed() { updateDirty(); schedulePreview(); }
+  function syncAll() { syncs.forEach(function (f) { f(); }); updateDirty(); schedulePreview(); }
+
+  function note(text, kind, ms) {
+    var n = h('div', { cls: 'note ' + (kind || ''), text: text });
+    $('notes').appendChild(n);
+    setTimeout(function () { if (n.parentNode) { n.parentNode.removeChild(n); } }, ms || 6000);
+  }
+
+  function api(method, path, body) {
+    var opts = { method: method, cache: 'no-store', headers: {} };
+    if (key) { opts.headers['X-PRM-Key'] = key; }
+    if (body !== undefined) { opts.body = body; }
+    return fetch(path, opts).then(function (r) {
+      return r.text().then(function (t) {
+        var j = null;
+        try { j = JSON.parse(t); } catch (e) { j = null; }
+        return { status: r.status, ok: r.ok, json: j, text: t };
+      });
+    }, function () { return { status: 0, ok: false, json: null, text: '' }; });
+  }
+  function getJSON(path) {
+    return fetch(path, { cache: 'no-store' }).then(function (r) { return r.json(); });
+  }
+  function failed(res, what) {
+    if (res.status === 0) { return what + ': the game did not answer. Is the feed still on?'; }
+    var why = (res.json && res.json.error) || ('HTTP ' + res.status);
+    if (res.status === 403 && /key/i.test(why)) {
+      why += '. Open the editor again from the Feed panel (a new key stops old links working).';
+    }
+    return what + ': ' + why;
+  }
+
+  // -------------------------------------------------------------- fields
+  function getPath(path) { var p = path.split('.'); return p.length === 2 ? draft[p[0]][p[1]] : draft[p[0]]; }
+  function setPath(path, v) {
+    var p = path.split('.');
+    if (p.length === 2) { draft[p[0]][p[1]] = v; } else { draft[p[0]] = v; }
+    changed();
+  }
+  function filesOf(kind) {
+    return assets.files.filter(function (f) { return f.kind === kind; }).map(function (f) { return f.name; });
+  }
+
+  function colorCtl(parent, getV, setV) {
+    var pick = h('input', { type: 'color', 'aria-label': 'Pick a color' });
+    var hex = h('input', { type: 'text', cls: 'hex', maxlength: 7, spellcheck: 'false', 'aria-label': 'Hex color' });
+    pick.addEventListener('input', function () { hex.value = pick.value; hex.classList.remove('bad'); setV(pick.value.toLowerCase()); });
+    hex.addEventListener('input', function () {
+      var v = hex.value.trim();
+      if (v && v.charAt(0) !== '#') { v = '#' + v; }
+      if (HEX.test(v)) { hex.classList.remove('bad'); pick.value = v.toLowerCase(); setV(v.toLowerCase()); }
+      else { hex.classList.add('bad'); }
+    });
+    parent.appendChild(h('span', { cls: 'ctl' }, [pick, hex]));
+    return function () {
+      var v = getV();
+      v = HEX.test(v || '') ? v.toLowerCase() : '#000000';
+      pick.value = v; hex.value = v; hex.classList.remove('bad');
+    };
+  }
+
+  // An image: None, one of the files, or a web link.
+  function imageCtl(parent, getV, setV, noneLabel) {
+    var sel = h('select', { 'aria-label': 'Image' });
+    var url = h('input', { type: 'url', placeholder: 'https://…', spellcheck: 'false', hidden: true });
+    var warn = h('small', { cls: 'hint', hidden: true });
+    function options(v) {
+      clear(sel);
+      sel.appendChild(h('option', { value: '', text: noneLabel || 'None' }));
+      var names = filesOf('image');
+      if (v && v.indexOf('asset:') === 0 && names.indexOf(v.slice(6)) < 0) {
+        sel.appendChild(h('option', { value: v, text: v.slice(6) + ' (not in Files)' }));
+      }
+      names.forEach(function (n) { sel.appendChild(h('option', { value: 'asset:' + n, text: n })); });
+      sel.appendChild(h('option', { value: 'web', text: 'Web link…' }));
+    }
+    function checkUrl(v) {
+      var bad = v !== '' && (v.length > 300 || !WEB.test(v));
+      url.classList.toggle('bad', bad);
+      var discord = /cdn\.discordapp\.com|media\.discordapp\.net/i.test(v) && /[?&]ex=/.test(v);
+      warn.hidden = !discord;
+      warn.textContent = discord ? 'Discord attachment links stop working within a day: upload the file under Files instead.' : '';
+      return !bad;
+    }
+    sel.addEventListener('change', function () {
+      if (sel.value === 'web') {
+        url.hidden = false; url.focus();
+        if (checkUrl(url.value.trim())) { setV(url.value.trim()); }
+      } else {
+        url.hidden = true; warn.hidden = true; setV(sel.value);
+      }
+    });
+    url.addEventListener('input', function () { var v = url.value.trim(); if (checkUrl(v)) { setV(v); } });
+    parent.appendChild(h('span', { cls: 'ctl' }, [sel]));
+    parent.appendChild(url);
+    parent.appendChild(warn);
+    return function () {
+      var v = getV() || '';
+      options(v);
+      if (v.indexOf('asset:') === 0) { sel.value = v; url.hidden = true; warn.hidden = true; }
+      else if (v) { sel.value = 'web'; url.hidden = false; url.value = v; checkUrl(v); }
+      else { sel.value = ''; url.hidden = true; url.value = ''; warn.hidden = true; }
+    };
+  }
+
+  function build(field) {
+    var path = field.getAttribute('data-key');
+    var type = field.getAttribute('data-type');
+    var getV = function () { return getPath(path); };
+    var setV = function (v) { setPath(path, v); };
+    if (type === 'color') { return colorCtl(field, getV, setV); }
+    if (type === 'range') {
+      var min = field.getAttribute('data-min'), max = field.getAttribute('data-max'), step = field.getAttribute('data-step');
+      var r = h('input', { type: 'range', min: min, max: max, step: step });
+      var out = h('output');
+      r.addEventListener('input', function () { var v = parseFloat(r.value); out.textContent = String(v); setV(v); });
+      field.appendChild(h('span', { cls: 'ctl' }, [r, out]));
+      return function () { var v = getV(); r.value = String(v); out.textContent = String(v); };
+    }
+    if (type === 'select') {
+      var s = h('select');
+      field.getAttribute('data-options').split('|').forEach(function (o) {
+        var i = o.indexOf('=');
+        s.appendChild(h('option', { value: o.slice(0, i), text: o.slice(i + 1) }));
+      });
+      s.addEventListener('change', function () { setV(s.value); });
+      field.appendChild(h('span', { cls: 'ctl' }, [s]));
+      return function () { s.value = getV(); };
+    }
+    if (type === 'bool') {
+      var c = h('input', { type: 'checkbox' });
+      c.addEventListener('change', function () { setV(c.checked); });
+      field.appendChild(c);
+      return function () { c.checked = getV() === true; };
+    }
+    if (type === 'text') {
+      var t = h('input', { type: 'text', maxlength: field.getAttribute('data-max') || 24 });
+      t.addEventListener('input', function () { setV(t.value); });
+      field.appendChild(h('span', { cls: 'ctl' }, [t]));
+      return function () { if (document.activeElement !== t) { t.value = getV() || ''; } };
+    }
+    if (type === 'image') { return imageCtl(field, getV, setV); }
+    if (type === 'font' || type === 'css') {
+      var f = h('select');
+      f.addEventListener('change', function () { setV(f.value); });
+      field.appendChild(h('span', { cls: 'ctl' }, [f]));
+      return function () {
+        var v = getV() || '';
+        clear(f);
+        if (type === 'font') {
+          Object.keys(FONT_NAMES).forEach(function (k) { f.appendChild(h('option', { value: k, text: FONT_NAMES[k] })); });
+        } else {
+          f.appendChild(h('option', { value: '', text: 'None' }));
+        }
+        var names = filesOf(type);
+        if (v.indexOf('asset:') === 0 && names.indexOf(v.slice(6)) < 0) {
+          f.appendChild(h('option', { value: v, text: v.slice(6) + ' (not in Files)' }));
+        }
+        names.forEach(function (n) { f.appendChild(h('option', { value: 'asset:' + n, text: 'File: ' + n })); });
+        f.value = v;
+      };
+    }
+    if (type === 'classmap') { return classMap(field); }
+    if (type === 'logomap') { return logoMap(field); }
+    return function () {};
+  }
+
+  function classMap(field) {
+    var box = h('div', { cls: 'maprows' });
+    var input = h('input', { type: 'text', maxlength: 12, placeholder: 'A class, as the server names it' });
+    function addClass(name) {
+      if (!safeName(name) || !/^[A-Za-z0-9\-. ]{1,12}$/.test(name)) { input.classList.add('bad'); return; }
+      if (!own(draft.classColors, name) && Object.keys(draft.classColors).length >= 16) {
+        note('16 class colors at most.', 'warn'); return;
+      }
+      input.classList.remove('bad');
+      if (!own(draft.classColors, name)) { draft.classColors[name] = draft.colors.accent; }
+      changed();
+      render();
+    }
+    var add = h('button', { type: 'button', text: 'Add', onclick: function () { addClass(input.value.trim()); input.value = ''; } });
+    function render() {
+      clear(box);
+      var names = Object.keys(draft.classColors);
+      liveClasses.forEach(function (c) { if (names.indexOf(c) < 0) { names.push(c); } });
+      names.sort();
+      if (!names.length) {
+        box.appendChild(h('p', { cls: 'empty', text: 'No classes yet. They show here once a session has them, or add one.' }));
+      }
+      names.forEach(function (n) {
+        var row = h('div', { cls: 'maprow' }, [h('span', { cls: 'mapname', text: n })]);
+        if (own(draft.classColors, n)) {
+          var sync = colorCtl(row, function () { return draft.classColors[n]; },
+            function (v) { draft.classColors[n] = v; changed(); });
+          sync();
+          row.appendChild(h('button', { type: 'button', cls: 'small danger', text: 'Remove',
+            onclick: function () { delete draft.classColors[n]; changed(); render(); } }));
+        } else {
+          row.appendChild(h('button', { type: 'button', cls: 'small', text: 'Give it a color',
+            onclick: function () { addClass(n); } }));
+        }
+        box.appendChild(row);
+      });
+    }
+    field.appendChild(box);
+    field.appendChild(h('div', { cls: 'addrow' }, [input, add]));
+    return render;
+  }
+
+  function logoMap(field) {
+    var box = h('div', { cls: 'maprows' });
+    function render() {
+      clear(box);
+      var shorts = teams.map(function (t) { return t.short; });
+      Object.keys(draft.teamLogoOverrides).forEach(function (s) { if (shorts.indexOf(s) < 0) { shorts.push(s); } });
+      if (!shorts.length) {
+        box.appendChild(h('p', { cls: 'empty', text: 'No teams yet. Admins add them in game, on the Teams and numbers tab.' }));
+      }
+      shorts.forEach(function (s) {
+        var t = null;
+        teams.forEach(function (x) { if (x.short === s) { t = x; } });
+        var sw = h('span', { cls: 'swatch' });
+        if (t && HEX.test(t.color || '')) { sw.style.background = t.color; }
+        var row = h('div', { cls: 'maprow' }, [sw, h('span', { cls: 'mapname', text: t ? s + ' · ' + t.name : s + ' (no such team now)' })]);
+        var sync = imageCtl(row, function () { return draft.teamLogoOverrides[s] || ''; }, function (v) {
+          if (v) { draft.teamLogoOverrides[s] = v; } else { delete draft.teamLogoOverrides[s]; }
+          changed();
+        }, t && t.logo ? 'The team\'s own logo link' : 'No logo');
+        sync();
+        box.appendChild(row);
+      });
+    }
+    field.appendChild(box);
+    return render;
+  }
+
+  // ------------------------------------------------------------ presets
+  function presets() {
+    var box = $('presets');
+    PRESETS.forEach(function (p) {
+      var sw = h('span', { cls: 'sw' });
+      [p.set.colors.bg, p.set.colors.bgAlt, p.set.colors.fg, p.set.colors.accent, p.set.colors.fastest].forEach(function (c) {
+        var d = h('span'); d.style.background = c; sw.appendChild(d);
+      });
+      box.appendChild(h('button', { type: 'button', cls: 'preset', onclick: function () {
+        Object.keys(p.set).forEach(function (k) {
+          if (k === 'colors') { Object.keys(p.set.colors).forEach(function (c) { draft.colors[c] = p.set.colors[c]; }); }
+          else { draft[k] = p.set[k]; }
+        });
+        syncAll();
+        note(p.name + ': not saved yet.', '', 2500);
+      } }, [sw, h('strong', { text: p.name }), h('small', { text: p.note })]));
+    });
+  }
+
+  // -------------------------------------------------------------- files
+  function cleanName(n) {
+    n = String(n || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '')
+      .replace(/\.{2,}/g, '.').replace(/^[^a-z0-9]+/, '');
+    var m = /\.([a-z0-9]+)$/.exec(n);
+    if (!m || !KINDS[m[1]]) { return null; }
+    if (n.length > 64) { n = n.slice(0, 64 - m[0].length) + m[0]; }
+    return n === 'style.json' ? null : n;
+  }
+  function inUse(name) {
+    var ref = 'asset:' + name, uses = [];
+    if (draft.logo === ref) { uses.push('the logo'); }
+    if (draft.sponsor === ref) { uses.push('the sponsor'); }
+    if (draft.font === ref) { uses.push('the font'); }
+    if (draft.css === ref) { uses.push('the stylesheet'); }
+    Object.keys(draft.teamLogoOverrides).forEach(function (s) { if (draft.teamLogoOverrides[s] === ref) { uses.push(s + '\'s logo'); } });
+    return uses;
+  }
+  function use(field, name) {
+    draft[field] = 'asset:' + name;
+    syncAll();
+  }
+  function renderFiles() {
+    var list = $('fileList');
+    clear(list);
+    $('caps').textContent = assets.files.length + ' of ' + assets.maxFiles + ' files, ' + mb(assets.total) + ' of ' +
+      mb(assets.maxTotal) + '; ' + mb(assets.maxBytes) + ' a file at most.';
+    $('meter').style.width = Math.min(100, 100 * assets.total / assets.maxTotal) + '%';
+    if (!assets.files.length) { list.appendChild(h('p', { cls: 'empty', text: 'No files yet.' })); }
+    assets.files.forEach(function (f) {
+      var row = h('div', { cls: 'file' }, [
+        h('span', { cls: 'fname', text: f.name, title: f.name }),
+        h('span', { cls: 'kind', text: f.kind + ' · ' + (f.size < 1024 ? f.size + ' B' : Math.round(f.size / 1024) + ' KB') })
+      ]);
+      if (f.kind === 'image') {
+        row.appendChild(h('button', { type: 'button', cls: 'small', text: 'Logo', onclick: function () { use('logo', f.name); } }));
+        row.appendChild(h('button', { type: 'button', cls: 'small', text: 'Sponsor', onclick: function () { use('sponsor', f.name); } }));
+      } else if (f.kind === 'font') {
+        row.appendChild(h('button', { type: 'button', cls: 'small', text: 'Use font', onclick: function () { use('font', f.name); } }));
+      } else if (f.kind === 'css') {
+        row.appendChild(h('button', { type: 'button', cls: 'small', text: 'Use', onclick: function () { use('css', f.name); } }));
+      }
+      row.appendChild(h('button', { type: 'button', cls: 'small danger', text: 'Remove', disabled: !key, onclick: function () { removeFile(f.name); } }));
+      list.appendChild(row);
+    });
+  }
+  function loadFiles() {
+    return getJSON('/assets.json').then(function (a) {
+      if (isObj(a) && Array.isArray(a.files)) { assets = a; }
+      renderFiles();
+      syncAll();
+    }).catch(function () { renderFiles(); });
+  }
+  function upload(list) {
+    if (!key) { note('Uploading needs the style key: open this page from the Feed panel.', 'warn'); return; }
+    var queue = Array.prototype.slice.call(list || []);
+    var done = 0;
+    function next() {
+      var file = queue.shift();
+      if (!file) { if (done) { loadFiles(); } return; }
+      var name = cleanName(file.name);
+      if (!name) { note(file.name + ': not a type the overlay takes.', 'bad'); return next(); }
+      if (file.size > assets.maxBytes) { note(name + ': bigger than ' + mb(assets.maxBytes) + '.', 'bad'); return next(); }
+      note('Uploading ' + name + '…', '', 2000);
+      api('POST', '/assets/' + encodeURIComponent(name), file).then(function (res) {
+        if (res.ok && res.json && res.json.ok) { done += 1; note(name + ' uploaded.', 'ok', 3000); }
+        else { note(failed(res, name), 'bad', 9000); }
+        next();
+      });
+    }
+    next();
+  }
+  function removeFile(name) {
+    var uses = inUse(name);
+    if (!confirm('Remove ' + name + ' from the overlay folder?' + (uses.length ? '\nIt is ' + uses.join(', ') + ' in this draft.' : ''))) { return; }
+    api('DELETE', '/assets/' + encodeURIComponent(name)).then(function (res) {
+      if (res.ok) { note(name + ' removed.', 'ok', 3000); loadFiles(); }
+      else { note(failed(res, 'Remove ' + name), 'bad', 9000); }
+    });
+  }
+
+  // ------------------------------------------------------ save and such
+  function bodyOf(style) {
+    var o = clone(style);
+    delete o.v; delete o.seq; delete o.assetsRev;
+    return o;
+  }
+  function save() {
+    if (!key || saving || !isDirty()) { return; }
+    saving = true;
+    updateDirty();
+    api('POST', '/style.json', JSON.stringify(bodyOf(draft))).then(function (res) {
+      saving = false;
+      if (res.ok && res.json && res.json.ok) {
+        saved = whole(res.json.style);
+        draft = whole(res.json.style);
+        syncAll();
+        var rej = Array.isArray(res.json.rejected) ? res.json.rejected : [];
+        if (rej.length) { note('Saved, but the feed refused: ' + rej.join(', ') + '. Those keep their old value.', 'warn', 12000); }
+        else { note('Saved: every open overlay has the new look.', 'ok'); }
+      } else {
+        note(failed(res, 'Not saved'), 'bad', 12000);
+        updateDirty();
+      }
+    });
+  }
+  $('save').addEventListener('click', save);
+  $('revert').addEventListener('click', function () { draft = clone(saved); syncAll(); note('Back to the saved look.', '', 2500); });
+  $('defaults').addEventListener('click', function () {
+    var keep = { logo: draft.logo, sponsor: draft.sponsor, title: draft.title, subtitle: draft.subtitle };
+    draft = whole(null);
+    if (confirm('Keep your logo, sponsor and title?')) { Object.keys(keep).forEach(function (k) { draft[k] = keep[k]; }); }
+    syncAll();
+    note('Every setting back to the default: not saved yet.', '', 3500);
+  });
+  $('export').addEventListener('click', function () {
+    var blob = new Blob([JSON.stringify(bodyOf(draft), null, 2) + '\n'], { type: 'application/json' });
+    var a = h('a', { href: URL.createObjectURL(blob), download: 'prm-overlay-style.json' });
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.parentNode.removeChild(a); }, 1000);
+    note('Exported. The files it uses (logos, fonts) are not inside: share those too.', '', 6000);
+  });
+  $('import').addEventListener('click', function () { $('importFile').click(); });
+  $('importFile').addEventListener('change', function () {
+    var file = this.files && this.files[0];
+    this.value = '';
+    if (!file) { return; }
+    if (file.size > 65536) { note('That file is too big to be a style.', 'bad'); return; }
+    file.text().then(function (t) {
+      var s;
+      try { s = JSON.parse(t); } catch (e) { s = null; }
+      if (!isObj(s)) { note('That is not a style file.', 'bad'); return; }
+      draft = whole(s);
+      syncAll();
+      note('Imported: look it over, then Save.', 'ok');
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); save(); }
+  });
+  window.addEventListener('beforeunload', function (e) {
+    if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  // ----------------------------------------------------------- previews
+  var frames = [], sample = true;
+  function previewStyle() {
+    var s = bodyOf(draft);
+    s.assetsRev = assets.rev || 0;
+    return s;
+  }
+  var pending = false;
+  function schedulePreview() {
+    if (pending) { return; }
+    pending = true;
+    requestAnimationFrame(function () {
+      pending = false;
+      var msg = { type: 'prm-style', style: previewStyle() };
+      frames.forEach(function (f) {
+        try { f.contentWindow.postMessage(msg, location.origin); } catch (e) { /* not loaded yet */ }
+      });
+    });
+  }
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== location.origin || !isObj(ev.data) || ev.data.type !== 'prm-ready') { return; }
+    frames.forEach(function (f) {
+      if (f.contentWindow === ev.source) {
+        f.contentWindow.postMessage({ type: 'prm-style', style: previewStyle() }, location.origin);
+      }
+    });
+  });
+  function frameSrc(v) {
+    // Live previews poll, so they hold no stream open.
+    return '/overlay?view=' + v + '&preview=1' + (sample ? '&demo=1' : '&poll=1') + (v === 'ticker' ? '&hold=6' : '');
+  }
+  function buildFrames() {
+    var box = $('frames');
+    VIEWS.forEach(function (view) {
+      var f = h('iframe', { title: view.name + ' preview', src: frameSrc(view.v) });
+      f.style.height = view.h + 'px';
+      frames.push(f);
+      box.appendChild(h('div', { cls: 'pv' }, [
+        h('div', { cls: 'pvhead' }, [h('span', { text: view.name }), h('span', { text: '/overlay?view=' + view.v })]),
+        h('div', { cls: 'stage checker' }, [f])
+      ]));
+    });
+  }
+  function segment(id, onPick) {
+    var seg = $(id);
+    Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
+      b.addEventListener('click', function () {
+        Array.prototype.forEach.call(seg.querySelectorAll('button'), function (x) { x.classList.toggle('on', x === b); });
+        onPick(b.getAttribute('data-v'));
+      });
+    });
+  }
+  segment('segData', function (v) {
+    sample = v === 'sample';
+    frames.forEach(function (f, i) { f.src = frameSrc(VIEWS[i].v); });
+  });
+  segment('segBg', function (v) {
+    Array.prototype.forEach.call(document.querySelectorAll('.stage'), function (s) { s.className = 'stage ' + v; });
+  });
+
+  function links() {
+    var box = $('links');
+    VIEWS.forEach(function (view) {
+      var url = location.origin + '/overlay?view=' + view.v;
+      var code = h('code', { text: url, title: url });
+      box.appendChild(h('div', { cls: 'link' }, [
+        h('span', { text: view.name, style: 'width:64px;color:var(--dim)' }), code,
+        h('button', { type: 'button', cls: 'small', text: 'Copy', onclick: function () {
+          var ok = function () { note('Copied: ' + url, 'ok', 2500); };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(ok, function () { window.prompt('Copy this link:', url); });
+          } else { window.prompt('Copy this link:', url); }
+        } })
+      ]));
+    });
+  }
+
+  // ------------------------------------------- the session, and changes
+  function takeTeams(list) {
+    if (!Array.isArray(list)) { return false; }
+    var clean = list.filter(function (t) { return isObj(t) && typeof t.short === 'string' && /^[A-Z0-9]{2,4}$/.test(t.short); })
+      .map(function (t) { return { short: t.short, name: String(t.name || ''), color: String(t.color || ''), logo: String(t.logo || '') }; });
+    var was = stable(teams);
+    teams = clean;
+    return stable(teams) !== was;
+  }
+  function takeClasses(doc) {
+    if (!isObj(doc)) { return false; }
+    var seen = [];
+    (doc.drivers || []).concat(doc.grid || []).forEach(function (d) {
+      if (isObj(d) && typeof d.class === 'string' && d.class && safeName(d.class) && seen.indexOf(d.class) < 0) { seen.push(d.class); }
+    });
+    seen.sort();
+    var was = stable(liveClasses);
+    if (seen.length) { liveClasses = seen; }
+    return stable(liveClasses) !== was;
+  }
+  var mapSyncs = [];
+  function listen() {
+    if (typeof EventSource === 'undefined') { return; }
+    var es = new EventSource('/stream');
+    var lastLook = 0;
+    es.addEventListener('style', function (ev) {
+      var s;
+      try { s = whole(JSON.parse(ev.data)); } catch (e) { return; }
+      if (stable(s) === stable(saved)) { return; }
+      var wasDirty = isDirty();
+      var mine = stable(s) === stable(draft);
+      saved = s;
+      if (!wasDirty || mine) { draft = clone(saved); syncAll(); }
+      else if (!saving) { note('The look was changed somewhere else. Save keeps yours; Revert takes the new one.', 'warn', 10000); updateDirty(); }
+    });
+    es.addEventListener('state', function (ev) {
+      var now = Date.now();
+      if (now - lastLook < 3000) { return; }
+      lastLook = now;
+      var doc;
+      try { doc = JSON.parse(ev.data); } catch (e) { return; }
+      var moved = takeClasses(doc);
+      if (takeTeams(doc.teams) || moved) { mapSyncs.forEach(function (f) { f(); }); }
+    });
+  }
+
+  // --------------------------------------------------------------- start
+  function start() {
+    var ks = $('keystate');
+    if (key) { ks.textContent = 'Editing'; ks.className = 'keystate ok'; }
+    else { ks.textContent = 'Read only'; ks.className = 'keystate no'; $('readonly').hidden = false; $('pick').disabled = true; }
+    presets();
+    Array.prototype.forEach.call(document.querySelectorAll('[data-key]'), function (field) {
+      var sync = build(field);
+      syncs.push(sync);
+      var t = field.getAttribute('data-type');
+      if (t === 'classmap' || t === 'logomap') { mapSyncs.push(sync); }
+    });
+    links();
+    buildFrames();
+    syncAll();
+    Promise.all([
+      getJSON('/style.json').catch(function () { return null; }),
+      getJSON('/assets.json').catch(function () { return null; }),
+      getJSON('/teams.json').catch(function () { return null; }),
+      getJSON('/live.json').catch(function () { return null; })
+    ]).then(function (got) {
+      if (isObj(got[0])) { saved = whole(got[0]); draft = clone(saved); }
+      else { note('Could not read the style from the game: showing the defaults.', 'warn'); }
+      if (isObj(got[1]) && Array.isArray(got[1].files)) { assets = got[1]; }
+      takeTeams(got[2]);
+      takeClasses(got[3]);
+      renderFiles();
+      syncAll();
+      listen();
+    });
+
+    var drop = $('drop');
+    $('pick').addEventListener('click', function () { $('files').click(); });
+    $('files').addEventListener('change', function () { upload(this.files); this.value = ''; });
+    drop.addEventListener('dragover', function (e) { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', function () { drop.classList.remove('over'); });
+    drop.addEventListener('drop', function (e) {
+      e.preventDefault();
+      drop.classList.remove('over');
+      upload(e.dataTransfer && e.dataTransfer.files);
+    });
+  }
+  start();
+})();
+</script>
+</body>
+</html>

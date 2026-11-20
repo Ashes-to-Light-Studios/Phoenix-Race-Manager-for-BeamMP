@@ -1836,6 +1836,7 @@ Resources/Server/PhoenixRM Server/
         config.json              server settings
         discord.json             the Discord webhook and what it posts
         cup.json                 the championship
+        teams.json               teams and car numbers
         roster.json              display names
         garage.json              the allowed vehicles
         results/                 one .txt per session, while Save results is on the server
@@ -2958,6 +2959,11 @@ turn it off; the setting is kept in your BeamNG user folder
   shows the address the other PC uses.
 - **The links.** Once it is running the panel lists the overlay and data links;
   click one to select it, ready to copy. It also counts what is reading it.
+- **The overlay's look.** **Open style editor** opens the
+  [style editor](#styling-the-overlay) in your browser; **Overlay folder** opens
+  the folder its logos and fonts are kept in; **Show link** shows the editor's
+  link to paste into a browser yourself; **New key** makes the old links stop
+  working.
 
 ### What it serves
 
@@ -2965,16 +2971,23 @@ turn it off; the setting is kept in your BeamNG user folder
 |---|---|
 | `/overlay` | The ready-made overlay page (below). For an OBS Browser Source. |
 | `/live.json` | Everything, one JSON document. Poll it as often as you like. |
-| `/stream` | The same document pushed as it changes ([Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)): event `state`, about three a second while a session runs. |
+| `/stream` | The same document pushed as it changes ([Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)): event `state`, about three a second while a session runs. Also `event: style`, the overlay's look, first thing on connecting and again whenever it changes. |
 | `/drivers.json` | Just the running order, a list at the top level (vMix, Companion). |
 | `/grid.json` | Just the starting grid, a list. |
 | `/session.json` | Just the session: lap, clock, flag. |
 | `/events.json` | Just the last 30 events, a list. |
+| `/teams.json` | Just the league's teams, a list (see [Teams and car numbers](#teams-and-car-numbers)). |
+| `/style` | The style editor for the overlay's look. Open it from the Feed panel: saving takes the key. |
+| `/style.json` | The overlay's look, as last saved. |
+| `/assets.json` | The files in the overlay folder (logos, fonts, a stylesheet), with the limits. |
+| `/assets/<name>` | One of those files. |
 | `/` | A page with all of these as links. |
 
 Every answer carries `Access-Control-Allow-Origin: *` and `Cache-Control:
-no-store`, so a page from anywhere can read it and nothing caches it. It is read
-only: there is no address that changes anything in the game.
+no-store`, so a page from anywhere can read it and nothing caches it. Nothing
+here changes anything in the game. The one thing that can be written is the
+overlay's own look ([Styling the overlay](#styling-the-overlay)), and only with
+the style key.
 
 ### OBS, vMix and your own graphics
 
@@ -3017,8 +3030,119 @@ falls back to polling `/live.json`. Pick what it shows with the address:
 
 Add any of: `&rows=10` (how many drivers), `&gap=interval` (to the car ahead
 rather than the leader), `&class=GT4` (one class), `&scale=1.5`, `&theme=light`,
-`&poll=1` (no stream), `&src=http://192.168.1.20:8128` (another PC's feed). Names
-are drawn as text, never as HTML: a driver called `<script>` is just a name.
+`&poll=1` (no stream), `&src=http://192.168.1.20:8128` (another PC's feed),
+`&demo=1` (a sample race that moves, to set up a scene with no session running).
+Names are drawn as text, never as HTML: a driver called `<script>` is just a name.
+
+A driver's **team** colors the bar beside their name and the chip with their
+**car number**, and the team's logo sits next to it (see
+[Teams and car numbers](#teams-and-car-numbers)). The colors, logos, font and
+words are yours to change: next.
+
+### Styling the overlay
+
+**The style editor.** On the Feed panel, **Open style editor**. It opens in your
+browser: every setting on the left, and on the right the five views previewing
+what you are doing, on a sample race (or **Live**, the session itself) over a
+checker, a track, dark or light. Start from a **preset** (Phoenix, Midnight,
+Paddock, Neon, Mono, Carbon) and change what you like. Nothing changes on stream
+until **Save**; then every open overlay takes the new look within a second,
+without a refresh (they get `event: style` on the stream; one that polls sees
+`styleSeq` move and fetches `/style.json` again). **Revert** goes back to what
+is saved, **Start over** to the defaults. **Export** and **Import** pass a look
+between streamers as a file, to keep a league's broadcasts alike; send the logos
+and fonts it uses along with it.
+
+**The style key.** Saving and uploading take a key. The Feed panel's editor link
+carries it after `#key=`, a part of an address no browser ever sends anywhere,
+and the page takes it out of the address bar as soon as it opens. Without it the
+page still shows and previews, but cannot save. Where the game cannot open your
+browser, **Show link** shows the link to paste in yourself: it can change what
+your stream shows, so keep it, and that panel, off stream. **New key** makes a
+new one; links already given out stop working. Ten wrong keys in a minute shut
+writes for a minute.
+
+**Your files.** Logos, sponsor art, fonts and a stylesheet live in the overlay
+folder in your BeamNG user folder, `settings/raceManager/overlay/` (**Overlay
+folder** on the Feed panel opens it), next to the look itself, `style.json`.
+Upload them in the editor (it gives them a plain name), or copy them in.
+
+- Images: PNG, JPG, GIF, WebP, SVG (an SVG with script in it is refused).
+- Fonts: WOFF2, WOFF, TTF, OTF.
+- One kind of stylesheet: CSS.
+- Names are lower-case letters, digits, dot, dash and underscore.
+- At most 64 files, 4 MB each and 32 MB in all. A file whose contents are not
+  what its name says is refused.
+
+A setting names one of these files as `asset:<name>`; an image may also be an
+`https://` link.
+
+**Every setting.** Each is checked when saved: anything that does not fit is
+refused, named in the answer, and keeps its old value.
+
+| Key | What it does | Default |
+|---|---|---|
+| `colors.bg`, `colors.bgAlt` | The panel, and every other row | `#0c0e14`, `#1a1d26` |
+| `colors.fg`, `colors.muted` | Text, and the quiet text: gaps, labels | `#f2f4f8`, `#9aa3b2` |
+| `colors.accent` | The leader's place, the joker badge, and a bar or number chip with no team or class color | `#ff7a1a` |
+| `colors.fastest` | The fastest lap | `#b06cff` |
+| `colors.gain`, `colors.loss` | Places gained and lost, and a moving row's flash | `#3ddc84`, `#ff5c5c` |
+| `colors.pit` | The pit badge | `#3b82f6` |
+| `colors.flagGreen`, `colors.flagYellow`, `colors.flagRed`, `colors.flagWhite` | The flag stripe and the flag line | `#1db954`, `#ffd400`, `#e53935`, `#f5f5f5` |
+| `opacity` | The panel's opacity, 0 to 1 | `0.86` |
+| `scale` | Size, 0.5 to 3. A link's `&scale=` wins | `1` |
+| `radius` | Corner rounding, 0 to 1 (em) | `0.3` |
+| `rowHeight` | Row height, 1.4 to 2.8 (em) | `1.85` |
+| `nameWidth` | The widest a name gets, 6 to 20 (em) | `11` |
+| `font` | `system`, `condensed`, `mono`, `serif`, `rounded`, or a font of yours (`asset:<name>`) | `system` |
+| `weight` | `regular`, `bold` or `black` | `bold` |
+| `uppercase` | Names in capitals | `false` |
+| `bar` | The color bar: `team` (the team's, else the class's), `class`, `accent` or `none` | `team` |
+| `classColors` | A color for each class, like `{"GT3": "#e11d48"}`; at most 16 | none |
+| `nameFormat` | `full`, `last`, `code` (three letters, `CAR`) or `initialLast` (`A. Carter`) | `full` |
+| `numbers` | Car numbers: `chip` (in the team's color), `plain` or `off` | `chip` |
+| `teamLogos` | Team logos beside names | `true` |
+| `teamLogoOverrides` | A file of yours for a team's logo, by its short code, like `{"PHX": "asset:phx.png"}`; at most 32 | none |
+| `badges` | The fastest-lap, joker, pit and penalty badges | `true` |
+| `gained` | Places gained, in the results | `true` |
+| `flash` | A row flashes when it moves | `true` |
+| `flagStripe` | The flag-colored stripe | `true` |
+| `logo` | The league's logo: above the tower, grid and results, and first on the banner | none |
+| `sponsor` | Under them, and last on the banner | none |
+| `title`, `subtitle` | Beside the logo; up to 40 and 60 characters | none |
+| `css` | A stylesheet of yours (`asset:<name>`), loaded after the overlay's own | none |
+
+And every word the overlay shows, 24 characters each: `labels.leader`
+(LEADER), `labels.lap` (LAP), `labels.noTime` (NO TIME), `labels.race` (Race,
+when the layout has no name), `labels.qualifying`, `labels.qualiResult`,
+`labels.result`, `labels.standings`, `labels.startingGrid`,
+`labels.provisionalGrid`, `labels.noGrid`, the banner's `labels.session`,
+`labels.timeLeft`, `labels.time`, `labels.start` and `labels.fastestLap`, the
+badges' `labels.pit` (PIT), `labels.fl` (FL) and `labels.joker` (J), and
+`labels.waiting` (60 characters), shown while there is no session. An empty
+badge word hides that badge.
+
+**From a Stream Deck, Companion or a script.** A `POST` to `/style.json`
+changes the saved look, merged with it: `colors` and `labels` key by key,
+anything else replaced whole. `{"reset": true}` starts from the defaults. The
+key goes in an `X-PRM-Key` header (or `?key=`):
+
+```
+curl -X POST http://127.0.0.1:8128/style.json -H "X-PRM-Key: YOUR_KEY" -d "{\"colors\":{\"accent\":\"#e10600\"}}"
+```
+
+The answer is `ok`, the `rejected` settings (a list, empty when all went in) and
+the whole `style`. Files: a `POST` to `/assets/` and the file's name (`/assets/logo.png`), with
+the file as the body, and a `DELETE` to the same address to remove one. Writes are refused from other web pages,
+taken one at a time, and must say their length; a style is 64 KB at most.
+
+**A stylesheet of your own** reaches every part. The page's root has
+`data-view` (`tower`, `grid`...); tower, grid and results rows have `data-pos`,
+`data-class` and `data-team` (the short code); the parts are `.panel`, `.brand`,
+`.head`, `.rows`, `.row`, `.pos`, `.bar`, `.carno`, `.tlogo`, `.name`, `.gap`,
+`.badge`, `.slot`, `.banner`, `.results` and `.toast`. The editor's colors are
+set on the page itself, so a stylesheet's own wins over them only with
+`!important`.
 
 ### The data
 
@@ -3033,7 +3157,8 @@ the app shows it (`1:23.456`, `+1.2`, `+1:02.3`, `+1 LAP`, `+2 LAPS`, `3/10`,
 server's. `seq` goes up by one with every change, and `epoch` is when the feed
 started (a new `epoch` means `seq` started again). `ts` is when this copy was
 made. `connected` is `false` until the race arrives and after leaving the
-server. Then `session`, `drivers`, `grid` and `events`.
+server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
+`drivers`, `grid`, `teams` and `events`.
 
 **`session`**
 
@@ -3085,9 +3210,16 @@ server. Then `session`, `drivers`, `grid` and `events`.
 | `finishTime`, `finishText` | Race time at the flag. |
 | `penalty` | Time penalties, in seconds. |
 | `resets` | Resets used. |
+| `number` | The car number, as text (`"07"` is not `"7"`), or `null`. |
+| `team`, `teamName`, `teamShort`, `teamColor`, `teamLogo` | The driver's team: its id, name, short code (`PHX`), color (`#ff7a1a`) and logo link; `null` with no team. |
 
-**`grid`**: `slot`, `id`, `name`, `class`, `qualiBest`, `qualiBestText`, in slot
-order.
+**`grid`**: `slot`, `id`, `name`, `class`, `qualiBest`, `qualiBestText`, and the
+same `number`, `team`, `teamName`, `teamShort`, `teamColor` and `teamLogo`, in
+slot order.
+
+**`teams`**: the league's teams, each with `id`, `name`, `short` (2 to 4
+capitals or digits), `color` (`#rrggbb`) and `logo` (a web link, or `null`).
+`[]` when the league has none.
 
 **`events`**: the last 30 things that happened, oldest first. Each has `seq`
 (rising; use it to tell new from seen), `type`, `ts`, `clock` (the race clock),
@@ -3140,6 +3272,52 @@ use and ignore the rest.
   through a borrowed name.
 - **Many OBS sources stall.** A browser holds about six connections to one
   address. Use fewer overlay sources, or add `&poll=1` to some.
+- **The style editor says Read only, or Save says the key is wrong.** Open it
+  from the Feed panel again: after **New key**, older links stop working.
+- **"Too many wrong keys".** Ten wrong keys in a minute shut writes for a
+  minute. Wait, then open the editor from the Feed panel.
+- **The editor does not open from the game.** **Show link**, and paste it into
+  your browser.
+- **A team logo does not show.** A logo appears only once it has loaded, and a
+  link that fails is left out. Discord attachment links stop working within a
+  day: put the logo somewhere lasting, or upload it in the style editor and pick
+  it under **Team logos**.
+- **A new look shows on one PC's overlay but not another's.** The look is kept
+  on the PC whose feed serves the overlay. Export it there, Import it on the
+  other, and copy the files across.
+
+## Teams and car numbers
+
+Admins give the league its **teams** and its drivers their **car numbers**, once,
+on the server. Every streamer's [broadcast overlay](#broadcast-feed) then shows
+a driver's team color, logo and number, and the [feed](#the-data) carries them
+for graphics of your own. Open **Teams** on the menu bar; either admin tier may
+edit.
+
+**Teams.** A name (1 to 32 characters), a short code (2 to 4 letters or digits,
+like `PHX`, one team each), a color (a hex value, or one from the palette), and
+optionally a logo link (`https://`, 256 characters at most). Up to 32 teams.
+Removing a team leaves its drivers their numbers.
+
+A logo link has to keep working for the whole season: a Discord attachment link
+stops working within a day, so the panel refuses one. Use your league's site or
+an image host, or give streamers the file to upload in their
+[style editor](#styling-the-overlay), where it takes the team's place.
+
+**Drivers and car numbers.** One row for each driver who is connected, saved in
+the cup roster, or already listed, and a box to add anyone else by name. A car
+number is 1 to 3 digits and belongs to one driver: `07` and `7` are different
+numbers, both allowed. Pick a team from the list, then **Save** the row. A row
+with no team and no number is taken off the list. Up to 200 drivers.
+
+**Who is who.** A driver is matched by their display name first (see
+[Display names](#display-names)), then their BeamMP name, either case. Give
+someone a display name and their team and number follow it at once.
+
+**Where it is kept.** `Data/teams.json` on the server, so it survives restarts
+and updates. If that file is broken (hand-edited, say), the server leaves it
+alone and refuses changes until it is fixed or deleted, rather than writing over
+a league's list.
 
 ## Cup points
 
@@ -3404,6 +3582,7 @@ these were collapsed sections.
 | **Track** | admins | Saved layouts, the checkpoint editor, the starting-grid builder and practice approval |
 | **Garage** | everyone | Admins: the Garage List. Drivers: the cars they may run, with Take and + New |
 | **Cup** | everyone | Admins: scoring, bonuses and standings. Drivers: the standings, while a cup runs |
+| **Teams** | admins | League teams (name, code, color, logo) and car numbers, for the broadcast overlay (see [Teams and car numbers](#teams-and-car-numbers)) |
 | **Derby** | admins | Demo Derby rules, entry and the arena editor |
 | **Drag** | admins | The drag tournament: format, lanes, the tree, dial-ins and the bracket |
 | **Practice** | everyone | Timed laps on your own, on an approved track (see [Free practice](#free-practice)) |

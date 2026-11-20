@@ -6300,6 +6300,14 @@ function M.discordRetry()
   if inMultiplayer() then TriggerServerEvent('RM_DiscordRetry', '') end
 end
 
+-- Teams and car numbers (server/RaceManager/teams.lua), the same way: the
+-- list rides RM_Update, and the server checks every field and either admin
+-- tier may edit.
+function M.teamsSet(json)
+  if type(json) ~= 'string' or json == '' or #json > 2000 or not inMultiplayer() then return end
+  TriggerServerEvent('RM_TeamsSet', json)
+end
+
 -- Lap records, the same way. onRecords is the RM_Records handler.
 do
   local records = require('raceManager/records')
@@ -6365,6 +6373,7 @@ do
   for _, name in ipairs({
     'feedBoot', 'feedSet', 'feedStatus', 'feedState', 'feedCountdown',
     'feedOffline', 'feedStop', 'feedUpdate',
+    'feedNewKey', 'feedOpenStyle', 'feedOpenFolder',
   }) do
     M[name] = feed[name]
   end

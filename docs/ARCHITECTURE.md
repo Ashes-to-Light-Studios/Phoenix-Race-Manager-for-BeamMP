@@ -53,25 +53,25 @@ routine housekeeping can destroy is not persistent in any sense that matters.
 
 ## Modules inside the server plugin
 
-Eight parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
-**map switching**, **lap records**, **updates**, **Discord**, the **driver
-roster** and the **cup**. Each has its own state tables, its own `RM_*` event
-namespace and its own broadcast channel, and none of them is reachable from the
-racing state machine except through a handful of named functions declared at
-the top of the file.
+Nine parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
+**map switching**, **lap records**, **updates**, **Discord**, **teams and car
+numbers**, the **driver roster** and the **cup**. Each has its own state tables,
+its own `RM_*` event namespace and its own broadcast channel (teams excepted: see
+below), and none of them is reachable from the racing state machine except
+through a handful of named functions declared at the top of the file.
 
-The first six are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
-`records.lua`, `update.lua`, `discord.lua`) required as siblings; the other two
-are `do ... end` blocks inside `main.lua`.
+The first seven are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
+`records.lua`, `update.lua`, `discord.lua`, `teams.lua`) required as siblings;
+the other two are `do ... end` blocks inside `main.lua`.
 Same isolation either way, reached two different ways for the same reason:
 Lua's 200-local ceiling.
 
 **BeamMP runs every `.lua` in the plugin folder on its own**, alphabetically,
 before `main.lua` requires any of them. `derby.lua` and `drag.lua` sort before
 `main.lua`, so the copy `main.lua` initialises is the one whose global handlers
-win. `maps.lua`, `records.lua` and `update.lua` sort after, so they define
-nothing global at file scope: their `RM_Map*`, `RM_Records*` and `RM_Update*`
-handlers are installed by `init()`, and each one's test checks that loading the
+win. `maps.lua`, `records.lua`, `teams.lua` and `update.lua` sort after, so they
+define nothing global at file scope: their `RM_Map*`, `RM_Records*`,
+`RM_TeamsSet` and `RM_Update*` handlers are installed by `init()`, and each one's test checks that loading the
 file alone defines nothing. A new module must do the same
 unless its name sorts before `main`.
 
@@ -165,6 +165,28 @@ frame while it is off. Four rules hold it together:
   copy closes before binding, `onExtensionUnloaded` closes it, and BeamMP
   unloads the mod on leaving a server. `reuseaddr` is never set on Windows,
   where it lets two programs share a port.
+
+**Teams ride the race, they do not have a channel.** A driver row carries
+`team` and `number` (both nil when unset, so a league with no teams sends no
+extra bytes); `teams.lua` stamps them through `race.teamOf`, memoized on the
+record by the list's revision, the alias and the name, so a settled broadcast
+allocates nothing and a rename is seen at once. The team LIST rides `RM_Update`
+too, on every targeted send and on the one broadcast after a change (a dirty
+flag), never on the 3 Hz ticks; an admin's targeted send also carries every
+entry. No new server-to-client event, for the bind-once reason.
+
+**The overlay's look is the one thing the feed writes.** It is the streamer's,
+kept in their user folder (`feedstyle.lua`: one spec drives the checks, the
+defaults and the key order), so it needs no server either. A write takes the
+style key (made at start, kept in `feed.json`, carried to the browser in the
+link's fragment), a matching `Origin` when a browser sends one, one writer at a
+time, a `Content-Length` under a cap, and a body read across polls with a
+stall timeout; ten wrong keys shut writes for a minute. The OPTIONS answer still
+allows GET only, so another site's page cannot even ask. A change goes out as
+`event: style` in each reader's own slot (`styleNext`), drained before state
+frames, so a busy race never overwrites it; a reader that polls sees `styleSeq`
+move. The overlay page and the style page each check every value again, and
+draw text with `textContent` only.
 
 **Lap records are a consumer of results, like the cup.** `finishSession` calls
 them once per session through `race.recordsSession`, after the joker ruling.

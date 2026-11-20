@@ -606,7 +606,9 @@
     <div class="rm-maps-error" ng-if="feed.error">{{ feed.error }}</div>
     <div class="rm-mapvote-row">
       <span class="rm-layouts-hint">Port</span>
-      <input type="number" class="rm-login-input rm-feed-port" min="1024" max="65535"
+      <!-- Text, not type="number": the model is a string, and AngularJS
+           refuses a string in a number box (ngModel:numfmt) and shows it empty. -->
+      <input type="text" inputmode="numeric" maxlength="5" class="rm-login-input rm-feed-port"
              ng-model="feedUi.port" ng-focus="feedUi.portEditing = true"
              ng-blur="feedApplyPort()" ng-keydown="$event.keyCode === 13 && feedApplyPort()"
              title="1024 to 65535. Change it if another program has 8128.">
@@ -627,6 +629,32 @@
         <span class="rm-feed-url-label">{{ l.label }}</span>
         <input type="text" class="rm-login-input rm-feed-url-input" readonly
                value="{{ l.url }}" ng-click="feedSelect($event)" title="Click to select, then copy">
+      </div>
+    </div>
+    <div class="rm-mapvote-row" ng-if="feed.running">
+      <span class="rm-layouts-hint">The overlay's look:</span>
+      <button class="rm-btn rm-btn-mini rm-btn-start" ng-click="feedOpenStyle()"
+              title="Colors, logos, fonts and words, with a live preview, in your browser">Open style editor</button>
+      <button class="rm-btn rm-btn-mini" ng-click="feedOpenFolder()"
+              title="Where the style and its logos and fonts are kept">Overlay folder</button>
+      <button class="rm-btn rm-btn-mini" ng-click="feedToggleKey()">{{ feedUi.showKey ? 'Hide link' : 'Show link' }}</button>
+      <button class="rm-btn rm-btn-mini" ng-if="!feedUi.newKeyConfirm" ng-click="feedNewKeyAsk()"
+              title="Make a new style key: links you gave out stop working">New key</button>
+      <span class="rm-confirm rm-maps-rename" ng-if="feedUi.newKeyConfirm">
+        Editor links already given out stop working. New key?
+        <button class="rm-btn rm-btn-mini rm-btn-start" ng-click="feedNewKey()">Yes, new key</button>
+        <button class="rm-btn rm-btn-mini" ng-click="feedNewKeyCancel()">Cancel</button>
+      </span>
+    </div>
+    <div class="rm-feed-urls" ng-if="feed.running && feedUi.showKey && feed.urls.style">
+      <div class="rm-feed-url">
+        <span class="rm-feed-url-label">Style editor</span>
+        <input type="text" class="rm-login-input rm-feed-url-input" readonly
+               value="{{ feed.urls.style }}" ng-click="feedSelect($event)" title="Click to select, then copy">
+      </div>
+      <div class="rm-maps-error">
+        This link can change what your stream shows: paste it in your browser,
+        and keep it (and this panel) off stream. New key makes it stop working.
       </div>
     </div>
     <div class="rm-cup-hint">
@@ -987,6 +1015,9 @@
     <button class="rm-btn rm-btn-mini" ng-if="isAdmin" ng-class="{'rm-admin-tab-active': menuIsTab('cup')}"
             ng-click="menuTab('cup')"
             title="Championship points across several races and derbies: scoring, bonuses and standings">Cup <span class="rm-tab-count" ng-if="cup.enabled">R{{ cup.round }}</span></button>
+    <button class="rm-btn rm-btn-mini" ng-if="isAdmin" ng-class="{'rm-admin-tab-active': menuIsTab('teams')}"
+            ng-click="menuTab('teams')"
+            title="League teams (name, code, color, logo) and car numbers, for the broadcast overlay">Teams <span class="rm-tab-count" ng-if="teamsList.length">{{ teamsList.length }}</span></button>
     <button class="rm-btn rm-btn-mini" ng-if="!isAdmin && cup.enabled" ng-class="{'rm-admin-tab-active': menu.open === 'cup'}"
             ng-click="menuPanel('cup')"
             title="The championship standings">Cup <span class="rm-tab-count">R{{ cup.round }}</span></button>
@@ -2079,6 +2110,116 @@
       display name before the first round. A player logged in to BeamMP is
       recognized when they rejoin; a guest gets a new random name each time, so
       assign them again after a reconnect. The <b>Drivers</b> panel above does both.
+    </div>
+  </div>
+
+  <!-- ================= Teams and car numbers (admins) =====================
+       League-wide, kept on the server (server/RaceManager/teams.lua, which
+       checks every field). The stream overlay draws a driver's team color,
+       logo and number from them. Custom dropdowns, a hex box and a palette:
+       a native <select> or color picker never opens in BeamNG's UI. -->
+  <div class="rm-cup rm-teams" ng-if="isAdminTab('teams')">
+    <div class="rm-cup-head">
+      <span class="rm-cup-title">Teams and car numbers</span>
+      <span class="rm-cup-state">{{ teamsList.length }} team{{ teamsList.length === 1 ? '' : 's' }} ·
+        {{ teamEntries.length }} driver{{ teamEntries.length === 1 ? '' : 's' }} listed</span>
+    </div>
+    <div class="rm-cup-hint">
+      For the broadcast overlay: every streamer's overlay shows a driver's team
+      color, logo and car number. Kept on the server for the whole league.
+    </div>
+
+    <div class="rm-cup-sep">Teams</div>
+    <div class="rm-cup-hint" ng-if="!teamsList.length">No teams yet. Add the first below.</div>
+    <div class="rm-teams-row" ng-repeat="t in teamsList track by t.id">
+      <span class="rm-teams-swatch" ng-style="{'background-color': t.color}"></span>
+      <b class="rm-teams-short">{{ t.short }}</b>
+      <span class="rm-teams-name">{{ t.name }}</span>
+      <span class="rm-cup-off" ng-if="t.logo" title="{{ t.logo }}">logo</span>
+      <span class="rm-teams-actions" ng-if="teamsUi.removeAsk !== t.id">
+        <button class="rm-btn rm-btn-mini" ng-click="teamsEdit(t)">Edit</button>
+        <button class="rm-btn rm-btn-mini rm-btn-end" ng-click="teamsRemoveAsk(t)">Remove</button>
+      </span>
+      <span class="rm-confirm" ng-if="teamsUi.removeAsk === t.id">
+        Remove {{ t.short }}? Its drivers keep their numbers.
+        <button class="rm-btn rm-btn-mini rm-btn-end" ng-click="teamsRemove(t)">Yes, remove</button>
+        <button class="rm-btn rm-btn-mini" ng-click="teamsRemoveCancel()">Cancel</button>
+      </span>
+    </div>
+    <div class="rm-teams-form">
+      <div class="rm-cup-row">
+        <label>{{ teamsUi.editing ? 'Edit team' : 'New team' }}</label>
+        <input type="text" class="rm-login-input rm-teams-input-name" maxlength="32"
+               ng-model="teamsUi.name" placeholder="Team name">
+        <input type="text" class="rm-login-input rm-teams-input-short" maxlength="4"
+               ng-model="teamsUi.short" placeholder="Code" title="2 to 4 letters or digits, like PHX">
+      </div>
+      <div class="rm-cup-row">
+        <label>Color</label>
+        <span class="rm-teams-swatch rm-teams-swatch-big"
+              ng-style="{'background-color': teamsColorOk(teamsUi.color) ? teamsUi.color : 'transparent'}"></span>
+        <input type="text" class="rm-login-input rm-teams-input-hex" maxlength="7"
+               ng-model="teamsUi.color" placeholder="#ff7a1a"
+               ng-class="{'rm-input-bad': !teamsColorOk(teamsUi.color)}">
+        <span class="rm-teams-palette">
+          <span class="rm-teams-chip" ng-repeat="c in TEAM_PALETTE track by c"
+                ng-style="{'background-color': c}" ng-click="teamsPickColor(c)" title="{{ c }}"></span>
+        </span>
+      </div>
+      <div class="rm-cup-row">
+        <label>Logo link</label>
+        <input type="text" class="rm-login-input rm-teams-input-logo" maxlength="256"
+               ng-model="teamsUi.logo" placeholder="https://… (optional: a PNG or SVG on your league's site)">
+      </div>
+      <div class="rm-cup-row">
+        <label></label>
+        <button class="rm-btn rm-btn-mini rm-btn-start" ng-disabled="!teamsFormOk()" ng-click="teamsSave()">
+          {{ teamsUi.editing ? 'Save team' : 'Add team' }}</button>
+        <button class="rm-btn rm-btn-mini" ng-if="teamsUi.editing" ng-click="teamsCancelEdit()">Cancel</button>
+        <span class="rm-cup-hint">Discord attachment links stop working within a day: host the logo
+          somewhere lasting, or give it to streamers to upload in the style editor.</span>
+      </div>
+    </div>
+
+    <div class="rm-cup-sep">Drivers and car numbers</div>
+    <div class="rm-cup-hint">
+      Matched by display name, then BeamMP name. A number is 1 to 3 digits and
+      belongs to one driver (07 and 7 are different numbers).
+    </div>
+    <div class="rm-cup-hint" ng-if="!teamsDrivers.length">Nobody to list yet: drivers show here when they connect.</div>
+    <div class="rm-teams-row" ng-repeat="e in teamsDrivers track by e.key">
+      <span class="rm-teams-online" ng-class="{'rm-teams-online-on': e.online}"
+            title="{{ e.online ? 'On the server now' : 'Not connected' }}"></span>
+      <span class="rm-teams-name rm-teams-driver">{{ e.name }}</span>
+      <input type="text" class="rm-login-input rm-teams-input-num" maxlength="3"
+             ng-model="teamsUi.numbers[e.key]" placeholder="#"
+             ng-class="{'rm-input-bad': !teamsNumberOk(e)}">
+      <div class="rm-layout-dropdown rm-teams-picker"
+           ng-class="{'rm-layout-dropdown-open': teamsMenuOpen(e.key)}">
+        <button type="button" class="rm-layout-trigger"
+                ng-class="{'rm-layout-trigger-empty': !teamsUi.teamOf[e.key]}"
+                ng-click="teamsToggleMenu(e.key)">
+          <span class="rm-layout-trigger-label">{{ teamsTeamLabel(e) }}</span>
+          <span class="rm-layout-caret">▾</span>
+        </button>
+        <div class="rm-layout-menu" ng-if="teamsMenuOpen(e.key)">
+          <div class="rm-layout-option" ng-class="{'rm-layout-option-active': !teamsUi.teamOf[e.key]}"
+               ng-click="teamsPickTeam(e, null)">No team</div>
+          <div class="rm-layout-option" ng-repeat="t in teamsList track by t.id"
+               ng-class="{'rm-layout-option-active': t.id === teamsUi.teamOf[e.key]}"
+               ng-click="teamsPickTeam(e, t)">
+            <span class="rm-teams-swatch" ng-style="{'background-color': t.color}"></span> {{ t.short }} · {{ t.name }}
+          </div>
+        </div>
+      </div>
+      <button class="rm-btn rm-btn-mini" ng-disabled="!teamsDriverChanged(e) || !teamsNumberOk(e)"
+              ng-click="teamsDriverSave(e)">Save</button>
+    </div>
+    <div class="rm-cup-row rm-teams-add">
+      <input type="text" class="rm-login-input rm-teams-input-name" maxlength="32"
+             ng-model="teamsUi.newName" placeholder="Someone not listed: their display name"
+             ng-keydown="$event.keyCode === 13 && teamsAddDriver()">
+      <button class="rm-btn rm-btn-mini" ng-click="teamsAddDriver()">Add to the list</button>
     </div>
   </div>
 
@@ -6939,6 +7080,36 @@
   .rm-feed-url { display: flex; align-items: center; gap: 6px; }
   .rm-feed-url-label { width: 112px; flex: none; font-size: 10px; color: var(--rm-muted, #9aa0a6); }
   .rm-feed-url-input { flex: 1; min-width: 0; font-family: monospace; }
+
+  /* Teams and car numbers: the cup's band, in teal (a league setting too). */
+  .rm-cup.rm-teams { border-bottom-color: rgba(20, 184, 166, 0.35); background: rgba(20, 184, 166, 0.05); }
+  .rm-teams .rm-cup-sep { color: #2dd4bf; }
+  .rm-teams-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 3px; font-size: 11px; }
+  .rm-teams-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none;
+    border: 1px solid rgba(255, 255, 255, 0.25); vertical-align: middle; }
+  .rm-teams-swatch-big { width: 18px; height: 18px; }
+  .rm-teams-short { width: 34px; flex: none; }
+  .rm-teams-name { flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rm-teams-driver { flex: 0 1 140px; }
+  .rm-teams-actions { display: inline-flex; gap: 4px; }
+  .rm-teams-form { margin: 6px 0 2px; padding: 5px 6px; border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 3px; background: rgba(0, 0, 0, 0.2); }
+  .rm-teams .rm-cup-title { color: #2dd4bf; }
+  /* The small boxes undo .rm-login-input's 130px floor. */
+  .rm-teams .rm-teams-input-name { width: 150px; }
+  .rm-teams .rm-teams-input-short { width: 52px; min-width: 0; text-transform: uppercase; }
+  .rm-teams .rm-teams-input-hex { width: 74px; min-width: 0; font-family: monospace; }
+  .rm-teams .rm-teams-input-logo { flex: 1; min-width: 160px; }
+  .rm-teams .rm-teams-input-num { width: 40px; min-width: 0; text-align: center; }
+  .rm-teams-palette { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+  .rm-teams-chip { width: 14px; height: 14px; border-radius: 3px; cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.2); }
+  .rm-teams-chip:hover { border-color: #fff; }
+  .rm-teams-picker { width: 170px; flex: none; }
+  .rm-teams-online { width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, 0.15); flex: none; }
+  .rm-teams-online-on { background: #3ddc84; }
+  .rm-teams-add { margin-top: 6px; }
+  .rm-input-bad { border-color: #ff6b6b !important; }
   .rm-records-list { margin-top: 5px; max-height: 180px; overflow-y: auto; }
   .rm-records-time { width: 64px; text-align: right; color: #e8eaed; font-weight: 700; }
   .rm-records-gap { width: 50px; text-align: right; color: var(--rm-muted, #9aa0a6); font-size: 10px; }

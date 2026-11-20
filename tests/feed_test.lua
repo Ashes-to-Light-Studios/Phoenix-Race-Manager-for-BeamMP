@@ -197,6 +197,7 @@ readFile = function (path)
   if path:find('overlay.html', 1, true) then return '<!doctype html><title>PRM overlay</title>' end
 end
 
+package.path = 'lua/ge/extensions/?.lua;' .. package.path
 local function loadFeed()
   local f = dofile('lua/ge/extensions/raceManager/feed.lua')
   f.init({ build = '9.9.9' })
@@ -822,6 +823,308 @@ check(r.code == 200 and r.body:find('/live.json', 1, true), 'no overlay file: a 
 feed.feedStop('unload')
 
 -- ===========================================================================
+-- 9b. The look: teams, the style key, writes, the overlay folder, `style`
+-- ===========================================================================
+-- The game's JSON reader, as the feed uses it for a POSTed style.
+local function plain(v)
+  if v == NULL then return nil end
+  if type(v) ~= 'table' then return v end
+  local o = {}
+  for k, x in pairs(v) do o[k] = plain(x) end
+  return o
+end
+jsonDecode = function (text) return plain(parseJson(text)) end
+
+-- The overlay folder, in memory.
+local Style = feed.style
+local mem = {}
+Style.files = {
+  list = function ()
+    local out = {}
+    for n, b in pairs(mem) do out[#out + 1] = { name = n, size = #b } end
+    table.sort(out, function (a, b) return a.name < b.name end)
+    return out
+  end,
+  read = function (n) return mem[n] end,
+  write = function (n, b) mem[n] = b; return true end,
+  remove = function (n) mem[n] = nil; return true end,
+}
+-- The style page, bundled.
+FS.fileExists = function (_, path)
+  return path:find('style.html', 1, true) ~= nil or (overlayOnDisk and path:find('overlay.html', 1, true) ~= nil)
+end
+local realReadFile = readFile
+readFile = function (path)
+  if path:find('style.html', 1, true) then return '<!doctype html><title>PRM style</title>' end
+  return realReadFile(path)
+end
+
+feed.feedBoot()
+check(lastStatus().running, 'the feed is back up')
+local KEY = files['settings/raceManager/feed.json'].styleKey
+check(type(KEY) == 'string' and KEY:match('^[a-z0-9]+$') and #KEY == 20, 'a 20-character style key is kept with the settings')
+check(lastStatus().urls.style == 'http://127.0.0.1:8128/style#key=' .. KEY
+  and lastStatus().urls.styleBase == 'http://127.0.0.1:8128/style',
+  'the panel gets the editor link, the key in its fragment (never sent in a request)')
+
+-- A request with a body, as a browser or curl sends it.
+local function request(method, path, body, headers, opts)
+  opts = opts or {}
+  local h = { string.format('%s %s HTTP/1.1', method, path), 'Host: ' .. (opts.host or '127.0.0.1:8128') }
+  for _, kv in ipairs(headers or {}) do h[#h + 1] = kv end
+  if body and not opts.noLength then h[#h + 1] = 'Content-Length: ' .. (opts.length or #body) end
+  local raw = table.concat(h, '\r\n') .. '\r\n\r\n' .. (body or '')
+  local chunks = { raw }
+  if opts.pieces then
+    chunks = {}
+    local size = math.ceil(#raw / opts.pieces)
+    for i = 1, #raw, size do chunks[#chunks + 1] = raw:sub(i, i + size - 1) end
+  end
+  local c = newClient(chunks)
+  fake.pending[#fake.pending + 1] = c
+  pump(opts.pumps or 8)
+  c.peerClosed = true
+  pump(2)
+  return parseResponse(c:output()), c
+end
+local function postStyle(t, headers, opts)
+  local r = request('POST', '/style.json' .. ((opts and opts.query) or ''), t, headers or { 'X-PRM-Key: ' .. KEY }, opts)
+  return r, (r.body and r.body:sub(1, 1) == '{') and parseJson(r.body) or nil
+end
+local function styleNow() return parseJson(get('/style.json').body) end
+
+-- The editor page: served, and never inside another site's frame (it saves
+-- with the key it holds). The overlay stays frameable, for the editor's own
+-- previews and pages that embed it.
+do
+  local page = get('/style')
+  check(page.code == 200 and page.body:find('PRM style', 1, true), '/style serves the editor page')
+  check(page.headers['content-security-policy'] == "frame-ancestors 'none'"
+    and page.headers['x-frame-options'] == 'DENY', 'which no other site may frame')
+  check(get('/overlay').headers['x-frame-options'] == nil, 'the overlay may still be framed')
+end
+
+-- The style as shipped: the overlay's own look.
+local st0 = styleNow()
+check(st0.v == 1 and st0.colors.accent == '#ff7a1a' and st0.opacity == 0.86 and st0.bar == 'team'
+  and st0.labels.leader == 'LEADER' and isArray(st0.classColors) == false, '/style.json: the defaults')
+local seq0 = live().styleSeq
+
+-- The key.
+local r = postStyle('{"title":"x"}', {})
+check(r.code == 403, 'no key: 403')
+r = postStyle('{"title":"x"}', { 'X-PRM-Key: wrongwrongwrongwrong' })
+check(r.code == 403, 'a wrong key: 403')
+r = postStyle('{"title":"By query"}', {}, { query = '?key=' .. KEY })
+check(r.code == 200 and styleNow().title == 'By query', 'the key in the query works')
+r = postStyle('{"title":"x"}', { 'X-PRM-Key: ' .. KEY, 'Origin: http://evil.example' })
+check(r.code == 403, 'another site\'s Origin is refused even with the key')
+r = postStyle('{"title":"Same origin"}', { 'X-PRM-Key: ' .. KEY, 'Origin: http://127.0.0.1:8128' })
+check(r.code == 200, 'this feed\'s own page is allowed')
+r = request('POST', '/live.json', '{}', { 'X-PRM-Key: ' .. KEY })
+check(r.code == 405 and r.headers.allow == 'GET, HEAD, OPTIONS', 'the race itself stays read only')
+
+-- Checking what comes in.
+local res
+r, res = postStyle('{"colors":{"accent":"#00FF00","bg":"red"},"opacity":5,"bar":"class",'
+  .. '"bogus":1,"title":"<b>Hi</b>","logo":"javascript:alert(1)","classColors":{"GT3":"#e53935","bad class!":"#000000"}}')
+local got = styleNow()
+check(r.code == 200 and res.ok == true, 'a style with some bad values is taken, the bad ones left out')
+local rej = {}
+for _, k in ipairs(res.rejected) do rej[k] = true end
+check(rej['colors.bg'] and rej.opacity and rej.bogus and rej.logo and rej['classColors.bad class!'],
+  'and the response names what was left out')
+check(got.colors.accent == '#00ff00' and got.colors.bg == '#0c0e14' and got.opacity == 0.86
+  and got.bar == 'class' and got.title == '<b>Hi</b>' and got.logo == '' and got.classColors.GT3 == '#e53935',
+  'what passed is kept, lower-cased; the rest stays as it was')
+check(files['settings/raceManager/overlay/style.json'] and files['settings/raceManager/overlay/style.json'].colors.accent == '#00ff00',
+  'saved in the overlay folder')
+check(live().styleSeq > seq0, 'live.json says the look changed (styleSeq), for overlays that poll')
+postStyle('{"subtitle":"Round 3"}')
+got = styleNow()
+check(got.colors.accent == '#00ff00' and got.subtitle == 'Round 3', 'a post changes only the keys it has')
+postStyle('{"reset":true,"title":"Fresh"}')
+got = styleNow()
+check(got.colors.accent == '#ff7a1a' and got.title == 'Fresh' and got.subtitle == '', 'reset starts from the defaults')
+
+-- Lengths and pieces.
+r = request('POST', '/style.json', '{"title":"x"}', { 'X-PRM-Key: ' .. KEY }, { noLength = true })
+check(r.code == 411, 'no Content-Length: 411')
+r = request('POST', '/style.json', '{"title":"x"}', { 'X-PRM-Key: ' .. KEY, 'Transfer-Encoding: chunked' })
+check(r.code == 411, 'chunked: 411')
+r = request('POST', '/style.json', '{}', { 'X-PRM-Key: ' .. KEY }, { length = 70000 })
+check(r.code == 413, 'a style over 64 KB: 413, before a byte of it is read')
+r = request('POST', '/style.json', '{"title":"In four pieces","subtitle":"' .. string.rep('a', 40) .. '"}',
+  { 'X-PRM-Key: ' .. KEY }, { pieces = 4 })
+check(r.code == 200 and styleNow().title == 'In four pieces', 'a request split over several reads')
+do
+  local c = newClient({ 'POST /style.json HTTP/1.1\r\nHost: 127.0.0.1\r\nX-PRM-Key: ' .. KEY
+    .. '\r\nExpect: 100-continue\r\nContent-Length: 17\r\n\r\n', '{"title":"Later"}' })
+  fake.pending[#fake.pending + 1] = c
+  pump(6)
+  c.peerClosed = true
+  pump(2)
+  local out = c:output()
+  check(out:find('HTTP/1.1 100 Continue\r\n\r\n', 1, true) == 1 and out:find('HTTP/1.1 200 OK', 1, true),
+    'Expect: 100-continue is answered, then the result')
+end
+
+-- The overlay folder.
+local PNG = '\137PNG\r\n\26\n' .. 'IHDR\0\0\0\1\0\0\0\1' .. '\r\n\0binary\0bytes'
+r, res = (function ()
+  local rr = request('POST', '/assets/logo.png', PNG, { 'X-PRM-Key: ' .. KEY })
+  return rr, parseJson(rr.body)
+end)()
+check(r.code == 201 and res.name == 'logo.png' and res.kind == 'image', 'a PNG goes into the overlay folder')
+check(mem['logo.png'] == PNG, 'byte for byte, NUL and CR/LF included')
+local a = get('/assets/logo.png')
+check(a.code == 200 and a.body == PNG and a.headers['content-type'] == 'image/png'
+  and a.headers['content-security-policy']:find('sandbox', 1, true) and a.headers['cache-control'] == 'no-cache',
+  'served back exactly, as image/png, sandboxed')
+check(get('/assets/logo.png?v=3').headers['cache-control']:find('immutable', 1, true),
+  'asked for by revision: cached for good')
+local listed = parseJson(get('/assets.json').body)
+check(#listed.files == 1 and listed.files[1].name == 'logo.png' and listed.files[1].kind == 'image'
+  and listed.maxBytes == Style.MAX_FILE, '/assets.json lists it, with the limits')
+
+local function refusedUpload(path, body, code, what)
+  local rr = request('POST', path, body, { 'X-PRM-Key: ' .. KEY })
+  check(rr.code == code, what .. ' (' .. tostring(rr.code) .. ' ' .. tostring(rr.body) .. ')')
+end
+refusedUpload('/assets/..%2Fescape.png', PNG, 400, 'a name with a path in it is refused')
+refusedUpload('/assets/.hidden.png', PNG, 400, 'a dot-file is refused')
+refusedUpload('/assets/sub/x.png', PNG, 400, 'a subfolder is refused')
+refusedUpload('/assets/tool.exe', 'MZ', 400, 'a type the folder does not hold is refused')
+refusedUpload('/assets/fake.png', 'not a png at all', 415, 'a PNG that is not one is refused')
+refusedUpload('/assets/bad.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', 415,
+  'an SVG with script is refused')
+refusedUpload('/assets/handler.svg', '<svg onload="alert(1)"></svg>', 415, 'an SVG with an event handler is refused')
+r = request('POST', '/assets/mark.svg', '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>',
+  { 'X-PRM-Key: ' .. KEY })
+check(r.code == 201 and get('/assets/mark.svg').headers['content-type'] == 'image/svg+xml', 'a plain SVG is fine')
+check(get('/assets/../feed.json').code == 404, 'nothing outside the folder is served')
+r = request('POST', '/assets/logo.png', PNG, {})
+check(r.code == 403, 'no key, no upload')
+
+-- A large file over several polls, and one that stalls.
+do
+  local big = '\137PNG\r\n\26\n' .. string.rep('x', 600 * 1024)
+  local head = 'POST /assets/big.png HTTP/1.1\r\nHost: 127.0.0.1\r\nX-PRM-Key: ' .. KEY
+    .. '\r\nContent-Length: ' .. #big .. '\r\n\r\n'
+  local c = newClient({ head .. big })
+  fake.pending[#fake.pending + 1] = c
+  pump(2)
+  local midway = false
+  for _, cl in ipairs(S.clients) do if cl.sock == c and cl.state == 'body' then midway = true end end
+  check(midway, '600 KB is read over several polls, not one')
+  -- Meanwhile, another writer waits its turn.
+  local other = request('POST', '/style.json', '{"title":"x"}', { 'X-PRM-Key: ' .. KEY }, { pumps = 1 })
+  check(other.code == 503, 'a second upload at the same time: 503')
+  pump(8)
+  c.peerClosed = true
+  pump(2)
+  check(parseResponse(c:output()).code == 201 and mem['big.png'] == big, 'and it lands whole')
+  local stall = newClient({ head .. big:sub(1, 1000) })
+  fake.pending[#fake.pending + 1] = stall
+  pump(4)
+  check(S.writing ~= nil, 'a body that stops arriving holds the writer')
+  pump(220)
+  check(stall.closed and S.writing == nil, 'and is dropped after 10 s')
+end
+
+-- The folder's limits.
+do
+  local saveMax = Style.MAX_FILES
+  Style.MAX_FILES = 3
+  refusedUpload('/assets/one-more.png', PNG, 413, 'a full folder is refused')
+  Style.MAX_FILES = saveMax
+end
+r = request('DELETE', '/assets/big.png', nil, { 'X-PRM-Key: ' .. KEY }, { length = 0 })
+check(r.code == 200 and mem['big.png'] == nil and get('/assets/big.png').code == 404, 'DELETE removes a file')
+r = request('DELETE', '/assets/big.png', nil, { 'X-PRM-Key: ' .. KEY }, { length = 0 })
+check(r.code == 404, 'and a file not there is 404')
+
+-- `event: style`: first on connect, and never lost behind state frames.
+do
+  local sse2 = newClient({ 'GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n' })
+  fake.pending[#fake.pending + 1] = sse2
+  pump(3)
+  local out = sse2:output()
+  local s1, s2 = out:find('event: style\ndata: ', 1, true), out:find('event: state\n', 1, true)
+  check(s1 and s2 and s1 < s2, 'a new reader gets the look before the first state frame')
+  sse2.sendCap = 0
+  local mark = #sse2:output()
+  postStyle('{"title":"While blocked"}')
+  feed.feedState(race({ raceClock = 400 }))
+  pump(1)
+  feed.feedState(race({ raceClock = 401 }))
+  pump(1)
+  sse2.sendCap = nil
+  pump(3)
+  local after = sse2:output():sub(mark + 1)
+  local ns = after:find('event: style\ndata: ', 1, true)
+  check(ns and after:find('While blocked', ns, true), 'a style change survives two state frames for a slow reader')
+  local stateFrames = 0
+  for _ in after:gmatch('event: state\n') do stateFrames = stateFrames + 1 end
+  check(stateFrames == 1, 'and only the latest state frame follows (' .. stateFrames .. ')')
+  sse2.peerClosed = true
+  pump(2)
+end
+
+-- Wrong keys: ten in a minute shut writes for a minute.
+do
+  for _ = 1, 10 do postStyle('{"title":"x"}', { 'X-PRM-Key: nopenopenopenopenope' }) end
+  r = postStyle('{"title":"right key"}')
+  check(r.code == 429, 'after ten wrong keys even the right one waits (429)')
+  pump(1220)
+  r = postStyle('{"title":"right key"}')
+  check(r.code == 200, 'a minute later it works again')
+end
+
+-- New key: the old link stops working.
+do
+  local old = KEY
+  feed.feedNewKey()
+  KEY = files['settings/raceManager/feed.json'].styleKey
+  check(KEY ~= old and lastStatus().urls.style:find(KEY, 1, true), 'New key makes another, and the panel shows it')
+  r = postStyle('{"title":"x"}', { 'X-PRM-Key: ' .. old })
+  check(r.code == 403, 'the old key is refused')
+end
+
+-- The league's teams on the rows.
+do
+  local t = race()
+  t.teams = {
+    { id = 1, name = 'Phoenix Racing', short = 'PHX', color = '#FF7A1A', logo = 'https://example.org/phx.png' },
+    { id = 2, name = 'Blue Comet', short = 'BLU', color = 'blue', logo = 'javascript:alert(1)' },
+  }
+  rowOf(t, 1).team, rowOf(t, 1).number = 1, '07'
+  rowOf(t, 2).team, rowOf(t, 2).number = 2, '12'
+  rowOf(t, 3).number = '1234'
+  feed.feedState(t)
+  doc = live()
+  local a1, b1 = driver(doc, 1), driver(doc, 2)
+  check(a1.number == '07' and a1.team == 1 and a1.teamShort == 'PHX' and a1.teamName == 'Phoenix Racing'
+    and a1.teamColor == '#ff7a1a' and a1.teamLogo == 'https://example.org/phx.png', 'a driver\'s team and number')
+  check(b1.teamShort == 'BLU' and b1.teamColor == NULL and b1.teamLogo == NULL,
+    'a bad color or logo from the server becomes null')
+  check(driver(doc, 3).number == NULL, 'a number that is not 1 to 3 digits is dropped')
+  check(isArray(doc.teams) and #doc.teams == 2 and doc.teams[1].short == 'PHX', 'the teams list, top level')
+  local g1
+  for _, g in ipairs(doc.grid) do if g.id == 1 then g1 = g end end
+  check(g1 and g1.teamShort == 'PHX' and g1.number == '07', 'grid rows carry them too')
+  check(#parseJson(get('/teams.json').body) == 2, '/teams.json')
+  -- The next update without a list keeps the one held.
+  local t2 = race({ raceClock = 500 })
+  rowOf(t2, 1).team, rowOf(t2, 1).number = 1, '07'
+  feed.feedState(t2)
+  check(driver(live(), 1).teamShort == 'PHX', 'teams are kept until the next list')
+  feed.feedOffline()
+  check(#live().teams == 0, 'leaving the server forgets them')
+end
+feed.feedStop('unload')
+
+-- ===========================================================================
 -- 10. The docs name every key
 -- ===========================================================================
 do
@@ -851,8 +1154,52 @@ do
     end
   end
   for _, route in ipairs({ '/live.json', '/drivers.json', '/grid.json', '/session.json',
-      '/events.json', '/stream', '/overlay' }) do
-    check(documented(route), 'the docs name the route ' .. route)
+      '/events.json', '/stream', '/overlay', '/teams.json', '/style', '/style.json',
+      '/assets.json', '/assets/', 'styleSeq', 'event: style' }) do
+    check(documented(route), 'the docs name ' .. route)
+  end
+  -- Every style key, by its path (colors.accent, labels.leader, opacity...).
+  for _, path in ipairs(feed.style.paths()) do
+    check(documented(path), 'the docs name the style key ' .. path)
+  end
+end
+
+-- ===========================================================================
+-- 11. The editor and the overlay know every style key
+-- ===========================================================================
+do
+  local function slurp(p)
+    local fh = io.open(p, 'r')
+    local t = fh and fh:read('*a') or ''
+    if fh then fh:close() end
+    return t
+  end
+  local editor = slurp('ui/modules/apps/RaceManager/style.html')
+  for _, path in ipairs(feed.style.paths()) do
+    check(editor:find('data-key="' .. path .. '"', 1, true) ~= nil, 'the style editor has a field for ' .. path)
+  end
+  local overlay = slurp('ui/modules/apps/RaceManager/overlay.html')
+  -- Both pages keep a copy of the defaults (the overlay draws with them until
+  -- the style arrives; the editor's Start over and Import fill gaps from them):
+  -- every one must be the spec's, written `name: value`.
+  local function literal(v)
+    if type(v) == 'string' then return "'" .. v .. "'" end
+    return tostring(v)
+  end
+  local function same(page, what, name, v)
+    check(page:find(name .. ': ' .. literal(v), 1, true) ~= nil,
+      what .. ' starts from the default ' .. name .. ' ' .. literal(v))
+  end
+  for _, e in ipairs(feed.style.SPEC) do
+    if e.group then
+      for _, s in ipairs(e.group) do
+        same(overlay, 'the overlay', s[1], s[3])
+        same(editor, 'the style editor', s[1], s[3])
+      end
+    elseif not e.map then
+      same(overlay, 'the overlay', e[1], e[3])
+      same(editor, 'the style editor', e[1], e[3])
+    end
   end
 end
 

@@ -23,13 +23,22 @@
 --
 -- Off as shipped. Settings live in the user folder, not the app: the listener
 -- has to come up with the game whether or not the app is on screen.
+--
+-- THE LOOK (feedstyle.lua) is the streamer's: a style page at /style changes
+-- the overlay's colors, logos, type and wording, and the overlay picks it up at
+-- once (`event: style`). Writing takes the style key the Feed panel shows, and
+-- an Origin, if a browser sends one, of this feed itself. Nothing a write can
+-- reach is the race: only the style file and the overlay folder.
 
 local D = {}
+local Style = require('raceManager/feedstyle')
+D.style = Style
 
 local SETTINGS_FILE = 'settings/raceManager/feed.json'
 -- The optional overlay page, read through the game's virtual filesystem (the
 -- mounted client zip), as splash.lua reads its logo.
 local OVERLAY_FILE = '/ui/modules/apps/RaceManager/overlay.html'
+local STYLE_PAGE_FILE = '/ui/modules/apps/RaceManager/style.html'
 local DEFAULT_PORT = 8128
 local PORT_MIN, PORT_MAX = 1024, 65535
 local SCHEMA = 1
@@ -64,6 +73,17 @@ local S = {
   pollWait = 0,
   lanIp = nil,
   overlay = nil,         -- page text, false once it failed to load
+  stylePage = nil,       -- the style editor's page, the same way
+  -- The look (feedstyle.lua) and the writes that change it.
+  style = nil,           -- the current style, checked
+  styleSeq = 0,          -- bumped on every change, in live.json too
+  assetsRev = 0,         -- bumped on every upload or removal (cache-busting)
+  styleBody = nil,       -- /style.json
+  styleFrame = nil,      -- the SSE `style` frame
+  writing = nil,         -- the one client sending a body
+  badKeys = {},          -- clock times of wrong keys, for the lockout
+  lockUntil = 0,
+  teams = nil,           -- { list, byId }: the league's teams, from RM_Update
   -- The race.
   last = nil,            -- the last RM_Update payload, kept while off too
   connected = false,
@@ -187,8 +207,11 @@ local DRIVER_KEYS = {
   'gap', 'gapText', 'interval', 'intervalText', 'lapsDown',
   'jokerTaken', 'jokerLap', 'jokerText', 'pitStops',
   'finishTime', 'finishText', 'penalty', 'resets',
+  'number', 'team', 'teamName', 'teamShort', 'teamColor', 'teamLogo',
 }
-local GRID_KEYS = { 'slot', 'id', 'name', 'class', 'qualiBest', 'qualiBestText' }
+local GRID_KEYS = { 'slot', 'id', 'name', 'class', 'qualiBest', 'qualiBestText',
+  'number', 'team', 'teamName', 'teamShort', 'teamColor', 'teamLogo' }
+local TEAM_KEYS = { 'id', 'name', 'short', 'color', 'logo' }
 local FASTEST_KEYS = { 'id', 'name', 'time', 'text' }
 local HEAT_KEYS = { 'current', 'count' }
 local EVENT_COMMON = { 'seq', 'type', 'ts', 'clock', 'id', 'name', 'text' }
@@ -220,6 +243,7 @@ end
 D.SCHEMA_KEYS = {
   session = SESSION_KEYS, drivers = DRIVER_KEYS, grid = GRID_KEYS,
   fastestLap = FASTEST_KEYS, heat = HEAT_KEYS, events = EVENT_KEYS,
+  teams = TEAM_KEYS,
 }
 
 -- The app's words for the same things (app.js PHASE_LABELS, STATUS_LABELS), so
@@ -334,8 +358,43 @@ local function offlineSession()
   return s
 end
 
-local function buildModel(data)
+-- The league's teams as the server sent them, checked again: they are going
+-- onto a stream page.
+local function indexTeams(raw)
+  local list, byId = {}, {}
+  if type(raw) ~= 'table' then return { list = list, byId = byId } end
+  for _, t in ipairs(raw) do
+    if type(t) == 'table' then
+      local id = num(t.id)
+      local name = type(t.name) == 'string' and #t.name <= 32 and t.name or nil
+      local short = type(t.short) == 'string' and t.short:match('^[A-Z0-9][A-Z0-9][A-Z0-9]?[A-Z0-9]?$') or nil
+      local color = type(t.color) == 'string' and t.color:match('^#%x%x%x%x%x%x$') or nil
+      local logo = type(t.logo) == 'string' and #t.logo <= 300
+        and t.logo:match('^https?://[^%s"\'<>\\`()]+$') or nil
+      if id and name and short then
+        local o = keyedObject(TEAM_KEYS)
+        o.id, o.name, o.short, o.color, o.logo = id, name, short, color and color:lower() or nil, logo
+        list[#list + 1] = o
+        byId[id] = o
+      end
+    end
+  end
+  return { list = list, byId = byId }
+end
+
+-- A row's team and number, onto `d` (a driver or a grid row).
+local function teamFields(d, team, number)
+  d.number = number
+  d.team = team and team.id or nil
+  d.teamName = team and team.name or nil
+  d.teamShort = team and team.short or nil
+  d.teamColor = team and team.color or nil
+  d.teamLogo = team and team.logo or nil
+end
+
+local function buildModel(data, teams)
   local model = { connected = false, session = nil, drivers = {}, grid = {}, byId = {} }
+  model.teams = teams and teams.list or {}
   if type(data) ~= 'table' then
     model.session = offlineSession()
     return model
@@ -468,6 +527,9 @@ local function buildModel(data)
     d.finishText = fmtLap(d.finishTime)
     d.penalty = num(src.penaltySeconds) or 0
     d.resets = num(src.resets) or 0
+    -- The league's team and car number (server teams.lua).
+    local number = type(src.number) == 'string' and src.number:match('^%d%d?%d?$') or nil
+    teamFields(d, teams and teams.byId[num(src.team) or -1] or nil, number)
     -- Kept for the events, never encoded: not in DRIVER_KEYS.
     d.lastLapOn = num(src.lastLapOn)
     model.drivers[#model.drivers + 1] = d
@@ -483,6 +545,7 @@ local function buildModel(data)
       local g = keyedObject(GRID_KEYS)
       g.slot, g.id, g.name, g.class = d.gridPos, d.id, d.name, d.class
       g.qualiBest, g.qualiBestText = d.qualiBest, d.qualiBestText
+      teamFields(g, teams and teams.byId[d.team or -1] or nil, d.number)
       model.grid[#model.grid + 1] = g
     end
   end
@@ -495,6 +558,7 @@ local function buildModel(data)
         local g = keyedObject(GRID_KEYS)
         g.slot, g.id, g.name, g.class = #model.grid + 1, d.id, d.name, d.class
         g.qualiBest, g.qualiBestText = d.qualiBest, d.qualiBestText
+        teamFields(g, teams and teams.byId[d.team or -1] or nil, d.number)
         model.grid[#model.grid + 1] = g
       end
     end
@@ -713,8 +777,10 @@ local function publish(model)
   local drivers = encode(model.drivers)
   local grid = encode(model.grid)
   local events = encode(eventsList())
+  local teams = encode(model.teams or {})
   local serverBuild = model.serverBuild and jsonString(model.serverBuild) or 'null'
-  local key = table.concat({ tostring(model.connected), serverBuild, session, drivers, grid, events }, '\1')
+  local key = table.concat({ tostring(model.connected), serverBuild, session, drivers, grid, events,
+    teams, S.styleSeq }, '\1')
   if key == S.bodyKey then return false end
   S.bodyKey = key
   S.seq = S.seq + 1
@@ -727,13 +793,15 @@ local function publish(model)
     ',"seq":', jsonNumber(S.seq),
     ',"ts":', jsonNumber(os.time()),
     ',"connected":', model.connected and 'true' or 'false',
+    ',"styleSeq":', jsonNumber(S.styleSeq),
     ',"session":', session,
     ',"drivers":', drivers,
     ',"grid":', grid,
+    ',"teams":', teams,
     ',"events":', events,
     '}',
   })
-  S.parts = { session = session, drivers = drivers, grid = grid, events = events }
+  S.parts = { session = session, drivers = drivers, grid = grid, events = events, teams = teams }
   S.frame = 'id: ' .. istr(S.seq) .. '\nevent: state\ndata: ' .. S.body .. '\n\n'
   for _, cl in ipairs(S.clients) do
     if cl.state == 'stream' then
@@ -747,7 +815,7 @@ end
 
 -- Rebuild from what we hold, find the events, publish.
 local function refresh()
-  local model = buildModel(S.connected and S.last or nil)
+  local model = buildModel(S.connected and S.last or nil, S.teams)
   diff(S.prev, model)
   S.prev = model
   publish(model)
@@ -782,6 +850,8 @@ local function settings()
         s.on = data.on == true
         s.port = validPort(data.port) or DEFAULT_PORT
         s.lan = data.lan == true
+        s.styleKey = type(data.styleKey) == 'string' and data.styleKey:match('^[a-z0-9]+$')
+          and #data.styleKey == 20 and data.styleKey or nil
       end
     end
     S.settings = s
@@ -792,13 +862,45 @@ end
 local function saveSettings()
   local s = settings()
   if type(jsonWriteFile) ~= 'function'
-      or not pcall(jsonWriteFile, SETTINGS_FILE, { on = s.on, port = s.port, lan = s.lan }, true) then
+      or not pcall(jsonWriteFile, SETTINGS_FILE,
+        { on = s.on, port = s.port, lan = s.lan, styleKey = s.styleKey }, true) then
     say('W', 'could not save ' .. SETTINGS_FILE)
   end
 end
 
 -- ---------------------------------------------------------------------------
 -- The panel's status
+-- The style key: 20 letters and digits, kept with the settings. Only a write
+-- (the style, the overlay folder) needs it; the overlay itself never does.
+local function newKey()
+  local seed = os.time() + math.floor((os.clock() % 1) * 1e6)
+  local addr = tonumber((tostring({}):match('0x(%x+)') or tostring({}):match('(%x+)$') or '0'), 16) or 0
+  seed = (seed * 69069 + addr) % 2147483647
+  local okS, sock = pcall(require, 'socket')
+  if okS and type(sock) == 'table' and sock.gettime then
+    seed = (seed + math.floor((sock.gettime() % 1000) * 1e6)) % 2147483647
+  end
+  if math.random then seed = (seed + math.random(1, 2147483646)) % 2147483647 end
+  if seed == 0 then seed = 1 end
+  local chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  local out = {}
+  for i = 1, 20 do
+    seed = (seed * 48271) % 2147483647
+    local k = seed % 36 + 1
+    out[i] = chars:sub(k, k)
+  end
+  return table.concat(out)
+end
+
+local function ensureKey()
+  local s = settings()
+  if not s.styleKey then
+    s.styleKey = newKey()
+    saveSettings()
+  end
+  return s.styleKey
+end
+
 -- ---------------------------------------------------------------------------
 local function streamCount()
   local n = 0
@@ -830,7 +932,12 @@ local function status()
       lan = lanBase,
       lanOverlay = lanBase and (lanBase .. '/overlay') or nil,
       lanJson = lanBase and (lanBase .. '/live.json') or nil,
+      -- The style editor: the key rides the fragment, which no request carries.
+      styleBase = base .. '/style',
+      style = s.styleKey and (base .. '/style#key=' .. s.styleKey) or nil,
     },
+    canOpen = type(openWebBrowser) == 'function',
+    styleSeq = S.styleSeq,
   }
 end
 
@@ -858,6 +965,7 @@ end
 local function closeAll()
   for _, cl in ipairs(S.clients) do closeSock(cl.sock) end
   S.clients = {}
+  S.writing = nil
   closeSock(S.srv)
   S.srv = nil
   S.running, S.starting = false, false
@@ -949,11 +1057,21 @@ local function tryStart()
   say('W', S.error)
 end
 
+-- The style as it is now, encoded once for /style.json and the SSE frame.
+local function styleEncode()
+  S.styleBody = encode(Style.toWire(S.style, S.styleSeq, S.assetsRev))
+  S.styleFrame = 'event: style\ndata: ' .. S.styleBody .. '\n\n'
+end
+
 local function start()
   closeAll()
   closeStale()
-  S.error, S.bindTries, S.overlay = nil, 0, nil
+  S.error, S.bindTries, S.overlay, S.stylePage = nil, 0, nil, nil
   S.pollWait = 0
+  ensureKey()
+  S.style = Style.load()
+  S.styleSeq = S.styleSeq + 1
+  styleEncode()
   tryStart()
   pushStatus()
 end
@@ -978,19 +1096,21 @@ end
 -- HTTP
 -- ---------------------------------------------------------------------------
 local REASON = {
-  [200] = 'OK', [204] = 'No Content', [400] = 'Bad Request', [403] = 'Forbidden',
-  [404] = 'Not Found', [405] = 'Method Not Allowed',
-  [431] = 'Request Header Fields Too Large', [503] = 'Service Unavailable',
+  [200] = 'OK', [201] = 'Created', [204] = 'No Content', [400] = 'Bad Request',
+  [403] = 'Forbidden', [404] = 'Not Found', [405] = 'Method Not Allowed',
+  [411] = 'Length Required', [413] = 'Payload Too Large', [415] = 'Unsupported Media Type',
+  [429] = 'Too Many Requests', [431] = 'Request Header Fields Too Large',
+  [500] = 'Internal Server Error', [503] = 'Service Unavailable',
 }
 
-local function response(code, ctype, body, extra, headOnly)
+local function response(code, ctype, body, extra, headOnly, cache)
   local h = { 'HTTP/1.1 ' .. code .. ' ' .. (REASON[code] or 'OK') }
   if code ~= 204 then
     body = body or ''
     h[#h + 1] = 'Content-Type: ' .. (ctype or 'text/plain; charset=utf-8')
     h[#h + 1] = 'Content-Length: ' .. #body
   end
-  h[#h + 1] = 'Cache-Control: no-store'
+  h[#h + 1] = 'Cache-Control: ' .. (cache or 'no-store')
   h[#h + 1] = 'Access-Control-Allow-Origin: *'
   h[#h + 1] = 'X-Content-Type-Options: nosniff'
   h[#h + 1] = 'Connection: close'
@@ -1029,6 +1149,10 @@ local function indexPage()
     { '/session.json', 'session.json: lap, clock, flags' },
     { '/events.json', 'events.json: the last 30 events' },
     { '/stream', 'stream: live updates (Server-Sent Events)' },
+    { '/teams.json', 'teams.json: the league\'s teams' },
+    { '/style', 'Style editor (open it from the Feed panel: it needs the key)' },
+    { '/style.json', 'style.json: the overlay\'s look' },
+    { '/assets.json', 'assets.json: the overlay folder' },
   }
   local items = {}
   for _, l in ipairs(links) do
@@ -1049,18 +1173,26 @@ local FALLBACK_OVERLAY = '<!doctype html><html><head><meta charset="utf-8"><titl
   .. 'The overlay page is missing from this install. The data is at '
   .. '<a href="/live.json" style="color:#fc6">/live.json</a>.</body></html>'
 
-local function overlayPage()
-  if S.overlay == nil then
-    S.overlay = false
+local FALLBACK_STYLE = '<!doctype html><html><head><meta charset="utf-8"><title>PRM style</title>'
+  .. '</head><body style="font:16px system-ui">The style editor page is missing from this '
+  .. 'install. The style is at <a href="/style.json">/style.json</a>.</body></html>'
+
+-- A page from the game's own files (the mounted client zip), read once a start.
+local function bundled(file, slot, fallback)
+  if S[slot] == nil then
+    S[slot] = false
     pcall(function ()
-      if type(FS) == 'table' and FS.fileExists and not FS:fileExists(OVERLAY_FILE) then return end
+      if type(FS) == 'table' and FS.fileExists and not FS:fileExists(file) then return end
       if type(readFile) ~= 'function' then return end
-      local text = readFile(OVERLAY_FILE)
-      if type(text) == 'string' and #text > 0 then S.overlay = text end
+      local text = readFile(file)
+      if type(text) == 'string' and #text > 0 then S[slot] = text end
     end)
   end
-  return S.overlay or FALLBACK_OVERLAY
+  return S[slot] or fallback
 end
+
+local function overlayPage() return bundled(OVERLAY_FILE, 'overlay', FALLBACK_OVERLAY) end
+local function stylePage() return bundled(STYLE_PAGE_FILE, 'stylePage', FALLBACK_STYLE) end
 
 local JSON = 'application/json; charset=utf-8'
 local HTML = 'text/html; charset=utf-8'
@@ -1069,7 +1201,176 @@ local function sendOnce(cl, text)
   cl.state, cl.cur, cl.off, cl.next = 'send', text, 1, nil
 end
 
-local function handle(cl, head)
+-- ---------------------------------------------------------------------------
+-- Writes: the style and the overlay folder. Key, Origin, one at a time.
+-- ---------------------------------------------------------------------------
+local BODY_PER_POLL = 256 * 1024   -- bytes read a poll, at most
+local BODY_CHUNK = 65536
+local BODY_IDLE = 10               -- seconds a body may stall
+local BAD_KEYS = 10                -- wrong keys a minute before the lockout
+local LOCKOUT = 60
+
+local function jsonReply(code, fields)
+  local out = {}
+  for _, kv in ipairs(fields) do out[#out + 1] = jsonString(kv[1]) .. ':' .. kv[2] end
+  return response(code, JSON, '{' .. table.concat(out, ',') .. '}')
+end
+
+local function jsonList(list)
+  local out = {}
+  for i, v in ipairs(list) do out[i] = jsonString(tostring(v)) end
+  return '[' .. table.concat(out, ',') .. ']'
+end
+
+local function refuse(code, msg)
+  return jsonReply(code, { { 'ok', 'false' }, { 'error', jsonString(msg) } })
+end
+
+-- The overlay folder as /assets.json.
+local function assetsBody()
+  local files, total = {}, 0
+  for _, f in ipairs(Style.files.list()) do
+    local _, t = Style.validName(f.name)
+    total = total + f.size
+    files[#files + 1] = '{"name":' .. jsonString(f.name) .. ',"size":' .. jsonNumber(f.size)
+      .. ',"kind":' .. jsonString(t.kind) .. '}'
+  end
+  return '{"files":[' .. table.concat(files, ',') .. '],"total":' .. jsonNumber(total)
+    .. ',"maxBytes":' .. jsonNumber(Style.MAX_FILE) .. ',"maxFiles":' .. jsonNumber(Style.MAX_FILES)
+    .. ',"maxTotal":' .. jsonNumber(Style.MAX_TOTAL) .. ',"rev":' .. jsonNumber(S.assetsRev) .. '}'
+end
+
+-- Every open overlay gets the new look; pollers see styleSeq move.
+local function publishStyle()
+  S.styleSeq = S.styleSeq + 1
+  styleEncode()
+  for _, cl in ipairs(S.clients) do
+    if cl.state == 'stream' then cl.styleNext = S.styleFrame end
+  end
+  S.bodyKey = nil
+  refreshSafely()
+end
+
+-- The routes that write, and the most each may send.
+local function writeRoute(method, path)
+  if method == 'POST' and path == '/style.json' then
+    return { kind = 'style', max = Style.MAX_STYLE_BODY }
+  end
+  local name = path:match('^/assets/(.+)$')
+  if name and (method == 'POST' or method == 'DELETE') then
+    return { kind = method == 'POST' and 'upload' or 'delete', name = name,
+      max = method == 'POST' and Style.MAX_FILE or 0 }
+  end
+  return nil
+end
+
+local function finishWrite(cl)
+  local route, body = cl.route, table.concat(cl.parts)
+  cl.parts = nil
+  if S.writing == cl then S.writing = nil end
+  local ok, res = pcall(function ()
+    if route.kind == 'style' then
+      if type(jsonDecode) ~= 'function' then return refuse(500, 'No JSON reader in this game build') end
+      local okJ, input = pcall(jsonDecode, body)
+      if not okJ or type(input) ~= 'table' then return refuse(400, 'The style is not a JSON object') end
+      local style, rejected = Style.clean(input, S.style)
+      S.style = style
+      if not Style.save(style) then say('W', 'could not save ' .. Style.STYLE_FILE) end
+      publishStyle()
+      return jsonReply(200, { { 'ok', 'true' }, { 'rejected', jsonList(rejected) },
+        { 'style', S.styleBody } })
+    end
+    local name, t, ext = Style.validName(route.name)
+    if not name then return refuse(400, 'A file name is lower-case letters, digits, dot, dash and '
+      .. 'underscore, ending in a known type (png, jpg, gif, webp, svg, woff2, woff, ttf, otf, css)') end
+    if route.kind == 'delete' then
+      if not Style.files.read(name) then return refuse(404, 'No file called ' .. name) end
+      Style.files.remove(name)
+      S.assetsRev = S.assetsRev + 1
+      publishStyle()
+      return jsonReply(200, { { 'ok', 'true' }, { 'name', jsonString(name) } })
+    end
+    local why = Style.checkBytes(ext, body)
+    if why then return refuse(415, name .. ': ' .. why) end
+    local full, code = Style.room(name, #body)
+    if full then return refuse(code or 413, name .. ': ' .. full) end
+    if not Style.files.write(name, body) then return refuse(500, 'Could not write ' .. name) end
+    S.assetsRev = S.assetsRev + 1
+    publishStyle()
+    return jsonReply(201, { { 'ok', 'true' }, { 'name', jsonString(name) },
+      { 'size', jsonNumber(#body) }, { 'kind', jsonString(t.kind) } })
+  end)
+  sendOnce(cl, ok and res or refuse(500, 'The write failed: ' .. tostring(res)))
+end
+
+-- A wrong key counts; ten in a minute shuts writes for a minute.
+local function badKey()
+  local now, kept = S.clock, {}
+  for _, t in ipairs(S.badKeys) do if now - t < 60 then kept[#kept + 1] = t end end
+  kept[#kept + 1] = now
+  S.badKeys = kept
+  if #kept >= BAD_KEYS then S.lockUntil = now + LOCKOUT end
+end
+
+local function beginWrite(cl, method, path, query, lower, hostHeader, rest)
+  local route = writeRoute(method, path)
+  if not route then
+    return sendOnce(cl, response(405, nil, 'Read only\n', { 'Allow: GET, HEAD, OPTIONS' }))
+  end
+  -- From a browser, only from this feed's own pages.
+  local origin = lower:match('\norigin:[ \t]*([^\r\n]*)')
+  if origin and origin ~= '' and origin:gsub('%s+$', '') ~= 'http://' .. tostring(hostHeader or ''):gsub('%s+$', '') then
+    return sendOnce(cl, refuse(403, 'Writes are only taken from this feed\'s own pages'))
+  end
+  if S.clock < S.lockUntil then
+    return sendOnce(cl, refuse(429, 'Too many wrong keys: writes are shut for a minute'))
+  end
+  local key = lower:match('\nx%-prm%-key:[ \t]*([%w]+)') or ('&' .. (query or '')):match('&key=(%w+)')
+  local want = settings().styleKey
+  if not want or key ~= want then
+    badKey()
+    return sendOnce(cl, refuse(403, 'The style key is missing or wrong: open the style editor '
+      .. 'from the Feed panel'))
+  end
+  if lower:find('\ntransfer%-encoding:') then
+    return sendOnce(cl, refuse(411, 'Send a Content-Length, not chunks'))
+  end
+  local len = tonumber(lower:match('\ncontent%-length:[ \t]*(%d+)'))
+  if route.kind == 'delete' then len = len or 0 end
+  if not len then return sendOnce(cl, refuse(411, 'A Content-Length is needed')) end
+  if len > route.max then
+    return sendOnce(cl, refuse(413, 'Too large: at most ' .. route.max .. ' bytes'))
+  end
+  if S.writing and S.writing ~= cl then
+    return sendOnce(cl, refuse(503, 'Another upload is running: try again in a moment'))
+  end
+  if lower:find('\nexpect:[ \t]*100%-continue') then
+    pcall(cl.sock.send, cl.sock, 'HTTP/1.1 100 Continue\r\n\r\n')
+  end
+  rest = rest or ''
+  cl.state, cl.route, cl.want = 'body', route, len
+  cl.parts, cl.got, cl.bodyAt = { rest:sub(1, len) }, math.min(#rest, len), S.clock
+  S.writing = cl
+  if cl.got >= cl.want then return finishWrite(cl) end
+end
+
+local function readBody(cl)
+  local budget = BODY_PER_POLL
+  while cl.got < cl.want and budget > 0 do
+    local data, err, part = cl.sock:receive(math.min(BODY_CHUNK, cl.want - cl.got, budget))
+    local chunk = data or part
+    if chunk and #chunk > 0 then
+      cl.parts[#cl.parts + 1] = chunk
+      cl.got, budget, cl.bodyAt = cl.got + #chunk, budget - #chunk, S.clock
+    end
+    if err == 'closed' then return 'drop' end
+    if err then break end
+  end
+  if cl.got >= cl.want then return finishWrite(cl) end
+  if S.clock - cl.bodyAt > BODY_IDLE then return 'drop' end
+end
+
+local function handle(cl, head, rest)
   local method, target = head:match('^(%u+)%s+(%S+)%s+HTTP/1%.[01]')
   if not method then return sendOnce(cl, response(400, nil, 'Bad request\n')) end
   local lower = head:lower()
@@ -1085,13 +1386,17 @@ local function handle(cl, head)
       'Access-Control-Max-Age: 600',
     }))
   end
+  local rawPath = target:gsub('^%a+://[^/]*', ''):gsub('#.*$', '')
+  local path, query = rawPath:match('^([^?]*)%??(.*)$')
+  if path == '' then path = '/' end
+  if path ~= '/' then path = path:gsub('/+$', '') end
+  if method == 'POST' or method == 'DELETE' then
+    return beginWrite(cl, method, path, query, lower, hostHeader, rest)
+  end
   if method ~= 'GET' and method ~= 'HEAD' then
     return sendOnce(cl, response(405, nil, 'Read only\n', { 'Allow: GET, HEAD, OPTIONS' }))
   end
   local headOnly = method == 'HEAD'
-  local path = target:gsub('^%a+://[^/]*', ''):gsub('[?#].*$', '')
-  if path == '' then path = '/' end
-  if path ~= '/' then path = path:gsub('/+$', '') end
 
   if path == '/stream' and not headOnly then
     cl.state = 'stream'
@@ -1100,8 +1405,21 @@ local function handle(cl, head)
       .. 'X-Accel-Buffering: no\r\n\r\nretry: 2000\n\n'
     cl.off = 1
     cl.replaceable = false
+    cl.styleNext = S.styleFrame
     cl.next = S.frame
     return
+  end
+  -- A file from the overlay folder: exact type, sandboxed, cached for good when
+  -- asked for by revision (?v=).
+  local assetName = path:match('^/assets/(.+)$')
+  if assetName then
+    local name, t = Style.validName(assetName)
+    local bytes = name and Style.files.read(name)
+    if not bytes then return sendOnce(cl, response(404, nil, 'No such file\n')) end
+    local cache = query:find('v=', 1, true) and 'public, max-age=31536000, immutable' or 'no-cache'
+    return sendOnce(cl, response(200, t.ctype, bytes, {
+      "Content-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'",
+    }, headOnly, cache))
   end
   local parts = S.parts or {}
   local body, ctype
@@ -1110,13 +1428,22 @@ local function handle(cl, head)
   elseif path == '/drivers.json' then body, ctype = parts.drivers, JSON
   elseif path == '/grid.json' then body, ctype = parts.grid, JSON
   elseif path == '/events.json' then body, ctype = parts.events, JSON
+  elseif path == '/teams.json' then body, ctype = parts.teams or '[]', JSON
+  elseif path == '/style.json' then body, ctype = S.styleBody or '{}', JSON
+  elseif path == '/assets.json' then body, ctype = assetsBody(), JSON
+  elseif path == '/style' or path == '/style.html' then body, ctype = stylePage(), HTML
   elseif path == '/overlay' or path == '/overlay.html' then body, ctype = overlayPage(), HTML
   elseif path == '/' or path == '/index.html' then body, ctype = indexPage(), HTML
   elseif path == '/stream' then body, ctype = '', 'text/event-stream; charset=utf-8'
   elseif path == '/favicon.ico' then return sendOnce(cl, response(204))
   else return sendOnce(cl, response(404, nil, 'Not found. Try /live.json\n')) end
   if body == nil then body = (path == '/live.json') and '{}' or 'null' end
-  sendOnce(cl, response(200, ctype, body, nil, headOnly))
+  -- The style page saves with the key it holds: no other site may frame it
+  -- and trick a click on Save. (The overlay stays frameable: the editor's
+  -- previews and pages of your own embed it.)
+  local extra = ctype == HTML and path:sub(1, 6) == '/style'
+    and { "Content-Security-Policy: frame-ancestors 'none'", 'X-Frame-Options: DENY' } or nil
+  sendOnce(cl, response(200, ctype, body, extra, headOnly))
 end
 
 -- Reading a request head, byte counts only (a line pattern buffers inside
@@ -1136,42 +1463,57 @@ local function readHead(cl)
     return
   end
   if stop > MAX_HEADER then return sendOnce(cl, response(431, nil, 'Request too large\n')) end
-  local head = cl.inbuf:sub(1, stop)
+  -- The head ends at whichever blank line comes first; what follows is the
+  -- start of a body (a write), kept.
+  local crlf = cl.inbuf:find('\r\n\r\n', 1, true)
+  local lf = cl.inbuf:find('\n\n', 1, true)
+  local dl = 4
+  if lf and (not crlf or lf < crlf) then stop, dl = lf, 2 else stop = crlf end
+  local head = cl.inbuf:sub(1, stop - 1)
+  local rest = cl.inbuf:sub(stop + dl)
   cl.inbuf = ''
-  handle(cl, head)
+  handle(cl, head .. '\n', rest)
 end
 
 -- Writing: resume where the last send stopped; the latest frame replaces any
--- unsent one, so a slow reader skips frames instead of falling behind.
+-- unsent one, so a slow reader skips frames instead of falling behind. A few
+-- whole items a poll (a style frame, then a state frame) when the socket takes
+-- them.
 local function flush(cl)
-  if not cl.cur then
-    if cl.next then
-      cl.cur, cl.next, cl.off = cl.next, nil, 1
-      cl.replaceable = cl.state == 'stream'
-    elseif cl.state == 'send' then
-      return 'drop'
-    elseif S.clock - cl.lastSend >= KEEPALIVE then
-      cl.cur, cl.off, cl.replaceable = ': ka\n\n', 1, true
-    else
+  for _ = 1, 3 do
+    if not cl.cur then
+      -- A new look goes before the next state frame, and is never replaced by one.
+      if cl.styleNext then
+        cl.cur, cl.styleNext, cl.off, cl.replaceable = cl.styleNext, nil, 1, false
+      elseif cl.next then
+        cl.cur, cl.next, cl.off = cl.next, nil, 1
+        cl.replaceable = cl.state == 'stream'
+      elseif cl.state == 'send' then
+        return 'drop'
+      elseif S.clock - cl.lastSend >= KEEPALIVE then
+        cl.cur, cl.off, cl.replaceable = ': ka\n\n', 1, true
+      else
+        return
+      end
+    end
+    local last, err, partial = cl.sock:send(cl.cur, cl.off)
+    local sent = last or partial
+    if sent and sent >= cl.off then
+      cl.off = sent + 1
+      cl.lastSend = S.clock
+    end
+    if err and err ~= 'timeout' then return 'drop' end
+    if cl.off <= #cl.cur then
+      if S.clock - cl.lastSend > WRITE_STALL then return 'drop' end
       return
     end
-  end
-  local last, err, partial = cl.sock:send(cl.cur, cl.off)
-  local sent = last or partial
-  if sent and sent >= cl.off then
-    cl.off = sent + 1
-    cl.lastSend = S.clock
-  end
-  if err and err ~= 'timeout' then return 'drop' end
-  if cl.off > #cl.cur then
     cl.cur = nil
     -- Served. The reader hangs up first (Connection: close), which leaves the
     -- closed connection's TIME_WAIT on its side, not on this port.
     if cl.state == 'send' and not cl.next then
       cl.state, cl.drainUntil = 'drain', S.clock + DRAIN_FOR
+      return
     end
-  elseif S.clock - cl.lastSend > WRITE_STALL then
-    return 'drop'
   end
 end
 
@@ -1183,6 +1525,10 @@ end
 
 local function service(cl)
   if cl.state == 'drain' then return drain(cl) end
+  if cl.state == 'body' then
+    if readBody(cl) == 'drop' then return 'drop' end
+    if cl.state == 'body' then return end
+  end
   if cl.state == 'read' then
     if readHead(cl) == 'drop' then return 'drop' end
     if cl.state == 'read' then return end
@@ -1217,6 +1563,7 @@ local function poll()
   for i = #S.clients, 1, -1 do
     local cl = S.clients[i]
     if service(cl) == 'drop' then
+      if S.writing == cl then S.writing = nil end
       closeSock(cl.sock)
       table.remove(S.clients, i)
     end
@@ -1262,6 +1609,8 @@ end
 function D.feedState(data)
   if type(data) ~= 'table' then return end
   S.last, S.connected = data, true
+  -- The teams come on the sends that carry them; kept until the next list.
+  if data.teams ~= nil then S.teams = indexTeams(data.teams) end
   if data.phase ~= 'countdown' then S.countdown = nil end
   if S.running then refreshSafely() end
 end
@@ -1283,7 +1632,7 @@ end
 
 -- Left the server: readers see "not connected" rather than a frozen race.
 function D.feedOffline()
-  S.last, S.connected, S.countdown = nil, false, nil
+  S.last, S.connected, S.countdown, S.teams = nil, false, nil, nil
   if S.running then refreshSafely() end
 end
 
@@ -1307,6 +1656,28 @@ function D.feedUpdate(dt)
     closeAll()
     S.error = 'The feed stopped after an error: ' .. tostring(err)
     pushStatus()
+  end
+end
+
+-- The panel's New key: the old link stops working.
+function D.feedNewKey()
+  local s = settings()
+  s.styleKey = newKey()
+  saveSettings()
+  pushStatus()
+end
+
+-- Open the style editor in the system browser, where the game can.
+function D.feedOpenStyle()
+  local url = status().urls.style
+  if url and type(openWebBrowser) == 'function' then pcall(openWebBrowser, url) end
+end
+
+-- The overlay folder, for logos and fonts by hand.
+function D.feedOpenFolder()
+  if FS and FS.directoryCreate then pcall(function () FS:directoryCreate(Style.DIR, true) end) end
+  if Engine and Engine.Platform and Engine.Platform.exploreFolder then
+    pcall(Engine.Platform.exploreFolder, '/' .. Style.DIR .. '/')
   end
 end
 
