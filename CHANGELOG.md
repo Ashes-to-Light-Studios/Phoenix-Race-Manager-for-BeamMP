@@ -6,9 +6,33 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
-## 0.28.0 - Hosted servers: map switches with no restart, and Install from this PC
+## 0.28.0 - Hosted servers, and broadcast styling
 
 #### Added
+
+- **Style the broadcast overlay: colors, logos, fonts and words.** **Open style
+  editor** on the Feed panel opens a page in your browser with every setting
+  and a live preview of the five views, on a sample race or the session itself.
+  Six presets to start from; panel colors and opacity, corner rounding, row
+  height, font (yours too), weight and capitals; the color bar by team or
+  class, name formats (full, last, three-letter code, initial and last), car
+  number chips; the league's logo, a title and a sponsor; every word the
+  overlay shows. Save, and every open overlay changes within a second, in OBS
+  too, with no refresh. Logos and fonts are uploaded from the page into your
+  user folder. Export and Import share a look between streamers. Saving takes a
+  key that only the Feed panel's link carries, so nothing else can change what
+  your stream shows. A Stream Deck or Companion can change a color too. See
+  [Styling the overlay](docs/REFERENCE.md#styling-the-overlay).
+- **Teams and car numbers.** A new **Teams** item for admins: the league's
+  teams (name, short code, color, logo link) and each driver's team and car
+  number, kept on the server for everyone. The overlay colors a driver's bar and
+  number chip in their team color and puts the team's logo by their name, and
+  the feed carries `number`, `team`, `teamName`, `teamShort`, `teamColor` and
+  `teamLogo` on every driver and grid row, plus the team list
+  (`/teams.json`). See [Teams and car numbers](docs/REFERENCE.md#teams-and-car-numbers).
+- **A sample race for the overlay.** `&demo=1` on an overlay link shows eight
+  cars racing in two classes, so a scene can be set up in OBS with no session
+  running.
 
 - **Map switches with no restart.** A map that is already loaded (a stock level,
   or a map zip that was in `Resources/Client` when the server started) now
@@ -42,6 +66,8 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 #### Fixed
 
+- **The Feed panel's port box could show empty.** It is a text box now, and
+  takes the same ports.
 - **Uploading plugin files to a running server doubled the race clock.** BeamMP
   reloads a changed plugin file at once and runs its start-up again, and the
   race timer was started a second time beside the first: every clock in a race
