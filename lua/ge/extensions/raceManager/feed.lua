@@ -44,6 +44,7 @@ local PORT_MIN, PORT_MAX = 1024, 65535
 local SCHEMA = 1
 
 local POLL_EVERY = 0.05        -- seconds between socket polls
+local CAMERA_EVERY = 0.2       -- seconds between looks at who the camera is on
 local MAX_CLIENTS = 16         -- open connections; one more gets a 503
 local ACCEPTS_PER_POLL = 4
 local READ_CHUNK = 4096
@@ -89,6 +90,9 @@ local S = {
   connected = false,
   countdown = nil,
   prev = nil,            -- the previous model, for events
+  camera = nil,          -- the player id this PC's camera is on, as text; nil for nobody
+  cameraAt = 0,          -- clock time of the next look
+  cameraError = nil,     -- the last lookup error, logged once
   events = {},
   eventSeq = 0,
   seq = 0,
@@ -208,8 +212,12 @@ local DRIVER_KEYS = {
   'jokerTaken', 'jokerLap', 'jokerText', 'pitStops',
   'finishTime', 'finishText', 'penalty', 'resets',
   'number', 'team', 'teamName', 'teamShort', 'teamColor', 'teamLogo',
+  'onCamera',
 }
 local GRID_KEYS = { 'slot', 'id', 'name', 'class', 'qualiBest', 'qualiBestText',
+  'number', 'team', 'teamName', 'teamShort', 'teamColor', 'teamLogo' }
+-- The driver this PC's camera is on (watchedPid), copied from their row.
+local CAMERA_KEYS = { 'id', 'name', 'position', 'posText', 'class',
   'number', 'team', 'teamName', 'teamShort', 'teamColor', 'teamLogo' }
 local TEAM_KEYS = { 'id', 'name', 'short', 'color', 'logo' }
 local FASTEST_KEYS = { 'id', 'name', 'time', 'text' }
@@ -243,7 +251,7 @@ end
 D.SCHEMA_KEYS = {
   session = SESSION_KEYS, drivers = DRIVER_KEYS, grid = GRID_KEYS,
   fastestLap = FASTEST_KEYS, heat = HEAT_KEYS, events = EVENT_KEYS,
-  teams = TEAM_KEYS,
+  teams = TEAM_KEYS, camera = CAMERA_KEYS,
 }
 
 -- The app's words for the same things (app.js PHASE_LABELS, STATUS_LABELS), so
@@ -392,7 +400,8 @@ local function teamFields(d, team, number)
   d.teamLogo = team and team.logo or nil
 end
 
-local function buildModel(data, teams)
+-- `cameraPid` is watchedPid's answer: a player id as text, or nil.
+local function buildModel(data, teams, cameraPid)
   local model = { connected = false, session = nil, drivers = {}, grid = {}, byId = {} }
   model.teams = teams and teams.list or {}
   if type(data) ~= 'table' then
@@ -530,6 +539,13 @@ local function buildModel(data, teams)
     -- The league's team and car number (server teams.lua).
     local number = type(src.number) == 'string' and src.number:match('^%d%d?%d?$') or nil
     teamFields(d, teams and teams.byId[num(src.team) or -1] or nil, number)
+    -- Row ids are numbers and BeamMP owner ids can be either: compared as text.
+    d.onCamera = cameraPid ~= nil and d.id ~= nil and tostring(d.id) == cameraPid
+    if d.onCamera then
+      local c = keyedObject(CAMERA_KEYS)
+      for _, k in ipairs(CAMERA_KEYS) do c[k] = d[k] end
+      model.camera = c
+    end
     -- Kept for the events, never encoded: not in DRIVER_KEYS.
     d.lastLapOn = num(src.lastLapOn)
     model.drivers[#model.drivers + 1] = d
@@ -778,9 +794,10 @@ local function publish(model)
   local grid = encode(model.grid)
   local events = encode(eventsList())
   local teams = encode(model.teams or {})
+  local camera = encode(model.camera)
   local serverBuild = model.serverBuild and jsonString(model.serverBuild) or 'null'
   local key = table.concat({ tostring(model.connected), serverBuild, session, drivers, grid, events,
-    teams, S.styleSeq }, '\1')
+    teams, camera, S.styleSeq }, '\1')
   if key == S.bodyKey then return false end
   S.bodyKey = key
   S.seq = S.seq + 1
@@ -798,10 +815,12 @@ local function publish(model)
     ',"drivers":', drivers,
     ',"grid":', grid,
     ',"teams":', teams,
+    ',"camera":', camera,
     ',"events":', events,
     '}',
   })
-  S.parts = { session = session, drivers = drivers, grid = grid, events = events, teams = teams }
+  S.parts = { session = session, drivers = drivers, grid = grid, events = events, teams = teams,
+    camera = camera }
   S.frame = 'id: ' .. istr(S.seq) .. '\nevent: state\ndata: ' .. S.body .. '\n\n'
   for _, cl in ipairs(S.clients) do
     if cl.state == 'stream' then
@@ -815,7 +834,7 @@ end
 
 -- Rebuild from what we hold, find the events, publish.
 local function refresh()
-  local model = buildModel(S.connected and S.last or nil, S.teams)
+  local model = buildModel(S.connected and S.last or nil, S.teams, S.camera)
   diff(S.prev, model)
   S.prev = model
   publish(model)
@@ -830,6 +849,44 @@ local function refreshSafely()
       say('E', 'could not build the feed: ' .. msg)
     end
   end
+end
+
+-- ---------------------------------------------------------------------------
+-- Who the camera is on. THIS PC's camera: the feed has to run on the camera
+-- operator's game. Tabbing onto a rival attaches their car, so the attached
+-- car's BeamMP owner is the driver on screen. Free camera, singleplayer and a
+-- car BeamMP has no owner for are nobody.
+-- ---------------------------------------------------------------------------
+local function watchedPid()
+  if commands and commands.isFreeCamera and commands.isFreeCamera() == true then return nil end
+  local veh
+  if type(getPlayerVehicle) == 'function' then veh = getPlayerVehicle(0)
+  elseif be then veh = be:getPlayerVehicle(0) end
+  if not veh then return nil end
+  -- Closure: a deleted vehicle's __index raises outside a bare pcall.
+  local ok, id = pcall(function () return veh:getID() end)
+  -- Ids at or under 0 find a non-vehicle object on 0.40.
+  if not ok or type(id) ~= 'number' or id <= 0 then return nil end
+  if not (MPVehicleGE and type(MPVehicleGE.getVehicleByGameID) == 'function') then return nil end
+  local v = MPVehicleGE.getVehicleByGameID(id)
+  local owner = type(v) == 'table' and v.ownerID or nil
+  if owner == nil then return nil end
+  return tostring(owner)
+end
+
+-- A camera move republishes at once, not on the next RM_Update.
+local function cameraCheck()
+  local ok, pid = pcall(watchedPid)
+  if not ok then
+    if S.cameraError ~= tostring(pid) then
+      S.cameraError = tostring(pid)
+      say('W', 'could not tell who the camera is on: ' .. S.cameraError)
+    end
+    pid = nil
+  end
+  if pid == S.camera then return end
+  S.camera = pid
+  refreshSafely()
 end
 
 -- ---------------------------------------------------------------------------
@@ -1150,6 +1207,7 @@ local function indexPage()
     { '/events.json', 'events.json: the last 30 events' },
     { '/stream', 'stream: live updates (Server-Sent Events)' },
     { '/teams.json', 'teams.json: the league\'s teams' },
+    { '/camera.json', 'camera.json: the driver this PC\'s camera is on' },
     { '/style', 'Style editor (open it from the Feed panel: it needs the key)' },
     { '/style.json', 'style.json: the overlay\'s look' },
     { '/assets.json', 'assets.json: the overlay folder' },
@@ -1429,6 +1487,7 @@ local function handle(cl, head, rest)
   elseif path == '/grid.json' then body, ctype = parts.grid, JSON
   elseif path == '/events.json' then body, ctype = parts.events, JSON
   elseif path == '/teams.json' then body, ctype = parts.teams or '[]', JSON
+  elseif path == '/camera.json' then body, ctype = parts.camera or 'null', JSON
   elseif path == '/style.json' then body, ctype = S.styleBody or '{}', JSON
   elseif path == '/assets.json' then body, ctype = assetsBody(), JSON
   elseif path == '/style' or path == '/style.html' then body, ctype = stylePage(), HTML
@@ -1656,6 +1715,10 @@ function D.feedUpdate(dt)
     closeAll()
     S.error = 'The feed stopped after an error: ' .. tostring(err)
     pushStatus()
+  end
+  if S.running and S.clock >= S.cameraAt then
+    S.cameraAt = S.clock + CAMERA_EVERY
+    cameraCheck()
   end
 end
 

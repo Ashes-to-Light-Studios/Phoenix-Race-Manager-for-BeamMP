@@ -6,6 +6,18 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Added
+
+- **The broadcast feed says who the camera is on.** A new `camera` in the feed
+  names the driver your camera is on, with their place, class, number and team,
+  and their row in `drivers` has `onCamera: true`. `/camera.json` has it alone,
+  for an "on board" title in vMix or OBS. It follows a camera move within a
+  fifth of a second and is `null` in free camera or on a car not in the field.
+  It is the camera of the PC serving the feed, so run the feed on the PC that
+  films. See [The data](docs/REFERENCE.md#the-data).
+
 ## 0.28.0 - Hosted servers, and broadcast styling
 
 #### Added
