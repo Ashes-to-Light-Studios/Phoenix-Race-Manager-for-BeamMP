@@ -1122,6 +1122,90 @@ do
   feed.feedOffline()
   check(#live().teams == 0, 'leaving the server forgets them')
 end
+
+-- Who this PC's camera is on: the attached car's BeamMP owner.
+do
+  local attached, free = nil, false
+  local owners = {
+    [101] = { ownerID = 2 },    -- Bob's car
+    [102] = { ownerID = 0 },    -- the spectating admin's
+    [103] = {},                 -- not acknowledged by the server yet
+    [-1] = { ownerID = 1 },     -- ids at or under 0 are not vehicles
+  }
+  local function car(id) return { getID = function () return id end } end
+  getPlayerVehicle = function () return attached end
+  commands = { isFreeCamera = function () return free end }
+  MPVehicleGE = { getVehicleByGameID = function (id) return owners[id] end }
+  local function onCamera(d)
+    local ids = {}
+    for _, row in ipairs(d.drivers) do if row.onCamera then ids[#ids + 1] = row.id end end
+    return ids
+  end
+
+  feed.feedState(race())
+  pump(5)
+  doc = live()
+  check(doc.camera == NULL and #onCamera(doc) == 0, 'no car attached: nobody on camera')
+
+  -- Tabbing onto Bob, with no RM_Update in between.
+  attached = car(101)
+  pump(5)
+  doc = live()
+  check(doc.camera ~= NULL and doc.camera.id == 2 and doc.camera.name == 'Bob'
+    and doc.camera.posText == 'P2', 'tabbed onto Bob: he is on camera, without waiting for the server')
+  local ids = onCamera(doc)
+  check(#ids == 1 and ids[1] == 2, 'and his row alone says onCamera')
+  for _, k in ipairs(schema.camera) do
+    check(doc.camera[k] ~= nil, 'camera.' .. k .. ' is always present')
+  end
+  local cam = parseJson(get('/camera.json').body)
+  check(type(cam) == 'table' and cam.id == 2, '/camera.json is the camera object')
+
+  -- An RM_Update keeps it, with the new place.
+  local moved = race()
+  rowOf(moved, 2).position, rowOf(moved, 1).position = 1, 2
+  feed.feedState(moved)
+  doc = live()
+  check(doc.camera.id == 2 and doc.camera.posText == 'P1', 'the next race update carries the camera on')
+
+  free = true
+  pump(5)
+  doc = live()
+  check(doc.camera == NULL and #onCamera(doc) == 0, 'free camera: nobody')
+  check(get('/camera.json').body == 'null', '/camera.json is null then')
+  free = false
+
+  attached = car(102)
+  pump(5)
+  check(live().camera == NULL, 'a spectator\'s car: nobody (spectators have no row)')
+  attached = car(103)
+  pump(5)
+  check(live().camera == NULL, 'a car with no owner yet: nobody')
+  attached = car(-1)
+  pump(5)
+  check(live().camera == NULL, 'an id at or under 0: nobody')
+
+  -- The engine accessor where the GE one is missing.
+  getPlayerVehicle = nil
+  be = { getPlayerVehicle = function () return car(101) end }
+  pump(5)
+  check(live().camera.id == 2, 'be:getPlayerVehicle works as well')
+
+  -- A lookup that throws: nobody, and the feed carries on.
+  MPVehicleGE = { getVehicleByGameID = function () error('boom') end }
+  pump(5)
+  doc, resp = live()
+  check(resp.code == 200 and doc.camera == NULL and S.running == true,
+    'a failing lookup is nobody, and the feed keeps serving')
+
+  MPVehicleGE = { getVehicleByGameID = function (id) return owners[id] end }
+  pump(5)
+  check(live().camera.id == 2, 'and recovers when it works again')
+  feed.feedOffline()
+  check(live().camera == NULL, 'not connected: nobody')
+
+  getPlayerVehicle, be, commands, MPVehicleGE = nil, nil, nil, nil
+end
 feed.feedStop('unload')
 
 -- ===========================================================================
@@ -1154,7 +1238,7 @@ do
     end
   end
   for _, route in ipairs({ '/live.json', '/drivers.json', '/grid.json', '/session.json',
-      '/events.json', '/stream', '/overlay', '/teams.json', '/style', '/style.json',
+      '/events.json', '/stream', '/overlay', '/teams.json', '/camera.json', '/style', '/style.json',
       '/assets.json', '/assets/', 'styleSeq', 'event: style' }) do
     check(documented(route), 'the docs name ' .. route)
   end

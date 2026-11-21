@@ -2977,6 +2977,7 @@ turn it off; the setting is kept in your BeamNG user folder
 | `/session.json` | Just the session: lap, clock, flag. |
 | `/events.json` | Just the last 30 events, a list. |
 | `/teams.json` | Just the league's teams, a list (see [Teams and car numbers](#teams-and-car-numbers)). |
+| `/camera.json` | Just the driver this PC's camera is on, or `null`. |
 | `/style` | The style editor for the overlay's look. Open it from the Feed panel: saving takes the key. |
 | `/style.json` | The overlay's look, as last saved. |
 | `/assets.json` | The files in the overlay folder (logos, fonts, a stylesheet), with the limits. |
@@ -2998,8 +2999,9 @@ is transparent). One source per view you want on screen.
 **vMix.** *Data Sources* → *JSON*, URL `http://127.0.0.1:8128/drivers.json`,
 refresh every second, then bind a GT Title's fields to `name`, `posText`,
 `gapText` and so on. Every field has a ready-formatted text version (the ones
-ending in `Text`), so no scripting is needed. Or add the overlay page as a *Web
-Browser* input.
+ending in `Text`), so no scripting is needed. For an "on board" title, use
+`http://127.0.0.1:8128/camera.json` the same way. Or add the overlay page as a
+*Web Browser* input.
 
 **Your own page.** Listen to the stream, and fall back to polling:
 
@@ -3158,7 +3160,7 @@ server's. `seq` goes up by one with every change, and `epoch` is when the feed
 started (a new `epoch` means `seq` started again). `ts` is when this copy was
 made. `connected` is `false` until the race arrives and after leaving the
 server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
-`drivers`, `grid`, `teams` and `events`.
+`drivers`, `grid`, `teams`, `camera` and `events`.
 
 **`session`**
 
@@ -3212,6 +3214,7 @@ server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
 | `resets` | Resets used. |
 | `number` | The car number, as text (`"07"` is not `"7"`), or `null`. |
 | `team`, `teamName`, `teamShort`, `teamColor`, `teamLogo` | The driver's team: its id, name, short code (`PHX`), color (`#ff7a1a`) and logo link; `null` with no team. |
+| `onCamera` | This PC's camera is on this driver's car (see `camera`, below). |
 
 **`grid`**: `slot`, `id`, `name`, `class`, `qualiBest`, `qualiBestText`, and the
 same `number`, `team`, `teamName`, `teamShort`, `teamColor` and `teamLogo`, in
@@ -3220,6 +3223,15 @@ slot order.
 **`teams`**: the league's teams, each with `id`, `name`, `short` (2 to 4
 capitals or digits), `color` (`#rrggbb`) and `logo` (a web link, or `null`).
 `[]` when the league has none.
+
+**`camera`**: the driver the camera is on, with their `id`, `name`, `position`,
+`posText`, `class`, `number`, `team`, `teamName`, `teamShort`, `teamColor` and
+`teamLogo`, as on their row. It follows a camera move within a fifth of a
+second, session or not. It is `null` in free camera, and on a car that is not
+in the field (a spectator's, or one the server has no row for).
+
+It is the camera of **the PC serving the feed**. If one PC drives and another
+films, run the feed on the one that films.
 
 **`events`**: the last 30 things that happened, oldest first. Each has `seq`
 (rising; use it to tell new from seen), `type`, `ts`, `clock` (the race clock),
