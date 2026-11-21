@@ -1836,6 +1836,7 @@ Resources/Server/PhoenixRM Server/
         config.json              server settings
         discord.json             the Discord webhook and what it posts
         cup.json                 the championship
+        teams.json               teams and car numbers
         roster.json              display names
         garage.json              the allowed vehicles
         results/                 one .txt per session, while Save results is on the server
@@ -2958,6 +2959,11 @@ turn it off; the setting is kept in your BeamNG user folder
   shows the address the other PC uses.
 - **The links.** Once it is running the panel lists the overlay and data links;
   click one to select it, ready to copy. It also counts what is reading it.
+- **The overlay's look.** **Open style editor** opens the
+  [style editor](#styling-the-overlay) in your browser; **Overlay folder** opens
+  the folder its logos and fonts are kept in; **Show link** shows the editor's
+  link to paste into a browser yourself; **New key** makes the old links stop
+  working.
 
 ### What it serves
 
@@ -2965,16 +2971,23 @@ turn it off; the setting is kept in your BeamNG user folder
 |---|---|
 | `/overlay` | The ready-made overlay page (below). For an OBS Browser Source. |
 | `/live.json` | Everything, one JSON document. Poll it as often as you like. |
-| `/stream` | The same document pushed as it changes ([Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)): event `state`, about three a second while a session runs. |
+| `/stream` | The same document pushed as it changes ([Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)): event `state`, about three a second while a session runs. Also `event: style`, the overlay's look, first thing on connecting and again whenever it changes. |
 | `/drivers.json` | Just the running order, a list at the top level (vMix, Companion). |
 | `/grid.json` | Just the starting grid, a list. |
 | `/session.json` | Just the session: lap, clock, flag. |
 | `/events.json` | Just the last 30 events, a list. |
+| `/teams.json` | Just the league's teams, a list (see [Teams and car numbers](#teams-and-car-numbers)). |
+| `/style` | The style editor for the overlay's look. Open it from the Feed panel: saving takes the key. |
+| `/style.json` | The overlay's look, as last saved. |
+| `/assets.json` | The files in the overlay folder (logos, fonts, a stylesheet), with the limits. |
+| `/assets/<name>` | One of those files. |
 | `/` | A page with all of these as links. |
 
 Every answer carries `Access-Control-Allow-Origin: *` and `Cache-Control:
-no-store`, so a page from anywhere can read it and nothing caches it. It is read
-only: there is no address that changes anything in the game.
+no-store`, so a page from anywhere can read it and nothing caches it. Nothing
+here changes anything in the game. The one thing that can be written is the
+overlay's own look ([Styling the overlay](#styling-the-overlay)), and only with
+the style key.
 
 ### OBS, vMix and your own graphics
 
@@ -3017,8 +3030,119 @@ falls back to polling `/live.json`. Pick what it shows with the address:
 
 Add any of: `&rows=10` (how many drivers), `&gap=interval` (to the car ahead
 rather than the leader), `&class=GT4` (one class), `&scale=1.5`, `&theme=light`,
-`&poll=1` (no stream), `&src=http://192.168.1.20:8128` (another PC's feed). Names
-are drawn as text, never as HTML: a driver called `<script>` is just a name.
+`&poll=1` (no stream), `&src=http://192.168.1.20:8128` (another PC's feed),
+`&demo=1` (a sample race that moves, to set up a scene with no session running).
+Names are drawn as text, never as HTML: a driver called `<script>` is just a name.
+
+A driver's **team** colors the bar beside their name and the chip with their
+**car number**, and the team's logo sits next to it (see
+[Teams and car numbers](#teams-and-car-numbers)). The colors, logos, font and
+words are yours to change: next.
+
+### Styling the overlay
+
+**The style editor.** On the Feed panel, **Open style editor**. It opens in your
+browser: every setting on the left, and on the right the five views previewing
+what you are doing, on a sample race (or **Live**, the session itself) over a
+checker, a track, dark or light. Start from a **preset** (Phoenix, Midnight,
+Paddock, Neon, Mono, Carbon) and change what you like. Nothing changes on stream
+until **Save**; then every open overlay takes the new look within a second,
+without a refresh (they get `event: style` on the stream; one that polls sees
+`styleSeq` move and fetches `/style.json` again). **Revert** goes back to what
+is saved, **Start over** to the defaults. **Export** and **Import** pass a look
+between streamers as a file, to keep a league's broadcasts alike; send the logos
+and fonts it uses along with it.
+
+**The style key.** Saving and uploading take a key. The Feed panel's editor link
+carries it after `#key=`, a part of an address no browser ever sends anywhere,
+and the page takes it out of the address bar as soon as it opens. Without it the
+page still shows and previews, but cannot save. Where the game cannot open your
+browser, **Show link** shows the link to paste in yourself: it can change what
+your stream shows, so keep it, and that panel, off stream. **New key** makes a
+new one; links already given out stop working. Ten wrong keys in a minute shut
+writes for a minute.
+
+**Your files.** Logos, sponsor art, fonts and a stylesheet live in the overlay
+folder in your BeamNG user folder, `settings/raceManager/overlay/` (**Overlay
+folder** on the Feed panel opens it), next to the look itself, `style.json`.
+Upload them in the editor (it gives them a plain name), or copy them in.
+
+- Images: PNG, JPG, GIF, WebP, SVG (an SVG with script in it is refused).
+- Fonts: WOFF2, WOFF, TTF, OTF.
+- One kind of stylesheet: CSS.
+- Names are lower-case letters, digits, dot, dash and underscore.
+- At most 64 files, 4 MB each and 32 MB in all. A file whose contents are not
+  what its name says is refused.
+
+A setting names one of these files as `asset:<name>`; an image may also be an
+`https://` link.
+
+**Every setting.** Each is checked when saved: anything that does not fit is
+refused, named in the answer, and keeps its old value.
+
+| Key | What it does | Default |
+|---|---|---|
+| `colors.bg`, `colors.bgAlt` | The panel, and every other row | `#0c0e14`, `#1a1d26` |
+| `colors.fg`, `colors.muted` | Text, and the quiet text: gaps, labels | `#f2f4f8`, `#9aa3b2` |
+| `colors.accent` | The leader's place, the joker badge, and a bar or number chip with no team or class color | `#ff7a1a` |
+| `colors.fastest` | The fastest lap | `#b06cff` |
+| `colors.gain`, `colors.loss` | Places gained and lost, and a moving row's flash | `#3ddc84`, `#ff5c5c` |
+| `colors.pit` | The pit badge | `#3b82f6` |
+| `colors.flagGreen`, `colors.flagYellow`, `colors.flagRed`, `colors.flagWhite` | The flag stripe and the flag line | `#1db954`, `#ffd400`, `#e53935`, `#f5f5f5` |
+| `opacity` | The panel's opacity, 0 to 1 | `0.86` |
+| `scale` | Size, 0.5 to 3. A link's `&scale=` wins | `1` |
+| `radius` | Corner rounding, 0 to 1 (em) | `0.3` |
+| `rowHeight` | Row height, 1.4 to 2.8 (em) | `1.85` |
+| `nameWidth` | The widest a name gets, 6 to 20 (em) | `11` |
+| `font` | `system`, `condensed`, `mono`, `serif`, `rounded`, or a font of yours (`asset:<name>`) | `system` |
+| `weight` | `regular`, `bold` or `black` | `bold` |
+| `uppercase` | Names in capitals | `false` |
+| `bar` | The color bar: `team` (the team's, else the class's), `class`, `accent` or `none` | `team` |
+| `classColors` | A color for each class, like `{"GT3": "#e11d48"}`; at most 16 | none |
+| `nameFormat` | `full`, `last`, `code` (three letters, `CAR`) or `initialLast` (`A. Carter`) | `full` |
+| `numbers` | Car numbers: `chip` (in the team's color), `plain` or `off` | `chip` |
+| `teamLogos` | Team logos beside names | `true` |
+| `teamLogoOverrides` | A file of yours for a team's logo, by its short code, like `{"PHX": "asset:phx.png"}`; at most 32 | none |
+| `badges` | The fastest-lap, joker, pit and penalty badges | `true` |
+| `gained` | Places gained, in the results | `true` |
+| `flash` | A row flashes when it moves | `true` |
+| `flagStripe` | The flag-colored stripe | `true` |
+| `logo` | The league's logo: above the tower, grid and results, and first on the banner | none |
+| `sponsor` | Under them, and last on the banner | none |
+| `title`, `subtitle` | Beside the logo; up to 40 and 60 characters | none |
+| `css` | A stylesheet of yours (`asset:<name>`), loaded after the overlay's own | none |
+
+And every word the overlay shows, 24 characters each: `labels.leader`
+(LEADER), `labels.lap` (LAP), `labels.noTime` (NO TIME), `labels.race` (Race,
+when the layout has no name), `labels.qualifying`, `labels.qualiResult`,
+`labels.result`, `labels.standings`, `labels.startingGrid`,
+`labels.provisionalGrid`, `labels.noGrid`, the banner's `labels.session`,
+`labels.timeLeft`, `labels.time`, `labels.start` and `labels.fastestLap`, the
+badges' `labels.pit` (PIT), `labels.fl` (FL) and `labels.joker` (J), and
+`labels.waiting` (60 characters), shown while there is no session. An empty
+badge word hides that badge.
+
+**From a Stream Deck, Companion or a script.** A `POST` to `/style.json`
+changes the saved look, merged with it: `colors` and `labels` key by key,
+anything else replaced whole. `{"reset": true}` starts from the defaults. The
+key goes in an `X-PRM-Key` header (or `?key=`):
+
+```
+curl -X POST http://127.0.0.1:8128/style.json -H "X-PRM-Key: YOUR_KEY" -d "{\"colors\":{\"accent\":\"#e10600\"}}"
+```
+
+The answer is `ok`, the `rejected` settings (a list, empty when all went in) and
+the whole `style`. Files: a `POST` to `/assets/` and the file's name (`/assets/logo.png`), with
+the file as the body, and a `DELETE` to the same address to remove one. Writes are refused from other web pages,
+taken one at a time, and must say their length; a style is 64 KB at most.
+
+**A stylesheet of your own** reaches every part. The page's root has
+`data-view` (`tower`, `grid`...); tower, grid and results rows have `data-pos`,
+`data-class` and `data-team` (the short code); the parts are `.panel`, `.brand`,
+`.head`, `.rows`, `.row`, `.pos`, `.bar`, `.carno`, `.tlogo`, `.name`, `.gap`,
+`.badge`, `.slot`, `.banner`, `.results` and `.toast`. The editor's colors are
+set on the page itself, so a stylesheet's own wins over them only with
+`!important`.
 
 ### The data
 
@@ -3033,7 +3157,8 @@ the app shows it (`1:23.456`, `+1.2`, `+1:02.3`, `+1 LAP`, `+2 LAPS`, `3/10`,
 server's. `seq` goes up by one with every change, and `epoch` is when the feed
 started (a new `epoch` means `seq` started again). `ts` is when this copy was
 made. `connected` is `false` until the race arrives and after leaving the
-server. Then `session`, `drivers`, `grid` and `events`.
+server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
+`drivers`, `grid`, `teams` and `events`.
 
 **`session`**
 
@@ -3085,9 +3210,16 @@ server. Then `session`, `drivers`, `grid` and `events`.
 | `finishTime`, `finishText` | Race time at the flag. |
 | `penalty` | Time penalties, in seconds. |
 | `resets` | Resets used. |
+| `number` | The car number, as text (`"07"` is not `"7"`), or `null`. |
+| `team`, `teamName`, `teamShort`, `teamColor`, `teamLogo` | The driver's team: its id, name, short code (`PHX`), color (`#ff7a1a`) and logo link; `null` with no team. |
 
-**`grid`**: `slot`, `id`, `name`, `class`, `qualiBest`, `qualiBestText`, in slot
-order.
+**`grid`**: `slot`, `id`, `name`, `class`, `qualiBest`, `qualiBestText`, and the
+same `number`, `team`, `teamName`, `teamShort`, `teamColor` and `teamLogo`, in
+slot order.
+
+**`teams`**: the league's teams, each with `id`, `name`, `short` (2 to 4
+capitals or digits), `color` (`#rrggbb`) and `logo` (a web link, or `null`).
+`[]` when the league has none.
 
 **`events`**: the last 30 things that happened, oldest first. Each has `seq`
 (rising; use it to tell new from seen), `type`, `ts`, `clock` (the race clock),
@@ -3140,6 +3272,52 @@ use and ignore the rest.
   through a borrowed name.
 - **Many OBS sources stall.** A browser holds about six connections to one
   address. Use fewer overlay sources, or add `&poll=1` to some.
+- **The style editor says Read only, or Save says the key is wrong.** Open it
+  from the Feed panel again: after **New key**, older links stop working.
+- **"Too many wrong keys".** Ten wrong keys in a minute shut writes for a
+  minute. Wait, then open the editor from the Feed panel.
+- **The editor does not open from the game.** **Show link**, and paste it into
+  your browser.
+- **A team logo does not show.** A logo appears only once it has loaded, and a
+  link that fails is left out. Discord attachment links stop working within a
+  day: put the logo somewhere lasting, or upload it in the style editor and pick
+  it under **Team logos**.
+- **A new look shows on one PC's overlay but not another's.** The look is kept
+  on the PC whose feed serves the overlay. Export it there, Import it on the
+  other, and copy the files across.
+
+## Teams and car numbers
+
+Admins give the league its **teams** and its drivers their **car numbers**, once,
+on the server. Every streamer's [broadcast overlay](#broadcast-feed) then shows
+a driver's team color, logo and number, and the [feed](#the-data) carries them
+for graphics of your own. Open **Teams** on the menu bar; either admin tier may
+edit.
+
+**Teams.** A name (1 to 32 characters), a short code (2 to 4 letters or digits,
+like `PHX`, one team each), a color (a hex value, or one from the palette), and
+optionally a logo link (`https://`, 256 characters at most). Up to 32 teams.
+Removing a team leaves its drivers their numbers.
+
+A logo link has to keep working for the whole season: a Discord attachment link
+stops working within a day, so the panel refuses one. Use your league's site or
+an image host, or give streamers the file to upload in their
+[style editor](#styling-the-overlay), where it takes the team's place.
+
+**Drivers and car numbers.** One row for each driver who is connected, saved in
+the cup roster, or already listed, and a box to add anyone else by name. A car
+number is 1 to 3 digits and belongs to one driver: `07` and `7` are different
+numbers, both allowed. Pick a team from the list, then **Save** the row. A row
+with no team and no number is taken off the list. Up to 200 drivers.
+
+**Who is who.** A driver is matched by their display name first (see
+[Display names](#display-names)), then their BeamMP name, either case. Give
+someone a display name and their team and number follow it at once.
+
+**Where it is kept.** `Data/teams.json` on the server, so it survives restarts
+and updates. If that file is broken (hand-edited, say), the server leaves it
+alone and refuses changes until it is fixed or deleted, rather than writing over
+a league's list.
 
 ## Cup points
 
@@ -3404,6 +3582,7 @@ these were collapsed sections.
 | **Track** | admins | Saved layouts, the checkpoint editor, the starting-grid builder and practice approval |
 | **Garage** | everyone | Admins: the Garage List. Drivers: the cars they may run, with Take and + New |
 | **Cup** | everyone | Admins: scoring, bonuses and standings. Drivers: the standings, while a cup runs |
+| **Teams** | admins | League teams (name, code, color, logo) and car numbers, for the broadcast overlay (see [Teams and car numbers](#teams-and-car-numbers)) |
 | **Derby** | admins | Demo Derby rules, entry and the arena editor |
 | **Drag** | admins | The drag tournament: format, lanes, the tree, dial-ins and the bracket |
 | **Practice** | everyone | Timed laps on your own, on an approved track (see [Free practice](#free-practice)) |
@@ -3548,16 +3727,36 @@ Angular bindings, so it adds nothing to the work the main panel does.
 
 ## Switching maps
 
-The **Map** row on the **Admin** panel changes the map the server runs. BeamMP reads
-its map and its list of client mods once, at startup, so a switch always means a
-restart:
+The **Map** row on the **Admin** panel changes the map the server runs. How
+depends on whether the map is **already loaded**:
+
+**Already loaded: no restart.** A stock level, or a map whose zip was in
+`Resources/Client/` when the server started, is marked **no restart** in the map
+menus. BeamMP hands every joining player the map in its settings, and Race
+Manager changes that setting in the running server:
 
 1. A 10 second countdown, shown to everyone. **Stop** cancels it.
+2. The server's map is set, then everyone is disconnected with a message to
+   rejoin now. They rejoin straight onto the new map; the server list shows it
+   within a few seconds.
+3. The old map's track, start grid and derby arena are cleared, as a restart
+   would have cleared them. Load a layout for the new map as usual.
+
+**Not loaded yet: a restart.** BeamMP lists and hashes the client mods once, at
+startup, so a map waiting in `custom_maps/` cannot be offered to players until
+the server starts again:
+
+1. The same countdown.
 2. Everyone is disconnected with a message saying which map is coming and to
    rejoin in about a minute. New joins are turned away until the restart.
 3. The map zips move, the `Map` line in `ServerConfig.toml` is rewritten, and
    the server restarts (see [How the server restarts](#how-the-server-restarts)).
-4. After the restart the Map row says whether the switch took.
+4. After the restart the Map row says whether the switch took, and on a game
+   panel how long the server was down.
+
+A switch with no restart needs BeamMP-Server 3.6 or newer. A host can turn it
+off (`BEAMMP_PROVIDER_DISABLE_MP_SET`, see [Game hosts](#game-hosts)); the Map
+row then says every switch restarts.
 
 Either admin tier can switch: switching back undoes it, and choosing the
 night's venue is part of running it. Nothing is switched while a race,
@@ -3575,10 +3774,16 @@ Server Management Tool's folders, so the tool and Race Manager agree:
 | `custom_maps/` beside `BeamMP-Server.exe` | Map zips that are not running. Put new maps here. |
 | `Resources/Client/` | The running map's zip, with your vehicle mods |
 
-On a switch, the old map's zip moves to `custom_maps/` and the new one moves into
-`Resources/Client/`, so players only ever download the map in use. Vehicle mods
-are never touched. If a move fails, everything is put back and the server keeps
-running the old map.
+On a switch that restarts, the old map's zip moves to `custom_maps/` and the new
+one moves into `Resources/Client/`. Vehicle mods are never touched, and other map
+zips in `Resources/Client/` stay where they are. If a move fails, everything is
+put back and the server keeps running the old map.
+
+**Keep the maps you switch between often in `Resources/Client/`** and they all
+switch with no restart. The cost: a player downloads every zip in that folder the
+first time they join (the launcher keeps them after that), so a few maps there is
+fine, a whole library is a long first join. A switch with no restart moves no
+zips at all.
 
 Map zips anywhere else, such as a `Resources/Maps/` folder, are not listed. Move
 them into `custom_maps/`.
@@ -3675,6 +3880,25 @@ old console window closes and a new one opens on the new map. The helper is
 `Data/relaunch.cmd` (`relaunch.sh` on Linux); it waits up to five minutes for the
 old server to exit and is deleted on the next start.
 
+**On a game panel** (Pterodactyl, Pelican and the hosts built on them):
+
+- **The panel starts the server again.** A server that stops by itself counts
+  as crashed, and the panel's crash restart brings it back, usually within
+  seconds. Some hosts turn that off; then the server stays down until you start
+  it from the panel. The kick message says so, and after the next start the Map
+  row says how long it was down.
+- **Not twice in a minute.** A panel does not restart a server that stopped
+  again less than a minute after its last restart. So a switch or an update
+  right after the server started waits until it has run 75 seconds, and the
+  countdown says why.
+- **The map you chose is kept.** A panel writes its own **Map** setting into
+  `ServerConfig.toml` every time it starts the server. Race Manager remembers a
+  map chosen in game (`Data/mapPin.json`) with the map the server started on,
+  and at the next start, if the panel put that one back, sets the chosen map
+  again. The Map row says it did, and that the panel's setting still differs:
+  set it there to make the choice permanent. If you change the panel's Map
+  setting yourself, that wins and the remembered choice is dropped.
+
 **Linux:** `relaunch` works for a server started from a shell. In a container,
 `auto` already picks `exit`: when the server stops, the container stops with it
 and takes the helper along, so the host has to start it again. On a game panel
@@ -3688,10 +3912,17 @@ fight it for the port.
 
 ## Updating from the Admin tab
 
-**Off unless the server's owner turns it on.** As shipped, Race Manager never
-goes online by itself, because some game hosts cut a server off the internet
-when it does (see [Game hosts](#game-hosts)). The **Updates** row on the
-**Admin** panel then shows the version running and how to update by hand.
+Three ways, all from the **Updates** row on the **Admin** panel:
+
+- **[Install from this PC](#installing-from-your-pc)**: you download the
+  release, your game sends it to the server, and the server installs it and
+  restarts. The server never goes online, so this is the one for a rented
+  server.
+- **[Update and restart](#updating-from-the-game)**: the server downloads the
+  release itself. Off unless the owner turns **Online features** on, because
+  some game hosts cut a server off the internet when it goes online by itself
+  (see [Game hosts](#game-hosts)).
+- **[By hand](#updating-by-hand)**: stop, upload, extract, start.
 
 ### Updating by hand
 
@@ -3706,6 +3937,36 @@ Tracks, results and settings in `Data/` are kept, and players get the new
 version as they rejoin. If a release removes a file from
 `Resources/Server/PhoenixRM Server/`, delete it there too: BeamMP runs every
 `.lua` in that folder.
+
+Upload with the server stopped. BeamMP reloads plugin files the moment they
+change, so files uploaded into a running server take effect at once, beside a
+client mod that is still the old one: the console asks for a restart.
+
+### Installing from your PC
+
+For a server you cannot reach the files of, or one that must not go online by
+itself. Admin password only, from 0.28.0 on both ends (the first move to 0.28.0
+is by hand or with an installer).
+
+1. Download `RaceManager-vX.Y.Z.zip` from the release page on your own PC.
+2. On the **Updates** row, **Open folder** opens `settings/raceManager/update/`
+   in your BeamNG user folder. Put the zip there and press **Refresh**.
+3. **Send to server.** Your game checks the zip first, then sends it over
+   BeamMP's own connection, a piece at a time (about 16 seconds for a release).
+   Nothing is installed yet, and nobody is disconnected.
+4. The server checks it the way it checks a download: every file's checksum,
+   the client zip and the plugin, that every plugin file compiles, and that the
+   version in its name is the one inside. Then the row shows the version, the
+   size and its **SHA-256**. Compare that with the one on the release page.
+5. **Install and restart** asks first, then runs the same countdown, swap and
+   restart as [Update and restart](#updating-from-the-game): the old files go to
+   `_attic/`, and on a game panel the panel starts the server again. **Discard**
+   drops it.
+
+A release that is not newer than the server needs **Install anyway**. The
+upload is held in the server's memory only, and nothing is written until you
+press Install. It is let go after ten minutes, after 30 seconds without a piece
+arriving, or if you stop it. It works with **Online features** off.
 
 **From 0.23.x or older, the folders are renamed.** Until 0.24.0 the plugin was
 `Resources/Server/PhoenixRM Server/` and the client mod `Resources/Client/PhoenixRM Client.zip`;
@@ -3824,6 +4085,17 @@ machine you run yourself. If that error shows up with it on, set it back to
 `false` in `config.json` and restart the server: once players are being kicked,
 nobody can get in to turn it off from the game.
 
+**On a rented server, everything still works without it.** Update with
+[Install from this PC](#installing-from-your-pc). Switch maps from the Map row:
+maps already loaded switch with no restart, and the others restart through the
+panel's crash restart, with the map you chose kept even though the panel writes
+its own (see [How the server restarts](#how-the-server-restarts)).
+
+**`BEAMMP_PROVIDER_DISABLE_MP_SET`.** A host can stop plugins changing server
+settings (BeamMP 3.9.2 and later). Then no map switches without a restart, and on
+a game panel the panel's own **Map** setting decides the map: the Map row says
+so, and a switch to a map in `custom_maps/` is refused with that advice.
+
 ### Online features
 
 The **Online features** row on the **Admin** tab turns `onlineFeatures` on and
@@ -3836,9 +4108,10 @@ changing it needs the **admin** password, as installing an update does.
 - **Turning it on reaches nothing by itself.** The server next goes online when
   an admin presses **Check now** or logs in, when a session closes with a
   Discord webhook set, or when the server next starts.
-- **Turn off** works at once, except while an update is downloading or
-  installing: stop it on the **Updates** row first. A Discord post waiting to go
-  out is dropped.
+- **Turn off** works at once, except while the updater is on the network (a
+  check, or a download): stop it on the **Updates** row first. An upload from an
+  admin's PC uses no network and does not stand in the way. A Discord post
+  waiting to go out is dropped.
 - **It is saved to `config.json`**, so it survives a restart, and every admin
   logged in is told who changed it. If the server cannot write the file, the
   admins are told it reverts on restart.

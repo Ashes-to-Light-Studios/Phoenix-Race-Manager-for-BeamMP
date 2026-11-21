@@ -661,6 +661,20 @@ function RM_onDerbyClearStarts(pid)
   print('[RaceManager] Derby start grid cleared by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
+-- A map switch with no restart (maps.lua): the boundary and the start grid
+-- belong to the old map. Never during a derby (a switch waits for it anyway).
+function D.clearArena(why)
+  if derbyActive() then return false end
+  derby.boundary = {}
+  derby.boundaryMode = 'polygon'
+  derby.shape = nil
+  derby.arena = nil
+  derby.startPositions = {}
+  broadcastDerbyState()
+  print('[RaceManager] Derby arena cleared: ' .. tostring(why or 'map change'))
+  return true
+end
+
 -- --- Editing a placed marker / start slot -----------------------------------
 -- Move one entry to the admin's car, or drop it and the list closes up. One
 -- decoder for all four handlers: the 1-based index and the payload, or nil.

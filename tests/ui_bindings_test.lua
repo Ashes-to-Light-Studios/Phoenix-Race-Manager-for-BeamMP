@@ -1143,7 +1143,9 @@ end
 -- NOT be shipped. Each of these is read solely inside the server. (pitStops was
 -- one until 0.27.0: the broadcast feed reads it, see below.)
 for _, field in ipairs({ 'holdCorrections',
-                         'holdCorrectedAt', 'distNext' }) do
+                         'holdCorrectedAt', 'distNext',
+                         -- teams.lua's per-record memo, not data.
+                         'teamRev', 'teamAlias', 'teamFor' }) do
   expect(not onWire[field],
     field .. ' is server-side bookkeeping and should not be broadcast to every '
       .. 'client three times a second')
@@ -2790,7 +2792,7 @@ do
     for _ in html:gmatch("menuTab%('" .. tab .. "'%)") do count = count + 1 end
     expect(count == 1, 'the ' .. tab .. ' tab has exactly one menu entry (found ' .. count .. ')')
   end
-  expect(n == 9, 'checked every admin tab (found ' .. n .. ')')
+  expect(n == 10, 'checked every admin tab (found ' .. n .. ')')
   expect(js:find("var editing = $scope.isAdmin && !$scope.broadcastMode() && $scope.menu.open === 'tab';", 1, true) ~= nil,
     'the in-world editor is on only while its panel is open, not while its tab is remembered')
   -- Hidden while a panel is open: the board and the controls, and nothing else.

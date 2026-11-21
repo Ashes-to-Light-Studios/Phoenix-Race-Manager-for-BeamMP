@@ -50,10 +50,16 @@ the server's `_attic/` folder, move out leftovers of older installs that would
 run beside the new one, and never touch your tracks, results or settings. Run
 either again to update.
 
-**Updating on a hosting panel:** download the new `RaceManager-vX.Y.Z.zip`, stop
-the server, upload the zip into `Resources/` and extract it there over the old
-files, delete the zip and start the server. Your tracks, results and settings
-are kept.
+**Updating on a hosting panel:** from 0.28.0 on, use **Install from this PC** on
+the **Admin** tab: download the new `RaceManager-vX.Y.Z.zip` on your PC, put it in
+the folder the Updates row opens, and press **Send to server**, then **Install
+and restart**. Your game sends it over BeamMP's own connection, the server checks
+and installs it, and your panel starts it again. The server never goes online.
+See [Installing from your PC](docs/REFERENCE.md#installing-from-your-pc).
+
+By hand instead (and for the first move to 0.28.0): stop the server, upload the
+zip into `Resources/` and extract it there over the old files, delete the zip and
+start the server. Your tracks, results and settings are kept.
 
 **From 0.23.x or older, the folders are renamed** to `Resources/Client/PhoenixRM
 Client.zip` and `Resources/Server/PhoenixRM Server/`, so you can see what is
@@ -252,15 +258,15 @@ expect without touching any of it.
 | **[Live position tracking](docs/REFERENCE.md#live-position-tracking)** | True running order from laps, checkpoints cleared and distance to the next gate, not just the grid order. |
 | **[Demo Derby](docs/REFERENCE.md#demo-derby-parallel-game-mode)** | A separate last-man-standing mode with its own arena, timers and results, fully isolated from the racing. |
 | **[Ready check](docs/REFERENCE.md#the-ready-check)** | Forming a grid, a derby form-up and a drag pass call the drivers instead of teleporting them into place: each presses **Ready**, and the board shows who has. Admins see the count, can Ready All or place one driver, and are asked before starting without somebody. Not ready at the start sits that session or derby out, and is a no-show on the strip. |
-| **[Map switching and votes](docs/REFERENCE.md#switching-maps)** | Change the server's map from the Admin tab, or let drivers vote for one: it passes only at a percentage of the whole lobby you choose, and a race director can lock voting. Map zips move between `custom_maps` and `Resources/Client`, and the server restarts itself onto the new map, under the BeamMP Server Management Tool or started by hand. |
-| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | For a server on your own machine (**Online features** on the Admin tab): it looks for a newer release on GitHub and asks the admin. **Update and restart** downloads it, checks it against GitHub's SHA-256, keeps the old files, swaps the new ones in and restarts the server. Tracks, the cup and results are untouched. |
+| **[Map switching and votes](docs/REFERENCE.md#switching-maps)** | Change the server's map from the Admin tab, or let drivers vote for one: it passes only at a percentage of the whole lobby you choose, and a race director can lock voting. A map already loaded (a stock level, or a zip in `Resources/Client`) switches with no restart: everyone rejoins straight onto it. Any other map zip moves in from `custom_maps` and the server restarts itself onto it, under the BeamMP Server Management Tool, started by hand, or on a hosting panel, which keeps the map you chose. |
+| **[Updates from the game](docs/REFERENCE.md#updating-from-the-admin-tab)** | **Install from this PC**, for any server including a rented one: download the release on your PC and your game sends it to the server, which checks it, shows its SHA-256, keeps the old files, swaps the new ones in and restarts. On your own machine (**Online features** on the Admin tab), **Update and restart** downloads it from GitHub instead. Tracks, the cup and results are untouched. |
 | **[Map display names](docs/REFERENCE.md#map-display-names)** | Show `bark_river_sc` as *Bark River International* in the map menus, the vote and the switch. Display only: no file is renamed. |
 | **[Lap records](docs/REFERENCE.md#lap-records)** | Each driver's fastest lap on every saved layout, per map, kept across restarts and open to everyone. Scored from qualifying and races. An admin can take a time off or clear a board in game, or edit the JSON on the server. |
 | **[Where results go](docs/REFERENCE.md#where-results-go)** | A results file for every race, derby and drag tournament, kept on the server, sent to each admin's PC, both or neither. Two switches on the Admin tab, off until you turn them on. |
 | **[Results on Discord](docs/REFERENCE.md#posting-results-to-discord)** | Paste a channel's webhook URL on the Admin tab and every race, derby and drag tournament posts its results there as it closes, with the full results file attached. Qualifying too if you want it. For a server on your own machine (**Online features** on the Admin tab), and off until a webhook is set. |
 | **[Drag racing](docs/REFERENCE.md#drag-racing-parallel-game-mode)** | A tournament ladder down a drag strip: single or double elimination, or a points shootout. Two to eight cars a pass with any number going through, a christmas tree with real red lights, reaction times, elapsed times and trap speeds, and dial-in bracket racing. Scores into the cup on a table of its own. The strip is an ordinary point-to-point layout saved with the type Drag, so the track editor already builds one, and a practice pass lets one driver try it before a field turns up. |
 | **[Broadcast board](docs/REFERENCE.md#broadcast-board-spectators)** | A spectator's board for streaming: the whole field, the drivers who are out and why, cup standings, and click a name to put the camera on that car in orbit. |
-| **[Broadcast feed](docs/REFERENCE.md#broadcast-feed)** | Live race data for your stream's overlay software: positions, the starting grid, laps and last laps, gaps, who has taken the joker, pit stops, flags and a feed of what just happened, as JSON and a live stream on `http://127.0.0.1:8128`, plus a ready-made overlay for an OBS Browser Source. Served by your own game, so it works on a rented server: nothing runs on the server for it. |
+| **[Broadcast feed](docs/REFERENCE.md#broadcast-feed)** | Live race data for your stream's overlay software: positions, the starting grid, laps and last laps, gaps, who has taken the joker, pit stops, flags and a feed of what just happened, as JSON and a live stream on `http://127.0.0.1:8128`, plus a ready-made overlay for an OBS Browser Source, styled in your browser with your league's colors, logos and fonts, and team colors and car numbers from the server's [Teams](docs/REFERENCE.md#teams-and-car-numbers) list. Served by your own game, so it works on a rented server: nothing runs on the server for it. |
 | **[Race Lights (PRM)](docs/REFERENCE.md#race-lights-prm)** | An optional second app with the start lights, the flags and the drag tree in a box you place anywhere on screen. GET READY is a steady caption, so the green is the first thing that changes. Start sounds for the countdown, the green and the tree, mutable from the panel. |
 | **[Radar (PRM)](docs/REFERENCE.md#radar-prm)** | An optional third app: the cars around you out to 25 m, at their real size and angle, red under 2 m and amber under 6 m with the gap shown, side-by-side spotter bars, ghosts as outlines, and in a race each car's position with lapped cars in blue. Fades away when nobody is near. |
 | **[Menu bar](docs/REFERENCE.md#the-menu-bar)** | Practice, records, the garage, the cup and every admin panel open from one row under the title and step out of the way when closed, so the board keeps the room. |

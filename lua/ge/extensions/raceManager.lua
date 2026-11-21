@@ -221,7 +221,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.27.0'
+local RM_BUILD = '0.28.0'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -6300,6 +6300,14 @@ function M.discordRetry()
   if inMultiplayer() then TriggerServerEvent('RM_DiscordRetry', '') end
 end
 
+-- Teams and car numbers (server/RaceManager/teams.lua), the same way: the
+-- list rides RM_Update, and the server checks every field and either admin
+-- tier may edit.
+function M.teamsSet(json)
+  if type(json) ~= 'string' or json == '' or #json > 2000 or not inMultiplayer() then return end
+  TriggerServerEvent('RM_TeamsSet', json)
+end
+
 -- Lap records, the same way. onRecords is the RM_Records handler.
 do
   local records = require('raceManager/records')
@@ -6365,8 +6373,22 @@ do
   for _, name in ipairs({
     'feedBoot', 'feedSet', 'feedStatus', 'feedState', 'feedCountdown',
     'feedOffline', 'feedStop', 'feedUpdate',
+    'feedNewKey', 'feedOpenStyle', 'feedOpenFolder',
   }) do
     M[name] = feed[name]
+  end
+end
+
+-- Install from this PC: a release zip sent to the server over BeamMP's own
+-- connection, for a server that cannot download it. See upload.lua.
+do
+  local upload = require('raceManager/upload')
+  upload.init({ inMultiplayer = inMultiplayer })
+  for _, name in ipairs({
+    'uploadList', 'uploadOpenFolder', 'uploadStart', 'uploadCancel', 'uploadInstall',
+    'uploadStatus', 'uploadAck', 'uploadUpdate',
+  }) do
+    M[name] = upload[name]
   end
 end
 
@@ -6442,6 +6464,7 @@ function M.onUpdate(dt)
   if M.radarUpdate then M.radarUpdate(dt) end
   M.splashUpdate(dt)        -- the welcome splash, only while it is up
   M.feedUpdate(dt)          -- the broadcast feed: one comparison while it is off
+  M.uploadUpdate(dt)        -- Install from this PC: one comparison unless sending
   -- Props: the world follows props.list; the overlay only on the Props tab.
   props.update(dt)
   props.draw()
@@ -8727,6 +8750,8 @@ local function onServerUpdate(rawData)
   if M.lightsSync then M.lightsSync() end
   -- The broadcast feed reads it, never writes it (and is guarded inside).
   if M.feedState then M.feedState(data) end
+  -- An upload from this PC hears how far the server got (admins' sends only).
+  if M.uploadAck then M.uploadAck(data.prmUpdate) end
 end
 
 -- The server assigned a starting slot: stand on it and hold for the countdown.
@@ -10031,6 +10056,8 @@ end
 function M.onExtensionUnloaded()
   -- The feed's port goes with the extension; the setting stays.
   M.feedStop('unload')
+  -- An upload in progress stops here; the server gives it up on its own.
+  if M.uploadCancel then M.uploadCancel(true) end
   -- Resident across sessions (manual unload), so purge explicitly.
   resetToIdle('extension unloaded')
   -- No frame is coming to take the props out.
@@ -10056,6 +10083,7 @@ local function onSessionLeave()
   M.splashReset()
   -- Readers see "not connected" rather than a frozen race.
   M.feedOffline()
+  if M.uploadCancel then M.uploadCancel(true) end
   resetToIdle('BeamMP session ended')
 end
 

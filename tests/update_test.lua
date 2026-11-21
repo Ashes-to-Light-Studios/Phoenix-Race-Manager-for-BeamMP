@@ -737,6 +737,219 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- 11c. Install from an admin's PC
+-- ---------------------------------------------------------------------------
+-- The release zip comes from the admin's game in numbered base64 pieces over
+-- BeamMP's own connection: no download, no network, online features off.
+local B64C = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+local function b64(str)
+  local out = {}
+  for i = 1, #str, 3 do
+    local a, b, c = str:byte(i, i + 2)
+    local n = a * 65536 + (b or 0) * 256 + (c or 0)
+    local q1, q2, q3, q4 = n // 262144, (n // 4096) % 64, (n // 64) % 64, n % 64
+    out[#out + 1] = B64C:sub(q1 + 1, q1 + 1) .. B64C:sub(q2 + 1, q2 + 1)
+      .. (b and B64C:sub(q3 + 1, q3 + 1) or '=') .. (c and B64C:sub(q4 + 1, q4 + 1) or '=')
+  end
+  return table.concat(out)
+end
+
+-- The decoder: RFC 4648's vectors, and nothing else gets through.
+for plain, enc in pairs({ [''] = '', f = 'Zg==', fo = 'Zm8=', foo = 'Zm9v', foob = 'Zm9vYg==',
+    fooba = 'Zm9vYmE=', foobar = 'Zm9vYmFy' }) do
+  check(update.b64decode(enc) == plain, 'base64 ' .. enc .. ' is ' .. plain)
+end
+for _, bad in ipairs({ 'Zg=', 'Z===', 'Zm=v', 'Zm9v!g==', '====', 'Zm9v Zg==' }) do
+  check(update.b64decode(bad) == nil, 'base64 ' .. bad .. ' is refused')
+end
+do
+  local all = {}
+  for i = 0, 255 do all[#all + 1] = string.char(i) end
+  all = table.concat(all)
+  local whole = true
+  for cut = 0, 3 do
+    local piece = all:sub(1, #all - cut)
+    if update.b64decode(b64(piece)) ~= piece then whole = false end
+  end
+  check(whole, 'every byte value survives the round trip, at every length remainder')
+end
+
+local wasOnline = CFG.onlineFeatures
+local UP_MAIN = "-- uploaded main\nlocal RM_BUILD = '10.0.0'\nreturn RM_BUILD\n"
+local upZip = releaseZip(nil, UP_MAIN)
+local upSeq = 0
+-- Send `data` the way the client does. opts: chunk, name, size, total, upTo,
+-- order (a list of piece numbers), id.
+local function send(pid, data, opts)
+  opts = opts or {}
+  upSeq = upSeq + 1
+  local id = opts.id or ('up' .. upSeq)
+  local chunk = opts.chunk or 200
+  local parts = {}
+  for i = 1, #data, chunk do parts[#parts + 1] = data:sub(i, i + chunk - 1) end
+  local order = opts.order
+  if not order then
+    order = {}
+    for i = 1, #parts do order[i] = i end
+  end
+  for n, i in ipairs(order) do
+    if opts.upTo and n > opts.upTo then break end
+    RM_onUpdateUpload(pid, string.format(
+      '{"id":"%s","seq":%d,"total":%d,"size":%d,"name":"%s","data":"%s"}',
+      id, i, opts.total or #parts, opts.size or #data,
+      opts.name or 'RaceManager-v10.0.0.zip', b64(parts[i])))
+  end
+  return id, #parts
+end
+local function freshUpload()
+  reboot()
+  update.upload = nil
+  CFG.onlineFeatures = false
+end
+
+freshUpload()
+check(CFG.onlineFeatures == false, 'online features are off for all of this')
+
+-- Only the admin tier.
+sent.RM_Denied, sent.RM_LoginResult = nil, nil
+send(DRIVER, upZip, { upTo = 1 })
+check(update.state.phase == 'idle' and update.upload == nil, 'a driver sends nothing that counts')
+send(MOD, upZip, { upTo = 1 })
+check(update.state.phase == 'idle' and last('RM_Denied', MOD) ~= nil, 'a moderator is told it needs the admin password')
+
+-- A whole upload, a few pieces at a time.
+local id, pieces = send(ADMIN, upZip, { upTo = 3 })
+check(pieces > 4, 'the test release goes in several pieces (' .. pieces .. ')')
+check(update.state.phase == 'receiving' and update.job == nil and #spawned == 0,
+  'receiving: no download job, no process')
+st = stateFor(ADMIN)
+check(st.prmUpdate.upload and st.prmUpdate.upload.id == id and st.prmUpdate.upload.got == 3,
+  'the sender hears how far it got on its own state push')
+-- The rest, as the same upload.
+do
+  local parts = {}
+  for i = 1, #upZip, 200 do parts[#parts + 1] = upZip:sub(i, i + 199) end
+  for i = 4, #parts do
+    RM_onUpdateUpload(ADMIN, string.format(
+      '{"id":"%s","seq":%d,"total":%d,"size":%d,"data":"%s"}', id, i, #parts, #upZip, b64(parts[i])))
+  end
+end
+check(update.state.phase == 'ready', 'all of it arrived and checked out: ready to install')
+check(update.state.target.sha256 == update.sha256(upZip) and update.upload.sha256 == update.sha256(upZip),
+  'its SHA-256 is shown, to compare with the release page')
+check(update.state.target.version == '10.0.0' and update.state.target.source == 'upload',
+  'the version is the one its main.lua carries')
+check(untouched() and next(dropped) == nil, 'nothing is written and nobody dropped until Install')
+st = stateFor(ADMIN)
+check(st.prmUpdate.source == 'upload' and st.prmUpdate.targetNewer == true
+  and st.prmUpdate.sha256 == update.sha256(upZip), 'the panel shows what is waiting')
+RM_onMapSwitch(ADMIN, '{"map":"italy"}')
+check(maps.state.phase == 'idle', 'no map switch while an upload waits')
+
+-- Install: the admin tier, the right version, nothing running.
+sent.RM_Denied = nil
+RM_onUpdateStart(MOD, '{"upload":true,"version":"10.0.0"}')
+check(update.state.phase == 'ready' and last('RM_Denied', MOD) ~= nil, 'a moderator cannot install it')
+RM_onUpdateStart(ADMIN, '{"upload":true,"version":"9.9.9"}')
+check(update.state.phase == 'ready' and update.lastError:find('v10.0.0', 1, true),
+  'Install for another version is refused: look again')
+RM_onUpdateStart(ADMIN, '{"upload":true,"version":"10.0.0"}')
+check(update.state.phase == 'countdown' and update.state.method == 'relaunch',
+  'Install starts the countdown, online features off or not')
+tick(update.COUNTDOWN + update.SETTLE)
+check(exited == 1 and read(PLUGIN .. '/main.lua') == UP_MAIN
+  and read(root .. '/Resources/Client/PhoenixRM Client.zip') == CLIENT,
+  'the server stops with the uploaded release in place')
+local upRec = read(PLUGIN .. '/Data/update/last.json') or ''
+check(upRec:find('"source": "upload"', 1, true) and upRec:find(update.sha256(upZip), 1, true),
+  'the record says it came from an upload, with its SHA-256')
+local upAttic = upRec:match('"attic": "([^"]+)"')
+check(upAttic and read(root .. '/' .. upAttic .. '/Server/PhoenixRM Server/main.lua') == OLD.main,
+  'the old files are in the attic')
+update.host.RM_BUILD = '10.0.0'
+update.state = { phase = 'idle' }
+update.warm()
+check(update.last and update.last.ok and update.last.source == 'upload', 'after the restart: done, from an upload')
+
+-- What stops one, with nothing changed.
+local function stopped(what, want)
+  check(update.state.phase == 'idle' and untouched()
+    and update.upload and (update.upload.state == 'failed' or update.upload.state == 'refused')
+    and (not want or (update.upload.error or ''):find(want, 1, true)),
+    what .. ' (' .. tostring(update.upload and update.upload.error) .. ')')
+end
+freshUpload()
+send(ADMIN, upZip, { order = { 1, 3 } })
+stopped('a piece out of order stops it', 'out of order')
+freshUpload()
+send(ADMIN, upZip, { size = 9 * 1024 * 1024, upTo = 1 })
+stopped('more than 8 MB is refused before a byte is kept', 'at most')
+freshUpload()
+send(ADMIN, upZip, { size = 300 })
+stopped('more bytes than announced stops it', 'More bytes')
+freshUpload()
+send(ADMIN, upZip, { upTo = 2 })
+tick(update.UPLOAD_IDLE + 1)
+stopped('an upload that stops arriving is given up', 'stopped arriving')
+freshUpload()
+send(ADMIN, string.rep('not a zip at all ', 40), { name = 'RaceManager.zip' })
+stopped('a file that is not a release is refused', 'not a zip')
+freshUpload()
+send(ADMIN, upZip, { name = 'RaceManager-v9.0.0.zip' })
+stopped('a file named for another version than it holds is refused', 'named v9.0.0')
+freshUpload()
+send(ADMIN, releaseZip(nil, UP_MAIN, zipOf({ { 'readme.txt', 'x' } })))
+stopped('a release whose client zip lacks the mod is refused', 'has no')
+
+-- The same version as the server, or an older one: only when asked to.
+freshUpload()
+local sameMain = "-- same\nlocal RM_BUILD = '" .. CURRENT .. "'\nreturn 1\n"
+send(ADMIN, releaseZip(nil, sameMain), { name = 'RaceManager-v' .. CURRENT .. '.zip' })
+check(update.state.phase == 'ready' and update.state.target.version == CURRENT, 'the same version checks out')
+RM_onUpdateStart(ADMIN, '{"upload":true,"version":"' .. CURRENT .. '"}')
+check(update.state.phase == 'ready' and update.lastError:find('not newer', 1, true),
+  'but Install refuses it without Install anyway')
+RM_onUpdateStart(ADMIN, '{"upload":true,"version":"' .. CURRENT .. '","allowOlder":true}')
+check(update.state.phase == 'countdown', 'Install anyway puts it in')
+RM_onUpdateCancel(ADMIN)
+check(update.state.phase == 'idle' and untouched(), 'and the countdown can still be stopped')
+
+-- Discarding, from either phase.
+freshUpload()
+send(ADMIN, upZip, { upTo = 2 })
+RM_onUpdateCancel(ADMIN)
+check(update.state.phase == 'idle' and update.upload.state == 'cancelled', 'stopped while it arrives')
+freshUpload()
+send(ADMIN, upZip)
+RM_onUpdateCancel(ADMIN)
+check(update.state.phase == 'idle' and update.upload.state == 'cancelled' and untouched(),
+  'discarded once checked')
+
+-- A checked upload nobody installs goes away.
+freshUpload()
+send(ADMIN, upZip)
+tick(update.UPLOAD_HOLD)
+check(update.state.phase == 'idle' and update.upload.state == 'expired' and untouched(),
+  'not installed within ten minutes: let go')
+
+-- On a game panel: exit, and the host's 60 s.
+freshUpload()
+maps.hostingCache = { container = true, panel = true }
+maps.bootInfo().at = os.time()
+send(ADMIN, upZip)
+RM_onUpdateStart(ADMIN, '{"upload":true,"version":"10.0.0"}')
+check(update.state.method == 'exit' and update.state.left >= 74,
+  'on a panel: exit, after the server has run long enough (' .. tostring(update.state.left) .. ')')
+check(stateFor(ADMIN).prmUpdate.panel == true, 'the panel knows it is on a game panel')
+tick(update.state.left + update.SETTLE)
+check(exited == 1 and dropped[DRIVER] and dropped[DRIVER]:find('hosting panel', 1, true),
+  'the kick says to start it from the panel if it stays down')
+maps.hostingCache = { container = false, panel = false }
+maps.bootInfo().at = os.time() - 600
+update.host.RM_BUILD = CURRENT
+CFG.onlineFeatures = wasOnline
+
+-- ---------------------------------------------------------------------------
 -- 12. A bad repo never reaches a shell
 -- ---------------------------------------------------------------------------
 CFG.updateRepo = 'x/y" & calc'

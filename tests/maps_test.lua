@@ -158,10 +158,16 @@ write(root .. '/custom_maps/notazip.zip', 'this is not a zip')
 maps.paths.root = root
 
 local spawned, exited, probed = {}, 0, 0
+-- BEAMMP_PROVIDER_DISABLE_MP_SET as the host would set it; nil is unset.
+local envBlock = nil
 maps.sys = {
   popen = function () return nil end,
   execute = function (cmd) spawned[#spawned + 1] = cmd; return true end,
   exit = function () exited = exited + 1 end,
+  getenv = function (k)
+    if k == 'BEAMMP_PROVIDER_DISABLE_MP_SET' then return envBlock end
+    return os.getenv(k)
+  end,
 }
 -- A server outside any container, wherever the tests run: auto relaunches.
 local realHosting = maps.hosting
@@ -416,6 +422,9 @@ makeZip(root .. '/custom_maps/pack.zip', { 'Levels/PackA/info.json', 'levels/pac
 -- ---------------------------------------------------------------------------
 dropped = {}
 spawned = {}
+-- A stock level switches with no restart now (section 13). With the host
+-- blocking MP.Set it restarts, which is what this section is about.
+envBlock = '1'
 RM_onMapSwitch(ADMIN, '{"map":"gridmap_v2"}')
 check(maps.state.method == 'relaunch', 'auto, and not under the Management Tool: relaunch')
 tick(maps.COUNTDOWN + maps.SETTLE)
@@ -437,6 +446,7 @@ check(exists(root .. '/custom_maps/crandon.zip') and not exists(root .. '/Resour
   'a stock map needs no zip, and the custom one went back to custom_maps')
 check(read(root .. '/ServerConfig.toml'):find('Map = "/levels/gridmap_v2/info.json"', 1, true),
   'the config points at the stock level')
+envBlock = nil
 maps.state = { phase = 'idle' }
 maps.ticking = false
 maps.warm()
@@ -614,6 +624,231 @@ maps.sys.execute = function () error('no process here') end
 local okH, where = pcall(realHosting)
 check(okH and type(where.container) == 'boolean' and type(where.panel) == 'boolean'
   and (not IS_WINDOWS or not where.container), 'where the server runs is read without a process')
+
+-- ---------------------------------------------------------------------------
+-- 13. Instant: a map already loaded switches with no restart
+-- ---------------------------------------------------------------------------
+-- MP.Set changes the map every joiner is handed; BeamMP offers only the zips
+-- that were in Resources/Client when it started. A stock level, or one of those
+-- zips, is a countdown, MP.Set and a kick: nothing moves, nothing restarts.
+maps.sys.popen = function () return nil end
+maps.sys.execute = function (cmd) spawned[#spawned + 1] = cmd; return true end
+maps.sys.exit = function () exited = exited + 1 end
+maps.hostingCache = { container = false, panel = false }
+maps.state, maps.ticking, maps.vote = { phase = 'idle' }, false, nil
+local DATA = root .. '/Resources/Server/PhoenixRM Server/Data'
+local function place(zip, where)
+  local c, st = root .. '/Resources/Client/' .. zip, root .. '/custom_maps/' .. zip
+  if where == 'client' and exists(st) then os.rename(st, c) end
+  if where == 'store' and exists(c) then os.rename(c, st) end
+end
+place('bullets erx.zip', 'client')
+for _, z in ipairs({ 'crandon.zip', 'italy_mod.zip', 'pack.zip' }) do place(z, 'store') end
+makeZip(root .. '/Resources/Client/hiro.zip', { 'levels/hiro_mod/info.json' })
+hostedMap = '/levels/erxmp_bullet/info.json'
+local function freshBoot()
+  maps.boot, maps.warmed, maps.pin, maps.pinned, maps.setBlocked = nil, nil, nil, nil, nil
+  maps.hostRestart = nil
+end
+local function readJsonFile(p)
+  local text = read(p)
+  return text and maps.host.jsonParse(text) or nil
+end
+os.remove(DATA .. '/mapPin.json')
+os.remove(DATA .. '/lastStop.json')
+os.remove(DATA .. '/hostRestart.json')
+freshBoot()
+maps.warm()
+check(maps.bootInfo().map == 'erxmp_bullet' and maps.bootInfo().zips['hiro.zip'] == true,
+  'the start is taken once: the map and the zips BeamMP hashed')
+
+local function droppedAll(text)
+  local n, all = 0, true
+  for _, reason in pairs(dropped) do
+    n = n + 1
+    if not reason:find(text, 1, true) then all = false end
+  end
+  return n == 5 and all, n
+end
+
+-- A stock level.
+dropped, spawned = {}, {}
+local probes0, exits0 = probed, exited
+local config0 = read(root .. '/ServerConfig.toml')
+sent.RM_ClearTrack = nil
+RM_onMapSwitch(ADMIN, '{"map":"hirochi_raceway"}')
+check(maps.state.method == 'instant', 'a stock level switches with no restart')
+check(probed == probes0, 'and probes no process')
+check(last('RM_Maps').instant == true, 'the panel is told it is instant')
+check(next(dropped) == nil, 'nobody is dropped during the countdown')
+tick(maps.COUNTDOWN)
+check(hostedMap == '/levels/hirochi_raceway/info.json', 'the running server hands out the new map')
+check(exited == exits0 and #spawned == 0, 'no exit, nothing started')
+check(read(root .. '/ServerConfig.toml') == config0,
+  'ServerConfig.toml is not written (the Management Tool would restart on it)')
+check(exists(root .. '/Resources/Client/bullets erx.zip') and exists(root .. '/custom_maps/crandon.zip'),
+  'no zip moves')
+local allNow, nDropped = droppedAll('Rejoin now')
+check(allNow, 'everyone is dropped and told to rejoin now (' .. nDropped .. ')')
+local pin = readJsonFile(DATA .. '/mapPin.json')
+check(pin and pin.to == 'hirochi_raceway' and pin.base == 'erxmp_bullet',
+  'the pin remembers the map against the one the server started on')
+check(sent.RM_ClearTrack ~= nil, "the old map's track is cleared, as a restart would have")
+check(maps.state.phase == 'idle' and not maps.ticking, 'and the switch is over')
+check(maps.last and maps.last.ok and maps.last.instant, 'Last switch: instant')
+
+-- A zip that was in Resources/Client at the start.
+dropped = {}
+RM_onMapSwitch(ADMIN, '{"map":"hiro_mod"}')
+check(maps.state.method == 'instant', 'a map zip loaded at the start switches with no restart')
+tick(maps.COUNTDOWN)
+pin = readJsonFile(DATA .. '/mapPin.json')
+check(hostedMap == '/levels/hiro_mod/info.json' and pin and pin.to == 'hiro_mod'
+  and pin.base == 'erxmp_bullet', 'the pin still measures against the start')
+
+-- A zip put in Resources/Client after the start: BeamMP is not offering it.
+makeZip(root .. '/Resources/Client/late.zip', { 'levels/late_map/info.json' })
+RM_onMapRequest(ADMIN, '')
+local lateEntry
+for _, e in ipairs(last('RM_Maps', ADMIN).list or {}) do
+  if e.name == 'late_map' then lateEntry = e end
+end
+check(lateEntry and lateEntry.instant == nil, 'a zip added since the start is not instant')
+RM_onMapSwitch(ADMIN, '{"map":"late_map"}')
+check(maps.state.method == 'relaunch', 'it restarts the server')
+RM_onMapCancel(ADMIN)
+os.remove(root .. '/Resources/Client/late.zip')
+
+-- The host blocks MP.Set (BEAMMP_PROVIDER_DISABLE_MP_SET) on a game panel.
+maps.hostingCache = { container = true, panel = true }
+envBlock = 'true'
+dropped = {}
+RM_onMapSwitch(ADMIN, '{"map":"crandon"}')
+local refusal = last('RM_Maps', ADMIN)
+check(maps.state.phase == 'idle' and next(dropped) == nil, 'blocked on a panel: refused, nobody dropped')
+check(refusal.error and refusal.error:find('hosting panel', 1, true),
+  'and told to set the Map in the panel (' .. tostring(refusal.error) .. ')')
+check(refusal.live == false and refusal.liveWhy == 'blocked', 'the panel shows why')
+envBlock = nil
+maps.hostingCache = { container = false, panel = false }
+
+-- Refused without a word: MP.Set does nothing.
+local realSet = MP.Set
+MP.Set = function () end
+dropped = {}
+RM_onMapSwitch(ADMIN, '{"map":"utah"}')
+check(maps.state.method == 'instant', 'utah is a stock level')
+tick(maps.COUNTDOWN)
+check(hostedMap == '/levels/hiro_mod/info.json', 'the map did not change')
+check(next(dropped) == nil, 'and nobody was dropped')
+check(maps.last and maps.last.ok == false and maps.last.note:find('hosting panel', 1, true),
+  'the failure says to use the panel')
+pin = readJsonFile(DATA .. '/mapPin.json')
+check(pin and pin.to == 'hiro_mod', 'the pin is left alone')
+local liveNow, liveWhy = maps.liveSet()
+check(liveNow == false and liveWhy == 'blocked', 'and switches stop being offered as instant')
+MP.Set = realSet
+maps.setBlocked = nil
+
+-- BeamMP before 3.6: no MP.Get, so the setting cannot be read back.
+local realGet = MP.Get
+MP.Get = nil
+check(not maps.isInstant({ where = 'stock', name = 'utah' }), 'no MP.Get: never instant')
+MP.Get = realGet
+
+-- ---------------------------------------------------------------------------
+-- 14. A restart on a game panel
+-- ---------------------------------------------------------------------------
+-- The panel starts the server again (its crash restart), but not if it stopped
+-- again within 60 seconds; and the pin keeps the map it chooses.
+maps.hostingCache = { container = true, panel = true }
+maps.bootInfo().at = os.time()
+RM_onMapSwitch(ADMIN, '{"map":"crandon"}')
+check(maps.state.method == 'exit', 'a map in custom_maps on a panel: exit, and the host restarts')
+check(maps.state.left >= maps.RESTART_SPACING - 1 and maps.state.note:find('game panel', 1, true),
+  'just started: the countdown waits out the panel\'s 60 s ('
+    .. tostring(maps.state.left) .. ')')
+RM_onMapCancel(ADMIN)
+maps.bootInfo().at = os.time() - 600
+dropped = {}
+local exits1 = exited
+RM_onMapSwitch(ADMIN, '{"map":"crandon"}')
+check(maps.state.left == maps.COUNTDOWN, 'up long enough: the normal countdown')
+tick(maps.COUNTDOWN + maps.SETTLE)
+check(exited == exits1 + 1, 'exit() is called once')
+check(exists(root .. '/custom_maps/hiro.zip') and not exists(root .. '/Resources/Client/hiro.zip'),
+  "only the current map's zip leaves Resources/Client")
+check(exists(root .. '/Resources/Client/crandon.zip'), 'the new one is in')
+check(exists(root .. '/Resources/Client/bullets erx.zip') and exists(root .. '/Resources/Client/cars.zip'),
+  'other map zips (instant ones) and vehicle mods stay')
+pin = readJsonFile(DATA .. '/mapPin.json')
+check(pin and pin.to == 'crandon' and pin.base == 'erxmp_bullet', 'the pin is written on a panel')
+check(droppedAll('start it from your hosting panel'), 'the kick says what to do if it stays down')
+check(exists(DATA .. '/lastStop.json'), 'the stop is recorded for the next start')
+
+-- ---------------------------------------------------------------------------
+-- 15. The pin at the next start
+-- ---------------------------------------------------------------------------
+local sets = 0
+MP.Set = function (_, v) sets = sets + 1; hostedMap = v end
+local function newProcess(map)
+  maps.state, maps.ticking = { phase = 'idle' }, false
+  hostedMap = '/levels/' .. map .. '/info.json'
+  freshBoot()
+  sets = 0
+end
+local function writePinFile(to, base)
+  write(DATA .. '/mapPin.json', maps.host.jsonStringify({ to = to, label = to, base = base, at = os.time() }))
+end
+
+-- The panel put its Map back: the chosen one is set again.
+newProcess('erxmp_bullet')
+maps.warm()
+check(hostedMap == '/levels/crandon/info.json' and sets == 1,
+  'the panel put erxmp_bullet back; crandon is set again')
+check(maps.pinned and maps.pinned.base == 'erxmp_bullet', 'and the panel is told the setting still differs')
+check(maps.hostRestart and maps.hostRestart.auto == true, 'the host restarted it straight away')
+check(maps.last and maps.last.ok == true, 'Last switch: done')
+check(exists(DATA .. '/mapPin.json'), 'the pin stays for the next start')
+maps.warm()
+check(sets == 1, 'a hot reload does not set it again')
+
+-- The config already holds it (no panel rewriting it).
+newProcess('crandon')
+maps.warm()
+check(sets == 0 and not exists(DATA .. '/mapPin.json'), 'the config holds the map: the pin goes')
+
+-- Somebody changed the Map setting since.
+writePinFile('crandon', 'erxmp_bullet')
+newProcess('utah')
+maps.warm()
+check(sets == 0 and hostedMap == '/levels/utah/info.json' and not exists(DATA .. '/mapPin.json'),
+  'the owner changed the Map setting: it wins and the pin goes')
+
+-- The chosen map is not loaded any more.
+writePinFile('crandon', 'erxmp_bullet')
+place('crandon.zip', 'store')
+newProcess('erxmp_bullet')
+maps.warm()
+check(sets == 0 and hostedMap == '/levels/erxmp_bullet/info.json' and not exists(DATA .. '/mapPin.json'),
+  'the chosen map is not in Resources/Client: the server stays on the setting')
+check(maps.last and maps.last.ok == false and maps.last.note:find('Resources/Client', 1, true),
+  'and says why')
+
+-- Down a quarter of an hour: the host did not start it again.
+write(DATA .. '/lastStop.json', maps.host.jsonStringify({ at = os.time() - 900, why = 'test' }))
+write(DATA .. '/mapSwitch.json', maps.host.jsonStringify({ to = 'erxmp_bullet', label = 'Bullet',
+  at = os.time() - 900, method = 'exit' }))
+newProcess('erxmp_bullet')
+maps.warm()
+check(maps.hostRestart and maps.hostRestart.auto == false and maps.hostRestart.secs >= 899,
+  'down 15 minutes: not restarted by the host')
+check(maps.last and maps.last.ok and maps.last.note and maps.last.note:find('hosting panel', 1, true),
+  'and the Map row says to start it from the panel')
+check(readJsonFile(DATA .. '/hostRestart.json') ~= nil, 'remembered for later starts')
+
+MP.Set = realSet
+maps.hostingCache = { container = false, panel = false }
 
 -- ---------------------------------------------------------------------------
 -- Clean up

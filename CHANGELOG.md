@@ -6,6 +6,79 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.28.0 - Hosted servers, and broadcast styling
+
+#### Added
+
+- **Style the broadcast overlay: colors, logos, fonts and words.** **Open style
+  editor** on the Feed panel opens a page in your browser with every setting
+  and a live preview of the five views, on a sample race or the session itself.
+  Six presets to start from; panel colors and opacity, corner rounding, row
+  height, font (yours too), weight and capitals; the color bar by team or
+  class, name formats (full, last, three-letter code, initial and last), car
+  number chips; the league's logo, a title and a sponsor; every word the
+  overlay shows. Save, and every open overlay changes within a second, in OBS
+  too, with no refresh. Logos and fonts are uploaded from the page into your
+  user folder. Export and Import share a look between streamers. Saving takes a
+  key that only the Feed panel's link carries, so nothing else can change what
+  your stream shows. A Stream Deck or Companion can change a color too. See
+  [Styling the overlay](docs/REFERENCE.md#styling-the-overlay).
+- **Teams and car numbers.** A new **Teams** item for admins: the league's
+  teams (name, short code, color, logo link) and each driver's team and car
+  number, kept on the server for everyone. The overlay colors a driver's bar and
+  number chip in their team color and puts the team's logo by their name, and
+  the feed carries `number`, `team`, `teamName`, `teamShort`, `teamColor` and
+  `teamLogo` on every driver and grid row, plus the team list
+  (`/teams.json`). See [Teams and car numbers](docs/REFERENCE.md#teams-and-car-numbers).
+- **A sample race for the overlay.** `&demo=1` on an overlay link shows eight
+  cars racing in two classes, so a scene can be set up in OBS with no session
+  running.
+
+- **Map switches with no restart.** A map that is already loaded (a stock level,
+  or a map zip that was in `Resources/Client` when the server started) now
+  switches without restarting the server: after the countdown the server's map
+  is set, everyone is disconnected and rejoins straight onto it, and the old
+  map's track, grid and derby arena are cleared. The map menus mark these **no
+  restart**. Any other map still moves in from `custom_maps` and restarts the
+  server. Needs BeamMP-Server 3.6 or newer, and a host can turn it off
+  (`BEAMMP_PROVIDER_DISABLE_MP_SET`); the Map row then says every switch
+  restarts. See [Switching maps](docs/REFERENCE.md#switching-maps).
+- **Install from this PC.** An update for any server, rented ones included: put
+  the release zip from the release page in the folder the **Updates** row opens,
+  press **Send to server**, and your game sends it over BeamMP's own connection.
+  The server checks it as it checks a download, shows its SHA-256 to compare
+  with the release page, and installs it and restarts when you press **Install
+  and restart**. The server never goes online, so it works with online features
+  off. Admin password only. See [Installing from your
+  PC](docs/REFERENCE.md#installing-from-your-pc).
+- **Game panels keep the map you chose.** A Pterodactyl or Pelican panel writes
+  its own **Map** setting at every start, so a switch that restarted the server
+  could come back on the old map. The map chosen in game is now remembered and
+  set again at the next start, as long as the panel's setting is still the one
+  the server had; change it in the panel and that wins. The Map row says when
+  this happened. See [How the server restarts](docs/REFERENCE.md#how-the-server-restarts).
+- **A game panel's restart, reported.** After a switch or an update that
+  restarted the server, the Map row says how long it was down, and if the panel
+  did not start it again by itself, says to start it from the panel. The kick
+  message says the same. A switch or an update right after the server started
+  waits until it has run 75 seconds, because a panel does not restart a server
+  that stopped again within a minute.
+
+#### Fixed
+
+- **The Feed panel's port box could show empty.** It is a text box now, and
+  takes the same ports.
+- **Uploading plugin files to a running server doubled the race clock.** BeamMP
+  reloads a changed plugin file at once and runs its start-up again, and the
+  race timer was started a second time beside the first: every clock in a race
+  ran at double speed. The timer is now stopped before it is started, and the
+  console says the files changed and asks for a restart when the version did.
+
+#### Changed
+
+- **Online features can be turned off during an upload.** Only a check or a
+  download from GitHub, which use the network, hold it on now.
+
 ## 0.27.0 - Broadcast feed
 
 #### Added

@@ -435,7 +435,7 @@ angular.module('beamng.apps')
       // is derived from the tab. A WHITELIST: an unknown tab falls back to Race,
       // so a new tab is TWO edits, the button and this.
       var TABS = { race: true, quali: true, grid: true, track: true, garage: true,
-                   cup: true, derby: true, drag: true, admin: true };
+                   cup: true, teams: true, derby: true, drag: true, admin: true };
       var DEFAULT_TAB = 'race';
 
       // The mode a tab puts the panel in. Derby and drag swap the board (`drivers`
@@ -460,7 +460,7 @@ angular.module('beamng.apps')
       // remembered: the board is what to come back to.
       $scope.menu = { open: null, group: null };
       var TAB_TITLES = { race: 'Race rules', quali: 'Qualifying', grid: 'Grid and heats',
-                         track: 'Track', garage: 'Garage List', cup: 'Cup',
+                         track: 'Track', garage: 'Garage List', cup: 'Cup', teams: 'Teams and numbers',
                          derby: 'Demo Derby', drag: 'Drag racing', admin: 'Admin' };
       var PANEL_TITLES = { practice: 'Practice', records: 'Lap records',
                            feed: 'Broadcast feed',
@@ -682,8 +682,9 @@ angular.module('beamng.apps')
           bngApi.engineLua('raceManager.dragRequestState()');
         }
         // The cup is pushed on change only, so pull it on open. 'admin' too:
-        // Display Names picks from the roster, which rides the cup broadcast.
-        if ($scope.adminTab === 'cup' || $scope.adminTab === 'admin') {
+        // Display Names picks from the roster, which rides the cup broadcast;
+        // and 'teams', whose driver list includes the roster's names.
+        if ($scope.adminTab === 'cup' || $scope.adminTab === 'admin' || $scope.adminTab === 'teams') {
           bngApi.engineLua('raceManager.cupRequestState()');
         }
         if ($scope.adminTab === 'admin') {
@@ -1533,7 +1534,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.27.0';
+      var APP_BUILD = '0.28.0';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -1882,7 +1883,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.feed = { available: true, on: false, running: false, starting: false,
                       port: 8128, lan: false, error: null, clients: 0, streams: 0,
                       lanIp: null, urls: {} };
-      $scope.feedUi = { port: '8128', portEditing: false, lanConfirm: false };
+      $scope.feedUi = { port: '8128', portEditing: false, lanConfirm: false,
+                        showKey: false, newKeyConfirm: false };
       // Built when the status arrives, not per digest: ng-repeat over a fresh
       // array of fresh objects never settles.
       $scope.feedLinks = [];
@@ -1941,6 +1943,176 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // A click on a link selects it, ready to copy.
       $scope.feedSelect = function ($event) {
         try { $event.target.select(); } catch (e) { /* not an input */ }
+      };
+      // The overlay's look: the style editor opens in the PC's browser (the
+      // link carries the style key, so it is shown only on request, with a
+      // warning to keep it off stream), and the folder its files live in.
+      $scope.feedOpenStyle = function () {
+        bngApi.engineLua('raceManager.feedOpenStyle()');
+        // Where the game cannot open a browser, the link is the way in.
+        if (!$scope.feed.canOpen) { $scope.feedUi.showKey = true; }
+      };
+      $scope.feedOpenFolder = function () { bngApi.engineLua('raceManager.feedOpenFolder()'); };
+      $scope.feedToggleKey = function () { $scope.feedUi.showKey = !$scope.feedUi.showKey; };
+      $scope.feedNewKeyAsk = function () { $scope.feedUi.newKeyConfirm = true; };
+      $scope.feedNewKeyCancel = function () { $scope.feedUi.newKeyConfirm = false; };
+      $scope.feedNewKey = function () {
+        $scope.feedUi.newKeyConfirm = false;
+        bngApi.engineLua('raceManager.feedNewKey()');
+      };
+
+      // ------------------------------------------------------------------
+      // Teams and car numbers (admins): league-wide, kept on the server
+      // ------------------------------------------------------------------
+      // teams.lua owns them (Data/teams.json) and checks every field. The list
+      // rides RM_Update on targeted sends and on the broadcast after a change;
+      // an admin's own sends also carry every entry (teamEntries). A driver is
+      // matched by display name first, then BeamMP name, so the list here is
+      // in display names. Native color pickers and <select> never open in
+      // BeamNG's UI: a hex box with a palette, and the custom dropdown.
+      $scope.teamsList = [];
+      $scope.teamEntries = [];
+      $scope.teamsUi = { editing: null, name: '', short: '', color: '#ff7a1a', logo: '',
+                         numbers: {}, teamOf: {}, newName: '', removeAsk: null };
+      $scope.TEAM_PALETTE = ['#ff7a1a', '#e53935', '#f43f5e', '#ec4899', '#a855f7', '#6366f1',
+                             '#3b82f6', '#0ea5e9', '#14b8a6', '#22c55e', '#84cc16', '#eab308',
+                             '#f59e0b', '#a16207', '#f5f5f5', '#6b7280'];
+      // Rows for the drivers list, rebuilt when the names change (not per
+      // digest: ng-repeat over fresh objects never settles).
+      $scope.teamsDrivers = [];
+      var teamsSeen = {};          // name key -> the server's 'number|team' last seeded
+      var teamsDriversSig = '';
+      var teamsTyped = [];         // names typed in this session (not online, not saved yet)
+      var TEAM_HEX = /^#[0-9a-fA-F]{6}$/;
+
+      function teamsSend(payload) {
+        bngApi.engineLua('raceManager.teamsSet(' + luaStr(JSON.stringify(payload)) + ')');
+      }
+      function teamsEntryFor(key) {
+        for (var i = 0; i < $scope.teamEntries.length; i++) {
+          if (String($scope.teamEntries[i].name).toLowerCase() === key) { return $scope.teamEntries[i]; }
+        }
+        return null;
+      }
+      // Every driver an admin may want to number: the list's, who is on the
+      // server, and the cup's saved drivers.
+      function teamsRebuildDrivers() {
+        var byKey = {}, order = [];
+        function add(name, online) {
+          if (typeof name !== 'string' || !name) { return; }
+          var key = name.toLowerCase();
+          if (!byKey[key]) { byKey[key] = { key: key, name: name, online: false }; order.push(key); }
+          if (online) { byKey[key].online = true; }
+        }
+        $scope.teamEntries.forEach(function (e) { add(e.name, false); });
+        ($scope.drivers || []).forEach(function (d) { add(d.alias || d.name, true); });
+        (($scope.cup && $scope.cup.roster) || []).forEach(function (e) { add(e.name, false); });
+        teamsTyped.forEach(function (n) { add(n, false); });
+        order.sort();
+        var sig = order.map(function (k) { return k + (byKey[k].online ? '+' : ''); }).join('|');
+        if (sig !== teamsDriversSig) {
+          teamsDriversSig = sig;
+          $scope.teamsDrivers = order.map(function (k) { return byKey[k]; });
+        }
+        // Seed each row's boxes from the server, unless the admin is mid-edit
+        // (a box moves only when the server's value does).
+        order.forEach(function (k) {
+          var e = teamsEntryFor(k);
+          var num = e && e.number ? String(e.number) : '';
+          var team = e && e.team ? e.team : null;
+          var now = num + '|' + team;
+          if (teamsSeen[k] !== now) {
+            teamsSeen[k] = now;
+            $scope.teamsUi.numbers[k] = num;
+            $scope.teamsUi.teamOf[k] = team;
+          }
+        });
+      }
+      // From RaceManagerUpdate. An empty list may arrive as {} (Lua has one
+      // kind of table): anything not a list is an empty one.
+      function takeTeams(list) {
+        $scope.teamsList = Array.isArray(list) ? list.filter(function (t) {
+          return t && typeof t === 'object' && typeof t.id === 'number';
+        }) : [];
+      }
+      function takeTeamEntries(adminList) {
+        var entries = adminList && Array.isArray(adminList.entries) ? adminList.entries : [];
+        $scope.teamEntries = entries.filter(function (e) { return e && typeof e.name === 'string'; });
+        if (adminList && adminList.teams !== undefined) { takeTeams(adminList.teams); }
+        teamsRebuildDrivers();
+      }
+      $scope.teamById = function (id) {
+        for (var i = 0; i < $scope.teamsList.length; i++) {
+          if ($scope.teamsList[i].id === id) { return $scope.teamsList[i]; }
+        }
+        return null;
+      };
+      $scope.teamsColorOk = function (c) { return TEAM_HEX.test(c || ''); };
+      $scope.teamsPickColor = function (c) { $scope.teamsUi.color = c; };
+      $scope.teamsFormOk = function () {
+        var u = $scope.teamsUi;
+        var name = (u.name || '').trim(), short = (u.short || '').trim(), logo = (u.logo || '').trim();
+        return name.length >= 1 && name.length <= 32 && /^[A-Za-z0-9]{2,4}$/.test(short)
+          && TEAM_HEX.test(u.color || '') && (logo === '' || /^https?:\/\/\S+$/.test(logo));
+      };
+      $scope.teamsEdit = function (t) {
+        var u = $scope.teamsUi;
+        u.editing = t.id; u.name = t.name; u.short = t.short; u.color = t.color || '#ff7a1a'; u.logo = t.logo || '';
+        u.removeAsk = null;
+      };
+      $scope.teamsCancelEdit = function () {
+        var u = $scope.teamsUi;
+        u.editing = null; u.name = ''; u.short = ''; u.logo = '';
+      };
+      $scope.teamsSave = function () {
+        if (!$scope.teamsFormOk()) { return; }
+        var u = $scope.teamsUi;
+        var payload = { op: 'team', name: u.name.trim(), short: u.short.trim().toUpperCase(),
+                        color: u.color.toLowerCase(), logo: (u.logo || '').trim() };
+        if (u.editing) { payload.id = u.editing; }
+        teamsSend(payload);
+        $scope.teamsCancelEdit();
+      };
+      $scope.teamsRemoveAsk = function (t) { $scope.teamsUi.removeAsk = t.id; };
+      $scope.teamsRemoveCancel = function () { $scope.teamsUi.removeAsk = null; };
+      $scope.teamsRemove = function (t) {
+        $scope.teamsUi.removeAsk = null;
+        if ($scope.teamsUi.editing === t.id) { $scope.teamsCancelEdit(); }
+        teamsSend({ op: 'removeTeam', id: t.id });
+      };
+      // A driver's row: changed from what the server has?
+      $scope.teamsDriverChanged = function (e) {
+        var u = $scope.teamsUi;
+        return ((u.numbers[e.key] || '') + '|' + (u.teamOf[e.key] || null)) !== teamsSeen[e.key];
+      };
+      $scope.teamsNumberOk = function (e) { return /^[0-9]{0,3}$/.test(String($scope.teamsUi.numbers[e.key] || '')); };
+      $scope.teamsDriverSave = function (e) {
+        if (!$scope.teamsNumberOk(e)) { return; }
+        teamsSend({ op: 'entry', name: e.name, team: $scope.teamsUi.teamOf[e.key] || null,
+                    number: String($scope.teamsUi.numbers[e.key] || '') });
+      };
+      // A name typed in: for a driver who is not on the server or the roster.
+      $scope.teamsAddDriver = function () {
+        var name = ($scope.teamsUi.newName || '').trim();
+        if (!name || name.length > 32) { return; }
+        $scope.teamsUi.newName = '';
+        if (teamsTyped.length < 50) { teamsTyped.push(name); }
+        teamsRebuildDrivers();
+      };
+      // The team dropdown on a driver's row (one open at a time).
+      $scope.teamsOpenMenu = null;
+      $scope.teamsMenuOpen = function (key) { return $scope.teamsOpenMenu === key; };
+      $scope.teamsToggleMenu = function (key) {
+        $scope.teamsOpenMenu = ($scope.teamsOpenMenu === key) ? null : key;
+        if ($scope.teamsOpenMenu) { revealDropdown('.rm-teams .rm-layout-menu'); }
+      };
+      $scope.teamsPickTeam = function (e, t) {
+        $scope.teamsUi.teamOf[e.key] = t ? t.id : null;
+        $scope.teamsOpenMenu = null;
+      };
+      $scope.teamsTeamLabel = function (e) {
+        var t = $scope.teamById($scope.teamsUi.teamOf[e.key]);
+        return t ? t.short + ' · ' + t.name : 'No team';
       };
 
       // Places gained or lost since the lights. It sits alongside the gap rather
@@ -2183,6 +2355,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           // Whether the class column exists at all, decided once per broadcast
           // rather than once per row per digest.
           refreshHasClasses($scope.drivers);
+          // League teams: on targeted sends and the broadcast after a change,
+          // absent otherwise (keep what we have). An admin's own sends carry
+          // every entry too.
+          if (data.teams !== undefined && data.teams !== null) { takeTeams(data.teams); }
+          if (data.teamEntries) { takeTeamEntries(data.teamEntries); }
+          else if ($scope.adminTab === 'teams' && $scope.isAdmin) { teamsRebuildDrivers(); }
           // Re-seed the distance box when the server's value moves (clamped, or
           // set by another admin).
           if (typeof data.totalLaps === 'number') {
@@ -2356,6 +2534,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (data.prmUpdate && typeof data.prmUpdate === 'object') {
             $scope.prmUpdate = data.prmUpdate;
             if (data.prmUpdate.phase !== 'idle') { $scope.updateUi.confirm = false; }
+            if (data.prmUpdate.phase !== 'ready') { $scope.uploadUi.confirm = false; }
+            // The folder, looked in once an admin who may install is here.
+            if (data.prmUpdate.canUpdate && !$scope.uploadUi.listed) {
+              $scope.uploadUi.listed = true;
+              $scope.uploadRefresh();
+            }
           }
           // And the Discord add-on, when the server has it.
           if (data.prmDiscord && typeof data.prmDiscord === 'object') {
@@ -4502,13 +4686,42 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         switch ($scope.maps.restart) {
           case 'watch':    return "Restart: the Management Tool's config check.";
           case 'relaunch': return 'Restart: Race Manager starts the server again.';
-          case 'exit':     return 'Restart: your service manager, when the server stops.';
+          case 'exit':
+            return $scope.maps.panel ? 'Restart: your hosting panel, when the server stops.'
+              : 'Restart: your service manager, when the server stops.';
           case 'manual':   return 'Restart: by hand.';
           default:
             // auto, in a container: the old server's exit stops it (maps.lua).
+            if ($scope.maps.panel) {
+              return 'Restart: your hosting panel starts the server again when it stops (most do; if it '
+                + 'stays down, start it from the panel).';
+            }
             if ($scope.maps.container) { return 'Restart: your host, when the server stops.'; }
             return 'Restart: the Management Tool if it started the server, otherwise Race Manager.';
         }
+      };
+      // What Switch Map will do to the field, for the confirm.
+      $scope.mapsConfirmText = function () {
+        var m = $scope.mapsUi.pick;
+        if (m && m.instant) { return 'Everyone is disconnected and rejoins straight onto it: no restart.'; }
+        return 'Everyone is disconnected and the server restarts'
+          + ($scope.maps.panel ? ' (your hosting panel starts it again).' : '.');
+      };
+      // How the last self-stop went on a game panel (maps.lua, hostRestart).
+      $scope.mapsHostRestartText = function () {
+        var h = $scope.maps.hostRestart;
+        if (!$scope.maps.panel || !h || typeof h.secs !== 'number') { return ''; }
+        if (h.auto) { return 'Last restart: your hosting panel started the server again in ' + h.secs + 's.'; }
+        return 'Last restart: the server was down ' + Math.round(h.secs / 60) + ' min, so your hosting '
+          + 'panel did not start it again by itself. After a switch that restarts, start it from the panel.';
+      };
+      // Why every switch restarts on this server.
+      $scope.mapsLiveText = function () {
+        if ($scope.maps.liveWhy === 'blocked') {
+          return 'Your host does not let plugins change the map, so every switch restarts the server'
+            + ($scope.maps.panel ? ', and on a game panel the Map setting in the panel decides.' : '.');
+        }
+        return 'This BeamMP-Server is older than 3.6, so every switch restarts the server.';
       };
 
       // ------------------------------------------------------------------
@@ -4548,6 +4761,72 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         bngApi.engineLua('raceManager.updateCheck()');
       };
       $scope.updateToggleNotes = function () { $scope.updateUi.notes = !$scope.updateUi.notes; };
+
+      // ------------------------------------------------------------------
+      // Install from this PC (upload.lua here, update.lua on the server)
+      // ------------------------------------------------------------------
+      // This PC's side (the folder, the sending) comes on RaceManagerUpload;
+      // the server's (received, checked, ready) on prmUpdate.
+      $scope.uploadUi = {
+        local: { phase: 'idle', files: [], dir: 'settings/raceManager/update' },
+        confirm: false, listed: false
+      };
+      $scope.$on('RaceManagerUpload', function (event, data) {
+        $scope.$evalAsync(function () {
+          if (!data || typeof data !== 'object') { return; }
+          if (!data.files) { data.files = []; }
+          $scope.uploadUi.local = data;
+        });
+      });
+      $scope.uploadRefresh = function () { bngApi.engineLua('raceManager.uploadList()'); };
+      $scope.uploadOpenFolder = function () { bngApi.engineLua('raceManager.uploadOpenFolder()'); };
+      $scope.uploadSend = function (name) {
+        bngApi.engineLua('raceManager.uploadStart(' + luaStr(name) + ')');
+      };
+      $scope.uploadStop = function () { bngApi.engineLua('raceManager.uploadCancel()'); };
+      $scope.uploadBusy = function () {
+        var p = $scope.uploadUi.local.phase;
+        return p === 'sending' || p === 'waiting';
+      };
+      // The server still receiving or checking an upload.
+      $scope.uploadOnServer = function () {
+        var u = $scope.prmUpdate;
+        return !!(u && u.upload && (u.phase === 'receiving'
+          || (u.phase === 'verifying' && u.upload.state === 'verifying')));
+      };
+      $scope.uploadReady = function () {
+        var u = $scope.prmUpdate;
+        return !!(u && u.phase === 'ready' && u.source === 'upload');
+      };
+      $scope.uploadAskInstall = function () { $scope.uploadUi.confirm = true; };
+      $scope.uploadAskCancel = function () { $scope.uploadUi.confirm = false; };
+      $scope.uploadInstall = function () {
+        var u = $scope.prmUpdate;
+        $scope.uploadUi.confirm = false;
+        if (!$scope.uploadReady()) { return; }
+        bngApi.engineLua('raceManager.uploadInstall(' + luaStr(u.target) + ', '
+          + (u.targetNewer ? 'false' : 'true') + ')');
+      };
+      $scope.uploadDiscard = function () {
+        $scope.uploadUi.confirm = false;
+        $scope.updateCancel();
+      };
+      $scope.uploadSize = function (n) {
+        if (typeof n !== 'number') { return ''; }
+        return n >= 1048576 ? (n / 1048576).toFixed(2) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+      };
+      $scope.uploadProgressText = function () {
+        var l = $scope.uploadUi.local, u = $scope.prmUpdate;
+        if (u && u.phase === 'verifying') { return 'The server is checking it…'; }
+        if (l.phase === 'waiting') { return 'Sent. Waiting for the server to check it…'; }
+        if (l.phase === 'sending' && l.total) {
+          return 'Sending ' + (l.name || '') + ': ' + (l.sent || 0) + ' of ' + l.total + ' pieces…';
+        }
+        if (u && u.upload && u.phase === 'receiving') {
+          return 'The server has ' + (u.upload.got || 0) + ' of ' + (u.upload.total || 0) + ' pieces…';
+        }
+        return '';
+      };
       // Seconds since 1970 (the server's os.time) as this PC's local time.
       $scope.updateWhen = function (sec) {
         if (!sec) { return ''; }

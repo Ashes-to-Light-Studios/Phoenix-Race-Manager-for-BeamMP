@@ -1168,6 +1168,9 @@ local DRIVER_WIRE_FIELDS = {
   -- The broadcast feed (client feed.lua): the last lap, the crossing it was
   -- completed on, and pit stops. Zero stops go out as nil (driverForWire).
   'lastLap', 'lastLapOn', 'pitStops',
+  -- Teams and car numbers (teams.lua): resolved per record in driverForWire,
+  -- nil when unset, so a league without them sends nothing extra.
+  'team', 'number',
 }
 
 -- The projection buffer lives ON the record and is reused: no allocation per
@@ -1178,6 +1181,9 @@ local function driverForWire(rec)
     wire = {}
     rec.wire = wire
   end
+  -- The team and number for this driver's name (memoized on the record).
+  local teamOf = race.teamOf
+  if teamOf then teamOf(rec) end
   for i = 1, #DRIVER_WIRE_FIELDS do
     local key = DRIVER_WIRE_FIELDS[i]
     wire[key] = rec[key]
@@ -1250,7 +1256,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.27.0'
+local RM_BUILD = '0.28.0'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -1493,6 +1499,10 @@ local function broadcastState(targetPid)
     prmUpdate    = selfAdmin and race.updateSnapshot and race.updateSnapshot(targetPid) or nil,
     -- Admin sends only: the Discord add-on, never its webhook URL.
     prmDiscord   = selfAdmin and race.discordSnapshot and race.discordSnapshot(targetPid) or nil,
+    -- The league's teams (teams.lua): on targeted sends and the one broadcast
+    -- after a change, never the 3 Hz ticks. Admins also get every entry.
+    teams        = race.teamsWire and race.teamsWire(targetPid) or nil,
+    teamEntries  = selfAdmin and race.teamsEntries and race.teamsEntries() or nil,
     drivers      = buildDrivers(),
   })
   MP.TriggerClientEvent(targetPid or -1, 'RM_Update', payload)
@@ -5425,7 +5435,9 @@ function RM_onSetOnlineFeatures(pid, rawData)
     for adminPid in pairs(authenticatedPlayers) do broadcastState(adminPid) end
   end
   if data.on == (CFG.onlineFeatures == true) then return pushAdmins() end
-  if not data.on and race.updateBusy and race.updateBusy() then
+  -- Only while it is ON the network: an upload from an admin's PC uses none.
+  local onNet = race.updateNetworkBusy or race.updateBusy
+  if not data.on and onNet and onNet() then
     MP.SendChatMessage(pid, '[RaceManager] Not while an update is under way: it is '
       .. 'using the network until it is done. Stop it on the Updates row first.')
     return pushAdmins()
@@ -7955,6 +7967,16 @@ end
         if race.updateBusy and race.updateBusy() then return 'an update is under way' end
         return nil
       end,
+      -- A switch with no restart: what belonged to the old map goes, as a
+      -- restart would have dropped it. The track (gates, grid, joker, pit), the
+      -- start slots and the derby arena.
+      mapChanged = function (why)
+        clearTrackState(why)
+        race.startSlots, race.startPositions = 0, {}
+        race.pointToPoint, race.dragStrip = false, false
+        if derbyMod and derbyMod.clearArena then derbyMod.clearArena(why) end
+        broadcastState()
+      end,
     })
     race.mapsWarm = mod.warm
     race.mapLabel = mod.labelFor
@@ -7974,6 +7996,11 @@ end
       canNudge        = function () return mod.canNudge() end,
       nudgeConfig     = function () return mod.nudgeConfig() end,
       canStop         = function () return mod.sys.exit ~= nil end,
+      -- A game panel (its crash restart has a 60 s throttle), the wait it
+      -- needs, and how long the last self-stop was down.
+      hosting         = function () return mod.hosting() end,
+      holdSeconds     = function (method) return mod.restartHold(method) end,
+      lastRestart     = function () return mod.hostRestart end,
     }
   else
     print('[RaceManager] maps.lua did not load, so map switching is off: ' .. tostring(mod))
@@ -8013,6 +8040,7 @@ end)()
   race.updateWarm     = mod.warm
   race.updateOnLogin  = mod.onLogin
   race.updateBusy     = mod.underWay
+  race.updateNetworkBusy = mod.usingNetwork
 end)()
 
 -- ===========================================================================
@@ -8079,6 +8107,31 @@ end)()
     if not done then print('[RaceManager] Discord post failed: ' .. tostring(res)) end
     return done and res == true
   end
+end)()
+
+-- ===========================================================================
+-- TEAMS AND CAR NUMBERS: its own module, installed the way the others are.
+-- Each driver row carries its team id and number; the list rides RM_Update on
+-- targeted sends and the broadcast after a change (teams.lua).
+-- ===========================================================================
+;(function ()
+  local ok, mod = pcall(require, 'teams')
+  if not (ok and type(mod) == 'table') then
+    print('[RaceManager] teams.lua did not load, so teams and car numbers are off: ' .. tostring(mod))
+    return
+  end
+  mod.init({
+    DATA_DIR = DATA_DIR, requireAuth = requireAuth,
+    jsonParse = jsonParse, jsonStringify = jsonStringify, writeFile = writeLayoutFile,
+    broadcast = function () broadcastState() end,
+    pushAdmins = function ()
+      for pid in pairs(authenticatedPlayers) do broadcastState(pid) end
+    end,
+  })
+  race.teamOf       = mod.lookup
+  race.teamsWire    = mod.wire
+  race.teamsEntries = mod.entries
+  race.teamsWarm    = mod.warm
 end)()
 
 -- ===========================================================================
@@ -10023,6 +10076,21 @@ function RM_onPlayerDisconnect(pid)
 end
 
 function onInit()
+  -- HOT RELOAD. BeamMP runs onInit again whenever a plugin file changes on a
+  -- running server (an upload through a hosting panel's file manager does it),
+  -- in the SAME Lua state: modules already required, and the client mod players
+  -- download, stay as they were until the server restarts. Say so.
+  local initBuild = rawget(_G, 'RM_initBuild')
+  if initBuild ~= nil then
+    if initBuild ~= RM_BUILD then
+      print('[RaceManager] Plugin files changed while the server runs (' .. tostring(initBuild)
+        .. ' -> ' .. RM_BUILD .. '): restart the server to finish the update. Players '
+        .. 'still get the client mod the server started with.')
+    else
+      print('[RaceManager] Plugin files reloaded while the server runs')
+    end
+  end
+  rawset(_G, 'RM_initBuild', RM_BUILD)
   -- An install from before the rename first (its Data folder comes across),
   -- then the data folder: the settings are in it.
   race.adoptOldInstall()
@@ -10186,6 +10254,8 @@ function onInit()
   MP.RegisterEvent('RM_UpdateCheck',      'RM_onUpdateCheck')
   MP.RegisterEvent('RM_UpdateStart',      'RM_onUpdateStart')
   MP.RegisterEvent('RM_UpdateCancel',     'RM_onUpdateCancel')
+  -- A release zip sent from an admin's PC, in pieces (no network involved).
+  MP.RegisterEvent('RM_UpdateUpload',     'RM_onUpdateUpload')
   MP.RegisterEvent('RM_UpdateTick',       'RM_UpdateTick')
   MP.RegisterEvent('onPlayerAuth',        'RM_Update_onPlayerAuth')
   -- Lap records (isolated module; see records.lua). Request is open to anyone.
@@ -10197,6 +10267,8 @@ function onInit()
   MP.RegisterEvent('RM_DiscordTest',      'RM_onDiscordTest')
   MP.RegisterEvent('RM_DiscordRetry',     'RM_onDiscordRetry')
   MP.RegisterEvent('RM_DiscordTick',      'RM_DiscordTick')
+  -- Teams and car numbers (teams.lua).
+  MP.RegisterEvent('RM_TeamsSet',         'RM_onTeamsSet')
   -- Cup / series points (see the CUP section).
   MP.RegisterEvent('RM_CupSetEnabled',    'RM_onCupSetEnabled')
   MP.RegisterEvent('RM_CupStart',         'RM_onCupStart')
@@ -10216,6 +10288,9 @@ function onInit()
   MP.RegisterEvent('onPlayerDisconnect',  'RM_onPlayerDisconnect')
   MP.RegisterEvent('RM_Tick',             'RM_Tick')
   MP.RegisterEvent('RM_CountdownTick',    'RM_CountdownTick')
+  -- Cancelled first: a hot reload runs onInit again and BeamMP does not
+  -- de-duplicate timers, so a second RM_Tick ran the race clock at double speed.
+  if MP.CancelEventTimer then MP.CancelEventTimer('RM_Tick') end
   MP.CreateEventTimer('RM_Tick', CFG.tickMs)
   -- Boot clean: a client connected across a reload drops its stale gates.
   clearTrackState('server startup')
@@ -10228,6 +10303,7 @@ function onInit()
   if race.mapsWarm then race.mapsWarm() end  -- and whether a map switch took
   if race.updateWarm then race.updateWarm() end  -- an update too, then ask GitHub
   if race.discordWarm then race.discordWarm() end  -- and whether results go to Discord
+  if race.teamsWarm then race.teamsWarm() end      -- and the league's teams and numbers
   print('[RaceManager] Server plugin loaded (build ' .. RM_BUILD
     .. ', circuit edition, map: ' .. getCurrentMap() .. ')')
 end

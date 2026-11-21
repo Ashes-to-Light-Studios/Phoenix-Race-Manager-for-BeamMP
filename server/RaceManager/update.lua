@@ -8,6 +8,11 @@
 -- Update and restart, which downloads the release zip, checks it, swaps the
 -- files in and restarts the server through maps.lua, the way a map switch does.
 --
+-- INSTALL FROM AN ADMIN'S PC: the same check, swap and restart, with the
+-- release zip sent from the admin's game over BeamMP's own connection
+-- (RM_UpdateUpload, in pieces) instead of downloaded. The server never goes
+-- online for it, so it works on a rented host with online features off.
+--
 -- NOTHING GLOBAL AT FILE SCOPE: BeamMP runs this file a second time on its own
 -- (see maps.lua), so the handlers are installed by init().
 --
@@ -33,6 +38,13 @@ M.FETCH_SECONDS = 300      -- and for the zip
 M.RECHECK       = 6 * 3600 -- an admin logging in after this long asks again
 M.MAX_ZIP       = 32 * 1024 * 1024
 M.MAX_NOTES     = 4000
+-- An upload from an admin's PC (see the top). A release is about 1 MB.
+M.UPLOAD_MAX        = 8 * 1024 * 1024  -- bytes
+M.UPLOAD_CHUNK_MAX  = 48 * 1024        -- decoded bytes in one piece
+M.UPLOAD_MAX_CHUNKS = 1024
+M.UPLOAD_IDLE       = 30               -- seconds without a piece: given up
+M.UPLOAD_HOLD       = 600              -- seconds a checked upload waits for Install
+M.UPLOAD_ACK_EVERY  = 4                -- the sender hears back every this many pieces
 
 -- Relative to the server's working directory. `plugin` is this file's own
 -- folder, the one BeamMP loaded. Tests point all of them at a scratch folder.
@@ -47,8 +59,12 @@ M.paths = {
 -- Process calls, as a table so the tests can stand in for them.
 M.sys = { popen = io.popen, execute = os.execute }
 
--- idle | downloading | verifying | countdown | kicking | applying | restarting
+-- idle | downloading | receiving | verifying | ready | countdown | kicking |
+-- applying | restarting. receiving and ready are an upload's.
 M.state = { phase = 'idle' }
+-- The latest upload, as the sender and the panel see it: { id, name, size,
+-- total, got, state, error, version, sha256 }. Never the bytes.
+M.upload = nil
 M.lastError = nil   -- why the last attempt stopped
 M.last = nil        -- the previous update, read back after its restart
 -- What GitHub said: { at, latest, error }. `latest` is a checked release.
@@ -289,6 +305,33 @@ function M.sha256(msg)
 end
 
 local CRC
+-- Base64 (RFC 4648), strictly: a length that is not a multiple of four, a
+-- character outside the alphabet or padding anywhere but the end is nil.
+local B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+local B64V = {}
+for i = 1, 64 do B64V[B64:byte(i)] = i - 1 end
+function M.b64decode(text)
+  if type(text) ~= 'string' or #text % 4 ~= 0 then return nil end
+  local n = #text
+  if n == 0 then return '' end
+  local pad = text:sub(-2) == '==' and 2 or (text:sub(-1) == '=' and 1 or 0)
+  local out, char = {}, string.char
+  for i = 1, n, 4 do
+    local a, b, c, d = text:byte(i, i + 3)
+    local last = i + 3 == n
+    local va, vb = B64V[a], B64V[b]
+    local vc = (last and pad == 2 and c == 61) and 0 or B64V[c]
+    local vd = (last and pad >= 1 and d == 61) and 0 or B64V[d]
+    if not (va and vb and vc and vd) then return nil end
+    local v = va * 262144 + vb * 4096 + vc * 64 + vd
+    local x, y, z = v // 65536, (v // 256) % 256, v % 256
+    if last and pad == 2 then out[#out + 1] = char(x)
+    elseif last and pad == 1 then out[#out + 1] = char(x, y)
+    else out[#out + 1] = char(x, y, z) end
+  end
+  return table.concat(out)
+end
+
 function M.crc32(s)
   if not CRC then
     CRC = {}
@@ -606,7 +649,13 @@ function M.unpackRelease(data, version)
   local main = files.server['main.lua']
   if not main then return nil, 'the release has no ' .. serverPath .. 'main.lua' end
   local stamp = main:match("\nlocal RM_BUILD = '([^']+)'")
-  if stamp ~= version then
+  if version == nil then
+    -- An upload: the release is what its main.lua says it is.
+    if not M.parseVersion(stamp) then
+      return nil, 'its main.lua has no build stamp, so it is not a Phoenix Race Manager release'
+    end
+    version = stamp
+  elseif stamp ~= version then
     return nil, 'the release says v' .. version .. ' but its main.lua is build '
       .. tostring(M.cleanText(tostring(stamp), 20))
   end
@@ -623,6 +672,7 @@ function M.unpackRelease(data, version)
   for _, must in ipairs(CLIENT_MUST) do
     if not have[must] then return nil, clientPath .. ' has no ' .. must end
   end
+  files.version = version
   return files
 end
 
@@ -824,6 +874,16 @@ function M.snapshot(pid)
     busy       = busy,
     -- The admin tier's alone, like the other commands with no undo.
     canUpdate  = host.isFull(pid) == true,
+    -- An upload from an admin's PC: its progress, and once checked what it is.
+    upload     = M.upload,
+    source     = s.target and s.target.source or nil,
+    sha256     = s.target and s.target.sha256 or nil,
+    targetSize = s.target and s.target.size or nil,
+    targetNewer = s.target and s.target.version and M.newer(s.target.version, host.RM_BUILD) or nil,
+    -- A game panel restarts the server (its crash restart), and how the last
+    -- self-stop went (maps.lua).
+    panel      = (host.restart and host.restart.hosting and host.restart.hosting().panel) or nil,
+    hostRestart = host.restart and host.restart.lastRestart and host.restart.lastRestart() or nil,
   }
 end
 
@@ -936,9 +996,51 @@ end
 local function kickEveryone()
   local reason = 'Race Manager: the server is restarting to update Phoenix Race Manager. '
     .. 'Rejoin in about a minute.'
+  if M.state.method == 'exit' and host.restart and host.restart.hosting
+      and host.restart.hosting().container then
+    reason = reason .. ' If it stays down, start it from your hosting panel.'
+  end
   for pid in pairs(MP.GetPlayers() or {}) do
     if MP.DropPlayer then pcall(MP.DropPlayer, pid, reason) end
   end
+end
+
+-- The countdown, for a download and an upload alike. On a game panel a server
+-- that stops again within a minute of starting is not restarted: wait it out.
+local function startCountdown(s)
+  local hold = host.restart and host.restart.holdSeconds and host.restart.holdSeconds(s.method) or 0
+  local left = math.max(M.COUNTDOWN, hold)
+  if hold > M.COUNTDOWN then
+    s.note = (s.note and (s.note .. ' ') or '') .. 'Waiting until the server has run long '
+      .. 'enough: a game panel does not restart a server that stopped again so soon.'
+  end
+  s.phase, s.left = 'countdown', left
+  MP.SendChatMessage(-1, string.format('[RaceManager] Updating Phoenix Race Manager to v%s (%s). '
+    .. 'Everyone is disconnected in %d seconds and the server restarts.', s.target.version, s.by, left))
+  host.notifyField('session', 'Server update',
+    'The server restarts in ' .. left .. ' seconds to update Phoenix Race Manager. '
+      .. 'Rejoin in about a minute.')
+  timerOn()
+  push()
+end
+
+-- How the server will restart, decided before anything is touched: a server
+-- that cannot restart itself would be left running the old plugin beside the
+-- new files. WATCH when the config can be respelt: the Management Tool then
+-- restarts the server itself and still shows it running. One it did not
+-- start, it shows as stopped.
+local function planRestart()
+  local restart = host.restart
+  if not restart then return nil, 'maps.lua did not load, so the server cannot restart itself.' end
+  local info = restart.probe()
+  local nudge = restart.canNudge ~= nil and restart.canNudge() == true
+  local method, grace, note = restart.resolve(info, not nudge)
+  if method ~= 'relaunch' and method ~= 'exit' and method ~= 'watch' then
+    return nil, cfg('mapRestart', 'auto') == 'manual'
+      and 'Restarts are set to manual (mapRestart in config.json).'
+      or (note or 'This server cannot restart itself.')
+  end
+  return { probe = info, method = method, grace = grace, note = note }
 end
 
 local function fetched(path, err)
@@ -970,20 +1072,17 @@ local function fetched(path, err)
   print(string.format('[RaceManager] Update v%s downloaded and checked in %.1fs: '
     .. 'the client zip and %d plugin files', rel.version, os.clock() - clock, n))
   s.files = files
-  s.phase, s.left = 'countdown', M.COUNTDOWN
-  MP.SendChatMessage(-1, string.format('[RaceManager] Updating Phoenix Race Manager to v%s (%s). '
-    .. 'Everyone is disconnected in %d seconds and the server restarts.', rel.version, s.by, M.COUNTDOWN))
-  host.notifyField('session', 'Server update',
-    'The server restarts in ' .. M.COUNTDOWN .. ' seconds to update Phoenix Race Manager. '
-      .. 'Rejoin in about a minute.')
-  timerOn()
-  push()
+  startCountdown(s)
 end
+
+local install   -- an upload's Install, below
 
 function M.start(pid, raw)
   if not host.requireFull(pid) then return end
-  if not M.online() then return tell(pid, M.OFF .. '. Update by hand: see the Updates row.') end
   local ok, data = pcall(host.jsonParse, raw or '')
+  -- An upload needs no network, so online features have no say in it.
+  if ok and type(data) == 'table' and data.upload == true then return install(pid, data) end
+  if not M.online() then return tell(pid, M.OFF .. '. Update by hand: see the Updates row.') end
   local want = ok and type(data) == 'table' and data.version or nil
   local rel = M.release.latest
   if M.state.phase ~= 'idle' then return tell(pid, 'An update is already under way.') end
@@ -996,25 +1095,10 @@ function M.start(pid, raw)
   local busy = host.busy()
   if busy then return tell(pid, 'Not while ' .. busy .. ': end it first.') end
   if M.job then return tell(pid, 'Still waiting on GitHub. Try again in a moment.') end
-  local restart = host.restart
-  if not restart then
-    return tell(pid, 'maps.lua did not load, so the server cannot restart itself. Install v'
-      .. rel.version .. ' by hand: ' .. rel.url)
-  end
-  -- Decided before anything is downloaded: a server that cannot restart itself
-  -- would be left running the old plugin beside the new files.
-  -- WATCH when the config can be respelt: the Management Tool then restarts
-  -- the server itself and still shows it running. One it did not start, it
-  -- shows as stopped.
-  local info = restart.probe()
-  local nudge = restart.canNudge ~= nil and restart.canNudge() == true
-  local method, grace, note = restart.resolve(info, not nudge)
-  if method ~= 'relaunch' and method ~= 'exit' and method ~= 'watch' then
-    local why = cfg('mapRestart', 'auto') == 'manual'
-      and 'Restarts are set to manual (mapRestart in config.json).'
-      or (note or 'This server cannot restart itself.')
-    return tell(pid, why .. ' Install v' .. rel.version .. ' by hand: ' .. rel.url)
-  end
+  -- Decided before anything is downloaded (planRestart).
+  local plan, why = planRestart()
+  if not plan then return tell(pid, why .. ' Install v' .. rel.version .. ' by hand: ' .. rel.url) end
+  local info, method, grace, note = plan.probe, plan.method, plan.grace, plan.note
   local by = MP.GetPlayerName(pid) or ('player ' .. pid)
   M.lastError = nil
   M.state = { phase = 'downloading', target = rel, by = by, probe = info, method = method,
@@ -1034,6 +1118,14 @@ end
 function M.cancel(pid)
   if not host.requireAuth(pid) then return end
   local s = M.state
+  if s.phase == 'receiving' or s.phase == 'ready' then
+    print('[RaceManager] Upload ' .. (s.target and ('of v' .. s.target.version .. ' ') or '')
+      .. 'discarded by ' .. tostring(MP.GetPlayerName(pid) or pid))
+    if M.upload then M.upload.state = 'cancelled' end
+    M.lastError = nil
+    reset()
+    return push()
+  end
   if s.phase ~= 'downloading' and s.phase ~= 'verifying' and s.phase ~= 'countdown' then
     return push()
   end
@@ -1046,6 +1138,145 @@ function M.cancel(pid)
     host.notifyField('session', 'Server update cancelled', 'The server keeps running')
   end
   push()
+end
+
+-- ---------------------------------------------------------------------------
+-- Install from an admin's PC
+-- ---------------------------------------------------------------------------
+-- The admin's game reads the release zip from its own folder and sends it in
+-- numbered pieces of base64 (RM_UpdateUpload). TCP keeps them in order; the
+-- sender hears back on its own RM_Update (snapshot.upload) every few pieces,
+-- so it stops at once on a refusal. Held in memory until checked: nothing is
+-- written until the admin presses Install, and then only by apply().
+local function uploadFail(msg)
+  print('[RaceManager] Upload stopped: ' .. msg)
+  if M.upload then M.upload.state, M.upload.error = 'failed', msg end
+  M.lastError = msg
+  reset()
+  push()
+end
+
+local function verifyUpload()
+  local s = M.state
+  local data = table.concat(s.parts)
+  s.parts = nil
+  s.phase = 'verifying'
+  M.upload.state = 'verifying'
+  push()
+  local clock = os.clock()
+  local sha = M.sha256(data)
+  local files, why = M.unpackRelease(data)
+  if not files then
+    why = why:gsub('^the download', 'the file')
+    return uploadFail((why:gsub('^%l', string.upper)) .. '. Nothing was changed.')
+  end
+  local named = s.name:match('[vV](%d+%.%d+%.%d+)')
+  if named and named ~= files.version then
+    return uploadFail('The file is named v' .. named .. ' but holds build ' .. files.version
+      .. '. Nothing was changed.')
+  end
+  M.state = { phase = 'ready', left = M.UPLOAD_HOLD, by = s.by, files = files,
+    target = { version = files.version, source = 'upload', name = s.name, size = #data,
+      sha256 = sha } }
+  M.upload.state, M.upload.version, M.upload.sha256 = 'ready', files.version, sha
+  print(string.format('[RaceManager] Upload of v%s from %s checked in %.1fs: SHA-256 %s. '
+    .. 'Waiting for Install on the Admin tab.', files.version, tostring(s.by), os.clock() - clock, sha))
+  push()
+end
+
+function M.uploadChunk(pid, raw)
+  local ok, d = pcall(Util.JsonDecode, raw or '')
+  if not ok or type(d) ~= 'table' then return end
+  local seq = tonumber(d.seq)
+  if not seq or (type(d.id) ~= 'string' and type(d.id) ~= 'number') then return end
+  local id = tostring(d.id):sub(1, 40)
+  local s = M.state
+  if seq == 1 then
+    if not host.requireFull(pid) then return end
+    local size, total = tonumber(d.size), tonumber(d.total)
+    local name = M.cleanText(d.name, 80) or 'upload.zip'
+    local function refuse(msg)
+      M.upload = { id = id, name = name, size = size or 0, total = total or 0, got = 0,
+        state = 'refused', error = msg }
+      print('[RaceManager] Upload refused: ' .. msg)
+      M.lastError = msg
+      return push()
+    end
+    if s.phase ~= 'idle' then return refuse('An update is already under way.') end
+    if M.job then return refuse('Still waiting on GitHub. Try again in a moment.') end
+    local busy = host.busy()
+    if busy then return refuse('Not while ' .. busy .. ': end it first.') end
+    if not (size and size == math.floor(size) and size >= 1 and size <= M.UPLOAD_MAX) then
+      return refuse('The file is ' .. tostring(size) .. ' bytes: a release is at most '
+        .. (M.UPLOAD_MAX // (1024 * 1024)) .. ' MB.')
+    end
+    if not (total and total == math.floor(total) and total >= 1 and total <= M.UPLOAD_MAX_CHUNKS) then
+      return refuse('The file was announced in ' .. tostring(total) .. ' pieces.')
+    end
+    local by = MP.GetPlayerName(pid) or ('player ' .. pid)
+    M.lastError = nil
+    M.state = { phase = 'receiving', quiet = 0, pid = pid, id = id, parts = {}, bytes = 0,
+      size = size, total = total, name = name, by = by }
+    M.upload = { id = id, name = name, size = size, total = total, got = 0, state = 'receiving' }
+    print(string.format('[RaceManager] Receiving %s (%d bytes, %d pieces) from %s',
+      name, size, total, by))
+    timerOn()
+    s = M.state
+  else
+    -- Anyone else's pieces, or one for an upload that is over, are not ours.
+    if s.phase ~= 'receiving' or s.id ~= id or s.pid ~= pid then return end
+    if not host.isFull(pid) then return uploadFail('The admin sending it is not logged in any more.') end
+  end
+  if seq ~= #s.parts + 1 then return uploadFail('A piece arrived out of order. Nothing was changed.') end
+  if seq > s.total then return uploadFail('More pieces arrived than were announced. Nothing was changed.') end
+  local bytes = M.b64decode(d.data)
+  if not bytes or #bytes == 0 or #bytes > M.UPLOAD_CHUNK_MAX then
+    return uploadFail('A piece did not arrive whole. Nothing was changed.')
+  end
+  s.bytes = s.bytes + #bytes
+  if s.bytes > s.size then return uploadFail('More bytes arrived than were announced. Nothing was changed.') end
+  s.parts[seq] = bytes
+  s.quiet = 0
+  M.upload.got = seq
+  if seq == s.total then
+    if s.bytes ~= s.size then
+      return uploadFail('The file arrived short: ' .. s.bytes .. ' of ' .. s.size .. ' bytes. Nothing was changed.')
+    end
+    return verifyUpload()
+  end
+  if seq == 1 or seq % M.UPLOAD_ACK_EVERY == 0 then push() end
+end
+
+-- Install and restart, for a checked upload. The same countdown, kick, swap
+-- and restart as a download from here on.
+install = function (pid, d)
+  local s = M.state
+  if s.phase ~= 'ready' then
+    return tell(pid, 'There is no checked upload to install. Send the release zip from your PC first.')
+  end
+  local v = s.target.version
+  if d.version ~= v then
+    return tell(pid, 'The upload waiting is v' .. v .. '. Look at it, then press Install again.')
+  end
+  if not M.newer(v, host.RM_BUILD) and d.allowOlder ~= true then
+    return tell(pid, 'v' .. v .. ' is not newer than this server (' .. host.RM_BUILD .. '). '
+      .. 'Press Install anyway to put it in.')
+  end
+  local busy = host.busy()
+  if busy then return tell(pid, 'Not while ' .. busy .. ': end it first.') end
+  local plan, why = planRestart()
+  if not plan then return tell(pid, why .. ' Install v' .. v .. ' by hand.') end
+  s.by = MP.GetPlayerName(pid) or ('player ' .. pid)
+  s.probe, s.method, s.grace, s.note = plan.probe, plan.method, plan.grace, plan.note
+  M.lastError = nil
+  print(string.format('[RaceManager] Update to v%s from an upload started by %s (%s)', v, s.by, s.method))
+  startCountdown(s)
+end
+
+-- Is the updater on the network right now (a check or a download)? Turning
+-- online features off waits for that, not for an upload.
+function M.usingNetwork()
+  return M.job ~= nil or M.state.phase == 'downloading'
 end
 
 -- Every file the release replaces, backed up first and put back if any write
@@ -1112,8 +1343,10 @@ function M.apply(files, version)
   end
 
   host.makeDirectory(at(workDir()))
+  local target = M.state.target or {}
   writeFile(at(workDir() .. '/last.json'), host.jsonStringify({
     from = host.RM_BUILD, to = version, at = os.time(), by = M.state.by, attic = attic,
+    source = target.source or 'github', sha256 = target.sha256,
   }))
   print('[RaceManager] Update to v' .. version .. ' installed; the old files are in ' .. attic)
   return true
@@ -1170,7 +1403,19 @@ function M.tick()
   -- A download that just finished starts its countdown on the NEXT tick, or
   -- the field gets a second less warning than it was told.
   if s.phase ~= before then return end
-  if s.phase == 'countdown' then
+  if s.phase == 'receiving' then
+    s.quiet = (s.quiet or 0) + 1
+    if s.quiet > M.UPLOAD_IDLE then
+      return uploadFail('The upload stopped arriving. Nothing was changed.')
+    end
+    return
+  elseif s.phase == 'ready' then
+    s.left = s.left - 1
+    if s.left > 0 then return end
+    if M.upload then M.upload.state = 'expired' end
+    return fail('The uploaded v' .. s.target.version .. ' was not installed within '
+      .. (M.UPLOAD_HOLD // 60) .. ' minutes, so it was let go. Nothing was changed.')
+  elseif s.phase == 'countdown' then
     s.left = s.left - 1
     if s.left == 5 then
       host.notifyField('session', 'Server update', 'Everyone is disconnected in 5 seconds')
@@ -1242,6 +1487,7 @@ function M.warm()
     M.last = {
       ok = rec.ok == true, from = M.cleanText(rec.from, 20), to = M.cleanText(rec.to, 20),
       at = tonumber(rec.at), by = M.cleanText(rec.by, 40), attic = M.cleanText(rec.attic, 200),
+      source = M.cleanText(rec.source, 20),
     }
   end
   -- A hot reload while the tool is about to restart this server: ask nothing.
@@ -1250,8 +1496,8 @@ function M.warm()
     M.pendingCheck = true
     timerOn()
   elseif not M.online() then
-    print('[RaceManager] ' .. M.OFF .. '. To update, upload the release zip: '
-      .. 'see the Updates row on the Admin tab')
+    print('[RaceManager] ' .. M.OFF .. '. To update, use Install from this PC on the '
+      .. 'Admin tab (Updates), or upload the release zip by hand')
   end
 end
 
@@ -1267,6 +1513,7 @@ function M.init(h)
   end
   function RM_onUpdateStart(pid, raw) M.start(pid, raw) end
   function RM_onUpdateCancel(pid) M.cancel(pid) end
+  function RM_onUpdateUpload(pid, raw) M.uploadChunk(pid, raw) end
   function RM_UpdateTick() M.tick() end
   function RM_Update_onPlayerAuth() return M.onPlayerAuth() end
 end

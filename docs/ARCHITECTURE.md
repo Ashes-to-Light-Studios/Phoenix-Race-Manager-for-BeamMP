@@ -53,38 +53,56 @@ routine housekeeping can destroy is not persistent in any sense that matters.
 
 ## Modules inside the server plugin
 
-Eight parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
-**map switching**, **lap records**, **updates**, **Discord**, the **driver
-roster** and the **cup**. Each has its own state tables, its own `RM_*` event
-namespace and its own broadcast channel, and none of them is reachable from the
-racing state machine except through a handful of named functions declared at
-the top of the file.
+Nine parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
+**map switching**, **lap records**, **updates**, **Discord**, **teams and car
+numbers**, the **driver roster** and the **cup**. Each has its own state tables,
+its own `RM_*` event namespace and its own broadcast channel (teams excepted: see
+below), and none of them is reachable from the racing state machine except
+through a handful of named functions declared at the top of the file.
 
-The first six are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
-`records.lua`, `update.lua`, `discord.lua`) required as siblings; the other two
-are `do ... end` blocks inside `main.lua`.
+The first seven are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
+`records.lua`, `update.lua`, `discord.lua`, `teams.lua`) required as siblings;
+the other two are `do ... end` blocks inside `main.lua`.
 Same isolation either way, reached two different ways for the same reason:
 Lua's 200-local ceiling.
 
 **BeamMP runs every `.lua` in the plugin folder on its own**, alphabetically,
 before `main.lua` requires any of them. `derby.lua` and `drag.lua` sort before
 `main.lua`, so the copy `main.lua` initialises is the one whose global handlers
-win. `maps.lua`, `records.lua` and `update.lua` sort after, so they define
-nothing global at file scope: their `RM_Map*`, `RM_Records*` and `RM_Update*`
-handlers are installed by `init()`, and each one's test checks that loading the
+win. `maps.lua`, `records.lua`, `teams.lua` and `update.lua` sort after, so they
+define nothing global at file scope: their `RM_Map*`, `RM_Records*`,
+`RM_TeamsSet` and `RM_Update*` handlers are installed by `init()`, and each one's test checks that loading the
 file alone defines nothing. A new module must do the same
 unless its name sorts before `main`.
 
-**Map switching restarts the server**, because BeamMP reads its map and hashes
-`Resources/Client` only at startup. The module moves map zips between
-`custom_maps/` and `Resources/Client/` (the BeamMP Server Management Tool's
-layout), rewrites only the `Map` value in `ServerConfig.toml`, and restarts by
-whichever means is available: the Management Tool's config watch, a detached
-helper that waits for this process to exit and starts it again, or `exit()` for
-a service manager. See [Switching maps](REFERENCE.md#switching-maps).
+**Map switching is instant when the map is already loaded, and a restart
+otherwise.** BeamMP hands each joiner the map in its settings, and `MP.Set`
+changes that in the running server (`MP.Get` reads it back, 3.6+); but it lists
+and hashes `Resources/Client` only at startup. So `maps.lua` keeps what the
+process started with (`boot()`: the map and the zips in `Resources/Client`,
+taken once and kept on the module across hot reloads). A stock level or one of
+those zips is `MP.Set`, verified, then a kick, with `host.mapChanged` clearing
+the old map's track and arena. Anything else moves zips between `custom_maps/`
+and `Resources/Client/` (the Management Tool's layout), rewrites only the `Map`
+value in `ServerConfig.toml`, and restarts by whichever means is available: the
+Management Tool's config watch, a detached helper that waits for this process to
+exit and starts it again, or `exit()` for a service manager or a game panel's
+crash restart. A game panel rewrites `Map` at every start, so a map chosen in
+game is pinned (`Data/mapPin.json`, against the map the process started on) and
+set again at the next start only if the panel put that one back. See [Switching
+maps](REFERENCE.md#switching-maps).
 
-**Updates restart the server the same way**, through `maps.lua`'s helper and
-`exit()`, never its config watch. Three choices in `update.lua` are load-bearing:
+**Hot reload runs onInit again in the same Lua state**, whenever a plugin file
+changes on a running server: required modules stay cached, and BeamMP does not
+de-duplicate timers. Every timer is cancelled before it is created, or guarded
+by its module's `ticking` flag.
+
+**Updates restart the server the same way**, through `maps.lua`'s helper, its
+`exit()` or the Management Tool's config watch. The release comes from GitHub, or
+from an admin's PC: `upload.lua` on the client sends it in numbered base64
+pieces on `RM_UpdateUpload`, paced and windowed against the server's count on
+`prmUpdate`, and it joins the same check and swap held in memory until Install.
+Three choices in `update.lua` are load-bearing:
 
 - **Downloads run in a process of their own** (curl, or wget on Linux) that
   leaves a `.done` file holding its exit code, polled once a second, so the Lua
@@ -147,6 +165,28 @@ frame while it is off. Four rules hold it together:
   copy closes before binding, `onExtensionUnloaded` closes it, and BeamMP
   unloads the mod on leaving a server. `reuseaddr` is never set on Windows,
   where it lets two programs share a port.
+
+**Teams ride the race, they do not have a channel.** A driver row carries
+`team` and `number` (both nil when unset, so a league with no teams sends no
+extra bytes); `teams.lua` stamps them through `race.teamOf`, memoized on the
+record by the list's revision, the alias and the name, so a settled broadcast
+allocates nothing and a rename is seen at once. The team LIST rides `RM_Update`
+too, on every targeted send and on the one broadcast after a change (a dirty
+flag), never on the 3 Hz ticks; an admin's targeted send also carries every
+entry. No new server-to-client event, for the bind-once reason.
+
+**The overlay's look is the one thing the feed writes.** It is the streamer's,
+kept in their user folder (`feedstyle.lua`: one spec drives the checks, the
+defaults and the key order), so it needs no server either. A write takes the
+style key (made at start, kept in `feed.json`, carried to the browser in the
+link's fragment), a matching `Origin` when a browser sends one, one writer at a
+time, a `Content-Length` under a cap, and a body read across polls with a
+stall timeout; ten wrong keys shut writes for a minute. The OPTIONS answer still
+allows GET only, so another site's page cannot even ask. A change goes out as
+`event: style` in each reader's own slot (`styleNext`), drained before state
+frames, so a busy race never overwrites it; a reader that polls sees `styleSeq`
+move. The overlay page and the style page each check every value again, and
+draw text with `textContent` only.
 
 **Lap records are a consumer of results, like the cup.** `finishSession` calls
 them once per session through `race.recordsSession`, after the joker ruling.
