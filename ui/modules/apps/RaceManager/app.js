@@ -65,7 +65,8 @@ angular.module('beamng.apps')
         cpSkipWarnings: 1,
         cpSkipPenaltySec: 5,
         cpSkipLiftSec: 3,
-        cpSkipLiftWindow: 30
+        cpSkipLiftWindow: 30,
+        cpSkipPitLaps: 3        // laps to serve penalty seconds in, when required
       };
 
       // ----------------------------------------------------------------
@@ -96,6 +97,12 @@ angular.module('beamng.apps')
       $scope.cpSkipPenaltySec = 5;
       $scope.cpSkipLiftSec = 3;
       $scope.cpSkipLiftWindow = 30;
+      // Serving penalty seconds in a pit stall: as set, in force, and the
+      // loaded layout's stalls (Required needs some).
+      $scope.cpSkipPitServe = 'off';
+      $scope.cpSkipPitMode = 'off';
+      $scope.cpSkipPitLaps = 3;
+      $scope.cpSkipPitStalls = 0;
       $scope.myCpSkip = null;
       // What a legal reset does: repair in place, or respawn at the last
       // checkpoint the driver crossed. Mirrored from the server.
@@ -1534,7 +1541,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.28.2';
+      var APP_BUILD = '0.28.3';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -1884,7 +1891,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
                       port: 8128, lan: false, error: null, clients: 0, streams: 0,
                       lanIp: null, urls: {} };
       $scope.feedUi = { port: '8128', portEditing: false, lanConfirm: false,
-                        showKey: false, newKeyConfirm: false, copied: false };
+                        showKey: false, newKeyConfirm: false, copied: false, copiedWhat: null,
+                        controlConfirm: false, showControl: false, newControlKeyConfirm: false };
       // Built when the status arrives, not per digest: ng-repeat over a fresh
       // array of fresh objects never settles.
       $scope.feedLinks = [];
@@ -1957,8 +1965,11 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.$on('RaceManagerFeedCopy', function (event, data) {
         $scope.$evalAsync(function () {
           var ok = !!(data && data.copied);
+          var what = data && data.what === 'control' ? 'control' : 'style';
           $scope.feedUi.copied = ok;
-          if (!ok) { $scope.feedUi.showKey = true; }
+          $scope.feedUi.copiedWhat = what;
+          if (!ok && what === 'control') { $scope.feedUi.showControl = true; }
+          else if (!ok) { $scope.feedUi.showKey = true; }
           if (feedCopyTimer) { clearTimeout(feedCopyTimer); feedCopyTimer = null; }
           if (ok) {
             feedCopyTimer = setTimeout(function () {
@@ -1975,6 +1986,27 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.feedNewKey = function () {
         $scope.feedUi.newKeyConfirm = false;
         bngApi.engineLua('raceManager.feedNewKey()');
+      };
+      // RACE CONTROL (admins): the race-night buttons on a page of their own,
+      // with its own key. Copied, not opened, for the same reason as the style
+      // editor; the network link is for a phone or a second PC.
+      $scope.feedControlAsk = function () { $scope.feedUi.controlConfirm = true; };
+      $scope.feedControlCancel = function () { $scope.feedUi.controlConfirm = false; };
+      $scope.feedSetControl = function (on) {
+        $scope.feedUi.controlConfirm = false;
+        if (on !== true) { $scope.feedUi.showControl = false; }
+        bngApi.engineLua('raceManager.feedSetControl(' + (on === true) + ')');
+      };
+      $scope.feedCopyControl = function (lan) {
+        $scope.feedUi.copied = false;
+        bngApi.engineLua('raceManager.feedCopyControl(' + (lan === true) + ')');
+      };
+      $scope.feedToggleControlLink = function () { $scope.feedUi.showControl = !$scope.feedUi.showControl; };
+      $scope.feedNewControlKeyAsk = function () { $scope.feedUi.newControlKeyConfirm = true; };
+      $scope.feedNewControlKeyCancel = function () { $scope.feedUi.newControlKeyConfirm = false; };
+      $scope.feedNewControlKey = function () {
+        $scope.feedUi.newControlKeyConfirm = false;
+        bngApi.engineLua('raceManager.feedNewControlKey()');
       };
 
       // ------------------------------------------------------------------
@@ -2336,9 +2368,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           var prevPhase = $scope.phase;
           $scope.phase = data.phase || 'waiting';
           if (prevPhase !== $scope.phase) { menuSessionEdge(); }
-          // Lua keeps no preferences, so it hears the sound setting once a
-          // server is talking to this panel, in case it loaded after the panel.
-          if (!soundSent) { soundSent = true; pushSound(); }
+          // Lua keeps no preferences, so it hears the sound and pillar settings
+          // once a server is talking to this panel, in case it loaded after the panel.
+          if (!soundSent) { soundSent = true; pushSound(); pushPoles(); }
           $scope.flag = (data.flag === 'yellow' || data.flag === 'red') ? data.flag : 'green';
           // Read here, on the broadcast that arrives on a clock (the route push
           // only fires at gates).
@@ -2419,6 +2451,17 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
             if (typeof cs.liftWindow === 'number') {
               if ($scope.cpSkipLiftWindow !== cs.liftWindow) { $scope.settingsUi.cpSkipLiftWindow = cs.liftWindow; }
               $scope.cpSkipLiftWindow = cs.liftWindow;
+            }
+            // Serving in the pits: the rule as set (the buttons), the rule in
+            // force (the label) and the loaded layout's stalls.
+            if (cs.pitServe === 'off' || cs.pitServe === 'optional' || cs.pitServe === 'required') {
+              $scope.cpSkipPitServe = cs.pitServe;
+            }
+            $scope.cpSkipPitMode = (cs.pitMode === 'optional' || cs.pitMode === 'required') ? cs.pitMode : 'off';
+            $scope.cpSkipPitStalls = typeof cs.pitStalls === 'number' ? cs.pitStalls : 0;
+            if (typeof cs.pitLaps === 'number') {
+              if ($scope.cpSkipPitLaps !== cs.pitLaps) { $scope.settingsUi.cpSkipPitLaps = cs.pitLaps; }
+              $scope.cpSkipPitLaps = cs.pitLaps;
             }
           }
           $scope.myCpSkip = data.myCpSkip || null;
@@ -5013,18 +5056,21 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         var n = isInt ? parseInt(box, 10) : parseFloat(box);
         return isNaN(n) ? null : n;
       }
-      function sendCpSkip(enabled, type, fromButton) {
+      function sendCpSkip(enabled, type, fromButton, pitServe) {
         var w = cpSkipNum($scope.settingsUi.cpSkipWarnings, true);
         var s = cpSkipNum($scope.settingsUi.cpSkipPenaltySec, false);
         var l = cpSkipNum($scope.settingsUi.cpSkipLiftSec, false);
         var win = cpSkipNum($scope.settingsUi.cpSkipLiftWindow, true);
-        if (!fromButton && (w === null || s === null || l === null || win === null)) { return; }
+        var pl = cpSkipNum($scope.settingsUi.cpSkipPitLaps, true);
+        if (!fromButton && (w === null || s === null || l === null || win === null || pl === null)) { return; }
         if (w === null) { w = $scope.cpSkipWarnings; }
         if (s === null) { s = $scope.cpSkipPenaltySec; }
         if (l === null) { l = $scope.cpSkipLiftSec; }
         if (win === null) { win = $scope.cpSkipLiftWindow; }
+        if (pl === null) { pl = $scope.cpSkipPitLaps; }
         bngApi.engineLua('raceManager.setCheckpointSkip(' + (enabled ? 'true' : 'false') + ', '
-          + w + ', ' + luaStr(type) + ', ' + s + ', ' + l + ', ' + win + ')');
+          + w + ', ' + luaStr(type) + ', ' + s + ', ' + l + ', ' + win + ', '
+          + luaStr(pitServe || $scope.cpSkipPitServe) + ', ' + pl + ')');
       }
       $scope.toggleCpSkip = function () {
         sendCpSkip(!$scope.cpSkipEnabled, $scope.cpSkipType, true);
@@ -5033,9 +5079,25 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         if (type !== 'time' && type !== 'lift' && type !== 'liftAndTime') { return; }
         sendCpSkip($scope.cpSkipEnabled, type, true);
       };
+      $scope.setCpSkipPitServe = function (mode) {
+        if (mode !== 'off' && mode !== 'optional' && mode !== 'required') { return; }
+        sendCpSkip($scope.cpSkipEnabled, $scope.cpSkipType, true, mode);
+      };
       $scope.applyCpSkip = function () {
         sendCpSkip($scope.cpSkipEnabled, $scope.cpSkipType, false);
       };
+      // Required with nowhere to stop runs as Optional, and the panel says so.
+      $scope.cpSkipPitNoStalls = function () {
+        return $scope.cpSkipEnabled && $scope.cpSkipPitServe !== 'off' && !$scope.cpSkipPitStalls;
+      };
+      // How the rule line ends while penalty seconds can be served.
+      function cpSkipPitTail() {
+        if ($scope.cpSkipPitMode === 'required') {
+          var n = $scope.cpSkipPitLaps;
+          return '; serve the seconds in the pits within ' + n + ' lap' + (n === 1 ? '' : 's') + ' or DSQ';
+        }
+        return $scope.cpSkipPitMode === 'optional' ? '; the seconds can be served in the pits' : '';
+      }
       $scope.cpSkipHasLift = function () {
         return $scope.cpSkipType === 'lift' || $scope.cpSkipType === 'liftAndTime';
       };
@@ -5053,9 +5115,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         var lift = 'lift ' + Number($scope.cpSkipLiftSec).toFixed(1) + 's';
         var serve = ' (serve within ' + $scope.cpSkipLiftWindow + 's or ' + pen
           + ($scope.cpSkipType === 'liftAndTime' ? ' more)' : ')');
-        if ($scope.cpSkipType === 'lift') { return head + lift + serve; }
-        if ($scope.cpSkipType === 'liftAndTime') { return head + pen + ' and ' + lift + serve; }
-        return head + pen + ' per skipped checkpoint';
+        var tail = cpSkipPitTail();
+        if ($scope.cpSkipType === 'lift') { return head + lift + serve + tail; }
+        if ($scope.cpSkipType === 'liftAndTime') { return head + pen + ' and ' + lift + serve + tail; }
+        return head + pen + ' per skipped checkpoint' + tail;
       };
       // The board's badges. nil on the wire is 0.
       $scope.penaltyLabel = function (row) {
@@ -5073,7 +5136,15 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         if (!m) { return ''; }
         var parts = [];
         if ($scope.cpSkipWarnings > 0 && m.warn > 0) { parts.push('W ' + m.warn + '/' + $scope.cpSkipWarnings); }
-        if (m.pen > 0) { parts.push('+' + Number(m.pen).toFixed(1) + 's'); }
+        if (m.missed) {
+          parts.push('PIT NOT SERVED: DSQ');
+        } else if (m.pen > 0) {
+          // Where the seconds can still go: a stop, by a lap, or the race time.
+          var pen = '+' + Number(m.pen).toFixed(1) + 's';
+          if (m.pitMode === 'required' && typeof m.serveBy === 'number') { pen += ' PIT BY LAP ' + m.serveBy; }
+          else if (m.pitMode === 'optional') { pen += ' (PIT TO CLEAR)'; }
+          parts.push(pen);
+        }
         if (m.lift > 0) {
           var s = 'LIFT' + (m.lift > 1 ? ' x' + m.lift : '');
           if (typeof m.liftLeft === 'number') { s += ' ' + m.liftLeft.toFixed(1) + 's'; }
@@ -6113,6 +6184,20 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         pushSound();
       };
       pushSound();
+
+      // CHECKPOINT PILLARS, this player's own: off hides the armed and next
+      // gate's poles, never the joker, pit lane or markers. Remembered here.
+      $scope.polesOn = loadPref('poles', true) !== false;
+      function pushPoles() {
+        bngApi.engineLua('if raceManager and raceManager.setShowPoles then '
+          + 'raceManager.setShowPoles(' + ($scope.polesOn ? 'true' : 'false') + ') end');
+      }
+      $scope.togglePoles = function () {
+        $scope.polesOn = !$scope.polesOn;
+        savePref('poles', $scope.polesOn);
+        pushPoles();
+      };
+      pushPoles();
 
       // ------------------------------------------------------------------
       // Collapsing the HUD

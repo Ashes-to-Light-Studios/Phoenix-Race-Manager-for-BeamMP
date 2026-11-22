@@ -635,7 +635,7 @@
       <span class="rm-layouts-hint">The overlay's look:</span>
       <button class="rm-btn rm-btn-mini rm-btn-start" ng-click="feedOpenStyle()"
               title="Copies the editor's link to paste into your browser. Keep it off stream.">Copy editor link</button>
-      <span class="rm-layouts-hint" ng-if="feedUi.copied">Copied: paste it into your browser's address bar.</span>
+      <span class="rm-layouts-hint" ng-if="feedUi.copied && feedUi.copiedWhat !== 'control'">Copied: paste it into your browser's address bar.</span>
       <button class="rm-btn rm-btn-mini" ng-click="feedOpenFolder()"
               title="Where the style and its logos and fonts are kept">Overlay folder</button>
       <button class="rm-btn rm-btn-mini" ng-click="feedToggleKey()">{{ feedUi.showKey ? 'Hide link' : 'Show link' }}</button>
@@ -658,9 +658,57 @@
         and keep it (and this panel) off stream. New key makes it stop working.
       </div>
     </div>
+    <!-- RACE CONTROL (admins): the race-night buttons on a page of their own,
+         for a second screen or a phone while the game spectates. Its own key;
+         off until asked for, because the link can run the race. -->
+    <div class="rm-mapvote-row" ng-if="feed.running && isAdmin">
+      <span class="rm-layouts-hint">Race control page:</span>
+      <button class="rm-btn rm-btn-mini rm-btn-start" ng-if="!feed.control && !feedUi.controlConfirm"
+              ng-click="feedControlAsk()"
+              title="Start, flags, caution and end on a page in your browser or phone">Turn on</button>
+      <span class="rm-confirm rm-maps-rename" ng-if="feedUi.controlConfirm && !feed.control">
+        Anyone with its link can run the race as you while this game is logged in. Turn it on?
+        <button class="rm-btn rm-btn-mini rm-btn-start" ng-click="feedSetControl(true)">Yes, turn on</button>
+        <button class="rm-btn rm-btn-mini" ng-click="feedControlCancel()">Cancel</button>
+      </span>
+      <button class="rm-btn rm-btn-mini rm-btn-start" ng-if="feed.control" ng-click="feedCopyControl(false)"
+              title="For a browser on this PC">Copy link</button>
+      <button class="rm-btn rm-btn-mini" ng-if="feed.control && feed.urls.lanControl" ng-click="feedCopyControl(true)"
+              title="For a phone or another PC on your network">Copy network link</button>
+      <span class="rm-layouts-hint" ng-if="feedUi.copied && feedUi.copiedWhat === 'control'">Copied: paste it into a browser.</span>
+      <button class="rm-btn rm-btn-mini" ng-if="feed.control" ng-click="feedToggleControlLink()">{{ feedUi.showControl ? 'Hide link' : 'Show link' }}</button>
+      <button class="rm-btn rm-btn-mini" ng-if="feed.control && !feedUi.newControlKeyConfirm" ng-click="feedNewControlKeyAsk()"
+              title="Make a new race control key: links you gave out stop working">New key</button>
+      <span class="rm-confirm rm-maps-rename" ng-if="feedUi.newControlKeyConfirm">
+        Race control links already given out stop working. New key?
+        <button class="rm-btn rm-btn-mini rm-btn-start" ng-click="feedNewControlKey()">Yes, new key</button>
+        <button class="rm-btn rm-btn-mini" ng-click="feedNewControlKeyCancel()">Cancel</button>
+      </span>
+      <button class="rm-btn rm-btn-mini" ng-if="feed.control" ng-click="feedSetControl(false)"
+              title="Links stop working until you turn it on again">Turn off</button>
+    </div>
+    <div class="rm-feed-urls" ng-if="feed.running && isAdmin && feed.control && feedUi.showControl">
+      <div class="rm-feed-url" ng-if="feed.urls.control">
+        <span class="rm-feed-url-label">This PC</span>
+        <input type="text" class="rm-login-input rm-feed-url-input" readonly
+               value="{{ feed.urls.control }}" ng-click="feedSelect($event)" title="Click to select, then copy">
+      </div>
+      <div class="rm-feed-url" ng-if="feed.urls.lanControl">
+        <span class="rm-feed-url-label">Network</span>
+        <input type="text" class="rm-login-input rm-feed-url-input" readonly
+               value="{{ feed.urls.lanControl }}" ng-click="feedSelect($event)" title="Click to select, then copy">
+      </div>
+      <div class="rm-maps-error">
+        These links can start, flag and end the race. Keep them off stream. New key makes them stop working.
+      </div>
+    </div>
+    <div class="rm-cup-hint" ng-if="feed.running && isAdmin && feed.control && !feed.lan">
+      For a phone or another PC, allow Other PCs above: the network link appears here.
+    </div>
     <div class="rm-cup-hint">
       Add an overlay link as an OBS Browser Source, or point your own graphics at
       the JSON. It runs while this game is connected to the server.
+      <span ng-if="isAdmin && !feed.running">Turn it on for a race control page on a second screen or a phone.</span>
     </div>
   </div>
 
@@ -1046,6 +1094,8 @@
             ng-click="menuTab('admin')"
             title="Master password, results housekeeping and the session">Admin</button>
     <span class="rm-menu-right">
+      <button class="rm-btn rm-btn-mini" ng-click="togglePoles()"
+              title="{{ polesOn ? 'Checkpoint pillars on. Click to hide them for you.' : 'Checkpoint pillars hidden. Click to show them.' }}"><span class="rm-poles-icon" ng-class="{'rm-poles-off': !polesOn}"></span></button>
       <button class="rm-btn rm-btn-mini" ng-click="toggleSound()"
               title="{{ soundOn ? 'Start sounds on: beeps for the countdown, GET READY and the drag tree, a tone for GO and the green. Click to mute.' : 'Start sounds muted. Click to turn them on.' }}">{{ soundOn ? '&#x1F50A;' : '&#x1F507;' }}</button>
     </span>
@@ -1160,7 +1210,7 @@
          ahead of the one due moves the car on, and the skip costs a warning,
          then the penalty chosen here. A rule like the others: locked once the
          session is under way (the server refuses it too). -->
-    <span class="rm-setting" title="Crossing a checkpoint ahead of the one due (cutting the track) moves the car on past it, and costs a warning, then a penalty.">
+    <span class="rm-setting rm-setting-wrap" title="Crossing a checkpoint ahead of the one due (cutting the track) moves the car on past it, and costs a warning, then a penalty.">
       <label>Checkpoint skips</label>
       <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': cpSkipEnabled}"
               ng-click="toggleCpSkip()"
@@ -1209,9 +1259,35 @@
                ng-change="applyCpSkip()"
                ng-disabled="!canSetRules() || !cpSkipEnabled">
       </span>
+      <!-- Penalty SECONDS served in a pit stall. Off as shipped. -->
+      <span class="rm-setting-sub" title="Whether penalty seconds can be served by stopping in a pit stall, on top of the usual stop.">
+        <label>Serve in pits</label>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipPitServe === 'off'}"
+                ng-click="setCpSkipPitServe('off')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="Penalty seconds go on the race time at the flag.">Off</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipPitServe === 'optional'}"
+                ng-click="setCpSkipPitServe('optional')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="A pit stop holds the car for the seconds owed and clears them. Not served, they go on the race time.">Optional</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipPitServe === 'required'}"
+                ng-click="setCpSkipPitServe('required')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="The seconds must be served in a pit stop within the laps set, or the driver is disqualified at the flag.">Required</button>
+        <span ng-if="cpSkipPitServe === 'required'">
+          <label>within (laps)</label>
+          <input type="number" class="rm-width-num" min="1" max="20" step="1" ng-model="settingsUi.cpSkipPitLaps"
+                 ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+                 ng-change="applyCpSkip()"
+                 ng-disabled="!canSetRules() || !cpSkipEnabled">
+        </span>
+      </span>
       <span class="rm-setting-val">{{ cpSkipLabel() }}</span>
       <span class="rm-setting-warn" ng-if="cpSkipEnabled &amp;&amp; hasBranches">
         Gates crossed against their direction are not checked for skips.
+      </span>
+      <span class="rm-setting-warn" ng-if="cpSkipPitNoStalls()">
+        No saved layout with pit stalls is loaded, so Required runs as Optional. Serving needs a stall to stop in.
       </span>
     </span>
     <!-- Module 5: the pace lap -->
@@ -4706,6 +4782,8 @@
     <button class="rm-driverbar-btn" ng-if="spectatorView() && !hudCollapsed"
             ng-click="toggleBroadcast()"
             title="Switch to the broadcast board: the whole field, the drivers who are out, and click a name to put the camera on them">&#x1F4FA;</button>
+    <button class="rm-driverbar-btn" ng-click="togglePoles()" ng-if="!hudCollapsed"
+            title="{{ polesOn ? 'Checkpoint pillars on. Click to hide them for you.' : 'Checkpoint pillars hidden. Click to show them.' }}"><span class="rm-poles-icon" ng-class="{'rm-poles-off': !polesOn}"></span></button>
     <button class="rm-driverbar-btn" ng-click="toggleSound()" ng-if="!hudCollapsed"
             title="{{ soundOn ? 'Start sounds on. Click to mute.' : 'Start sounds muted. Click to turn them on.' }}">{{ soundOn ? '&#x1F50A;' : '&#x1F507;' }}</button>
     <button class="rm-driverbar-btn" ng-click="openLogin()" ng-if="!hudCollapsed"
@@ -5267,6 +5345,8 @@
               title="Checkpoint-skip penalty: added to the race time in the final classification, not to the order on the road.">{{ penaltyLabel(row) }}</span><span
               class="rm-ucpass rm-cp-lift" ng-if="row.liftOwed"
               title="Owes a lift-off for a skipped checkpoint. Not served in time, or still owed at the flag, it becomes a time penalty.">LIFT</span><span
+              class="rm-ucpass rm-cp-pen" ng-if="row.pitMissed"
+              title="Did not serve the penalty in the pits in time: disqualified at the flag.">PIT &#10005;</span><span
               class="rm-cp-warn" ng-if="cpWarnShown(row)"
               title="Checkpoint-skip warnings used">{{ cpWarnLabel(row) }}</span></td>
           <td class="rm-col-lap" ng-if="!pointToPoint" title="{{ (row.outLap && sessionKind === 'quali') ? 'Out lap: not timed, not counted' : (row.cpCleared ? row.cpCleared + ' checkpoint(s) cleared this lap' : '') }}">{{ lapLabel(row) }}</td>
@@ -5896,6 +5976,9 @@
      the row: the half of a laps/timed choice that is currently in use. Same
      flex rules as the row itself so it lays out as if it were part of it. */
   .rm-setting-sub { display: flex; align-items: center; gap: 5px; }
+  /* A row with more groups than a default-width panel holds (checkpoint skips):
+     the groups wrap instead of running off the right edge. */
+  .rm-setting.rm-setting-wrap { flex-wrap: wrap; row-gap: 4px; }
 
   /* Checkpoint editor */
   .rm-editor {
@@ -7773,6 +7856,38 @@
     cursor: pointer;
   }
   .rm-driverbar-btn:hover { background: rgba(255, 255, 255, 0.15); }
+  /* The pillar switch: two posts on a ground line, drawn in CSS, since no glyph
+     in the game's fonts reads as a gate. Bare white posts read as PAUSE, so
+     they wear the armed gate's green (render.lua palette). Hidden is grey with
+     a slash, like the muted speaker beside it. */
+  .rm-poles-icon {
+    position: relative;
+    display: inline-block;
+    box-sizing: border-box;
+    width: 0.95em;
+    height: 1em;
+    vertical-align: -0.15em;
+    border-left: 0.2em solid #40ff73;
+    border-right: 0.2em solid #40ff73;
+  }
+  .rm-poles-icon::before {
+    content: '';
+    position: absolute;
+    left: -0.4em;
+    right: -0.4em;
+    bottom: -0.1em;
+    border-top: 0.1em solid currentColor;
+  }
+  .rm-poles-icon.rm-poles-off { border-color: currentColor; opacity: 0.6; }
+  .rm-poles-icon.rm-poles-off::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: -0.15em;
+    bottom: -0.15em;
+    border-left: 0.14em solid currentColor;
+    transform: translateX(-50%) rotate(40deg);
+  }
   .rm-bar-font { display: inline-flex; gap: 2px; }
   .rm-bar-font .rm-driverbar-btn[disabled] { opacity: 0.35; cursor: default; }
   /* THE BAR'S TEXT SIZE (A- / A+). Every size inside the driver bar, and in the

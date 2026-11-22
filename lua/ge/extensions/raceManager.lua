@@ -221,7 +221,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.28.2'
+local RM_BUILD = '0.28.3'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -262,6 +262,8 @@ local session = {
   cpSkip = {
     enabled = false, warnings = 1, type = 'time',
     penaltySec = 5, liftSec = 3, liftWindow = 30, maxGates = 2,
+    -- Serving penalty seconds in a stall: the rule in force, and its window.
+    pitMode = 'off', pitLaps = 3,
   },
   -- This lap had a skip on it: RM_Lap says so and the server times nothing.
   lapCut      = false,
@@ -273,7 +275,9 @@ local session = {
   skipQuietUntil  = -1,
   -- Our own row's tallies as last seen (nil reads 0), so a CHANGE is what
   -- raises a notice: warnings spent, penalty seconds, lifts owed.
-  cpRow = { warn = 0, pen = 0, lift = 0, window = nil },
+  -- serveBy and missed: the pit window (the last lap a stop counts on) and a
+  -- window that closed unserved.
+  cpRow = { warn = 0, pen = 0, lift = 0, window = nil, serveBy = nil, missed = false },
   -- THE LIFT-OFF being served (lift.update): the throttle and speed off the
   -- last poll, the countdown, and lifts sent served the row does not show yet.
   lift = {
@@ -380,6 +384,10 @@ local edit = {
   target = 'main',
   -- Draw the gates at all (Hide/Show): this client's view, not the race.
   visualize = true,
+  -- The player's own pillar switch: the armed and next checkpoint's poles only.
+  -- Separate from visualize, so hiding them to race never blanks the editor.
+  -- The app holds the preference; Lua keeps none.
+  poles = true,
   -- Fingerprint of the buffer as the server last handed it over. nil until a
   -- layout is applied, which keeps late joiners and drivers on the plain path.
   stamp   = nil,
@@ -665,6 +673,9 @@ local pit = {
   ghostVeh = nil,
   -- Whether this stop announced the ghost (false if a reset ghost owns it).
   ghostSent = false,
+  -- Penalty seconds this stop is serving on top of the service hold; reported
+  -- only when the stop runs to the end.
+  serving = 0,
 }
 
 -- Local lap tracking (reset on every session change)
@@ -2142,7 +2153,18 @@ function session.cpRow.apply(w, p, l, win)
       end
     end
   end
+  -- Seconds added, while they can be served: say where (the server's words).
+  if msg and dp > 0 then msg = msg .. cr.pitHint() end
   if msg then pushNotice('penalty', msg) end
+end
+
+function session.cpRow.pitHint()
+  local cs = session.cpSkip
+  if cs.pitMode == 'required' then
+    return string.format(' - serve it in the pits within %d lap%s', cs.pitLaps,
+      cs.pitLaps == 1 and '' or 's')
+  end
+  return cs.pitMode == 'optional' and ' - serve it in the pits to clear it' or ''
 end
 
 -- The vehicle VM's answer to the poll: throttle input 0..1, or -1 unknown.
@@ -4148,6 +4170,12 @@ function pit.release(reason)
   pit.active   = false
   pit.left     = 0
   pit.settleLeft = 0
+  -- Served only by a stop held to the end; any other release serves nothing.
+  local served = pit.serving
+  pit.serving = 0
+  if served > 0 and reason == 'complete' and inMultiplayer() and sessionRunning() then
+    TriggerServerEvent('RM_PenaltyServed', jsonEncode({ seconds = served }))
+  end
   pit.cooldown = TUNE.PIT_COOLDOWN
   -- It may not stop in this box again until it has driven out of it.
   pit.mustLeave = true
@@ -4161,6 +4189,16 @@ end
 function pit.live()
   if session.spectatorLock then return false end
   return sessionRunning() or practice.on
+end
+
+-- Penalty seconds a stop starting now serves: our row's, in a race, while the
+-- rule is on and the window has not closed.
+function pit.owed()
+  local cs = session.cpSkip
+  if not cs.enabled or cs.pitMode == 'off' or practice.on then return 0 end
+  if session.sessionKind ~= 'race' or not sessionRunning() then return 0 end
+  if session.cpRow.missed then return 0 end
+  return session.cpRow.pen or 0
 end
 
 -- The pit stop: hold, repair in place, hand back. Never a respawn anchor.
@@ -4191,8 +4229,9 @@ function pit.update(dt)
       end
     end
     if pit.left <= 0 then
+      local served = pit.serving
       pit.release('complete')
-      pushNotice('pit', 'GO!')
+      pushNotice('pit', served > 0 and string.format('PENALTY SERVED (%.1fs) - GO!', served) or 'GO!')
     end
     return
   end
@@ -4261,7 +4300,10 @@ function pit.update(dt)
     return
   end
   pit.active   = true
-  pit.left     = TUNE.PIT_HOLD_SEC
+  -- Penalty seconds go ON TOP of the service hold, so serving costs exactly
+  -- what keeping them would.
+  pit.serving  = pit.owed()
+  pit.left     = TUNE.PIT_HOLD_SEC + pit.serving
   pit.stops    = pit.stops + 1
   pit.promptLeft = 0
   pit.settleLeft = TUNE.PIT_SETTLE_SEC
@@ -4287,12 +4329,15 @@ function pit.update(dt)
   pcall(function () veh:queueLuaCommand('recovery.recoverInPlace()') end)
   setLocalVehicleFrozen(true, 'pit')
   pit.setGhost(true)
-  pushNotice('pit', string.format('PIT STOP: %.0fs', TUNE.PIT_HOLD_SEC))
+  pushNotice('pit', pit.serving > 0
+    and string.format('PIT STOP: %.0fs + PENALTY %.1fs', TUNE.PIT_HOLD_SEC, pit.serving)
+    or string.format('PIT STOP: %.0fs', TUNE.PIT_HOLD_SEC))
   pushRouteState()
   log('I', 'raceManager', string.format(
-    'Pit stop %d started in stall %d', pit.stops, inStall))
+    'Pit stop %d started in stall %d%s', pit.stops, inStall,
+    pit.serving > 0 and string.format(', serving %.1fs', pit.serving) or ''))
   if inMultiplayer() and sessionRunning() then
-    TriggerServerEvent('RM_PitStop', jsonEncode({ stall = inStall }))
+    TriggerServerEvent('RM_PitStop', jsonEncode({ stall = inStall, serving = pit.serving }))
   end
 end
 
@@ -6369,11 +6414,16 @@ end
 -- (and it works on a rented host). See feed.lua.
 do
   local feed = require('raceManager/feed')
-  feed.init({ build = RM_BUILD })
+  -- Race control (/control) calls the extension's own functions by name, and
+  -- asks whether this game is logged in.
+  feed.init({ build = RM_BUILD, ext = M,
+    isAdmin = function () return session.isAdmin == true end,
+    role = function () return session.role end })
   for _, name in ipairs({
     'feedBoot', 'feedSet', 'feedStatus', 'feedState', 'feedCountdown',
     'feedOffline', 'feedStop', 'feedUpdate',
     'feedNewKey', 'feedOpenStyle', 'feedOpenFolder',
+    'feedSetControl', 'feedNewControlKey', 'feedCopyControl',
   }) do
     M[name] = feed[name]
   end
@@ -8087,6 +8137,11 @@ function M.editorToggleVisualize()
   pushRouteState()
 end
 
+-- Drawing only: a hidden gate still arms, scores and catches a skip.
+function M.setShowPoles(on)
+  edit.poles = on ~= false and on ~= 'false'
+end
+
 -- ---------------------------------------------------------------------------
 -- Track layouts (server-side, persistent, per-map)
 -- ---------------------------------------------------------------------------
@@ -8486,6 +8541,10 @@ local function onServerUpdate(rawData)
       cs.liftSec    = math.max(0.5, tonumber(r.liftSec) or cs.liftSec)
       cs.liftWindow = tonumber(r.liftWindow) or cs.liftWindow
       cs.maxGates   = math.min(math.max(math.floor(tonumber(r.maxGates) or cs.maxGates), 1), 5)
+      -- pitMode, not pitServe: the server has already fallen back to optional
+      -- when the layout has no stalls. Missing is an older server: off.
+      cs.pitMode = (r.pitMode == 'optional' or r.pitMode == 'required') and r.pitMode or 'off'
+      cs.pitLaps = math.max(1, math.floor(tonumber(r.pitLaps) or cs.pitLaps))
     else
       cs.enabled = false
     end
@@ -8635,6 +8694,9 @@ local function onServerUpdate(rawData)
   session.myStatus, session.myGridPos = nil, nil
   -- Checkpoint-skip tallies off our row; nil is 0 (the server leaves zeros out).
   local rowWarn, rowPen, rowLift, rowWindow = 0, 0, 0, nil
+  local cpr = session.cpRow
+  local wasMissed = cpr.missed
+  cpr.serveBy, cpr.missed = nil, false
   if myId and type(data.drivers) == 'table' then
     for _, d in ipairs(data.drivers) do
       if tonumber(d.id) == myId then
@@ -8644,6 +8706,8 @@ local function onServerUpdate(rawData)
         rowPen    = tonumber(d.penaltySeconds) or 0
         rowLift   = tonumber(d.liftOwed) or 0
         rowWindow = tonumber(d.liftWindowLeft)
+        cpr.serveBy = tonumber(d.pitServeBy)
+        cpr.missed  = d.pitMissed == true
         isBystander = d.bystander == true
         -- The blue flag rides on the row: a fact about one driver.
         session.beingLapped  = d.blue == true
@@ -8656,6 +8720,9 @@ local function onServerUpdate(rawData)
   end
   -- A warning, a penalty or a lift turned into time: told as the row changes.
   session.cpRow.apply(rowWarn, rowPen, rowLift, rowWindow)
+  if cpr.missed and not wasMissed and sessionRunning() then
+    pushNotice('penalty', 'PENALTY NOT SERVED IN THE PITS: disqualified at the flag')
+  end
   -- Told on the edge: the header shows it, but a driver about to be caught is
   -- watching the road.
   if session.beingLapped and not wasLapped and sessionRunning() then
@@ -8741,9 +8808,10 @@ local function onServerUpdate(rawData)
   -- Our own checkpoint-skip state for the header readout, nil when clean.
   do
     local cr, L = session.cpRow, session.lift
-    data.myCpSkip = (cr.warn > 0 or cr.pen > 0 or cr.lift > 0) and {
+    data.myCpSkip = (cr.warn > 0 or cr.pen > 0 or cr.lift > 0 or cr.missed) and {
       warn = cr.warn, pen = cr.pen, lift = cr.lift, window = cr.window,
       liftLeft = L.active and math.max(L.left, 0) or nil,
+      pitMode = session.cpSkip.pitMode, serveBy = cr.serveBy, missed = cr.missed or nil,
     } or nil
   end
   guihooks.trigger('RaceManagerUpdate', data)
@@ -9410,7 +9478,8 @@ end
 -- Checkpoint skips, every rule in one event: on/off, warnings before a
 -- penalty, the penalty ('time' | 'lift' | 'liftAndTime'), its seconds, the
 -- lift's length and the window to serve it in. The server clamps them all.
-function M.setCheckpointSkip(enabled, warnings, ptype, penaltySec, liftSec, liftWindow)
+function M.setCheckpointSkip(enabled, warnings, ptype, penaltySec, liftSec, liftWindow,
+                             pitServe, pitLaps)
   local cs = session.cpSkip
   local payload = {
     enabled    = enabled == true,
@@ -9419,12 +9488,18 @@ function M.setCheckpointSkip(enabled, warnings, ptype, penaltySec, liftSec, lift
     penaltySec = tonumber(penaltySec) or cs.penaltySec,
     liftSec    = tonumber(liftSec) or cs.liftSec,
     liftWindow = math.floor(tonumber(liftWindow) or cs.liftWindow),
+    -- Left out when the panel sends none: the server keeps its own.
+    pitServe   = (pitServe == 'off' or pitServe == 'optional' or pitServe == 'required')
+                 and pitServe or nil,
+    pitLaps    = tonumber(pitLaps) and math.floor(tonumber(pitLaps)) or nil,
   }
   if inMultiplayer() then
     TriggerServerEvent('RM_SetCheckpointSkip', jsonEncode(payload))
   else
     cs.enabled, cs.warnings, cs.type = payload.enabled, payload.warnings, payload.type
     cs.penaltySec, cs.liftSec, cs.liftWindow = payload.penaltySec, payload.liftSec, payload.liftWindow
+    cs.pitMode = payload.pitServe or cs.pitMode
+    cs.pitLaps = payload.pitLaps or cs.pitLaps
     pushRouteState()
   end
 end
@@ -10025,6 +10100,7 @@ local function resetToIdle(reason)
   pit.active      = false
   pit.left        = 0
   pit.settleLeft  = 0
+  pit.serving     = 0
   pit.cooldown    = 0
   pit.promptLeft  = 0
   -- The cars are already swept clean; this drops our record of the pit ghost.

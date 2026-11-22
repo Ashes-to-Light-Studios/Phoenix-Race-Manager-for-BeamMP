@@ -188,6 +188,15 @@ frames, so a busy race never overwrites it; a reader that polls sees `styleSeq`
 move. The overlay page and the style page each check every value again, and
 draw text with `textContent` only.
 
+**Race control is the one write that reaches the race, and it never carries
+code.** `/control` (off as shipped, admins' panel only) takes its own key, not
+the style key, through the same Origin check and lockout. A POST names an
+action on `Ctl.ACTIONS`, and the feed calls the extension function the panel's
+own button calls (`feed.init` hands it `M`), so the server sees this game's
+login through the existing `RM_*` events and nothing new. `/control.json` gives
+the page the few facts that decide its buttons; the board comes from the
+public feed. `tests/race_control_test.lua` pins what it refuses.
+
 **Lap records are a consumer of results, like the cup.** `finishSession` calls
 them once per session through `race.recordsSession`, after the joker ruling.
 The file on disk is the board: every read opens it and every write reads it

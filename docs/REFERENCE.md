@@ -376,6 +376,10 @@ as one. Every stop is logged server-side with the driver, the stall and the lap.
 They are **not** respawn points. A stall repairs a car where it stands and does
 nothing else - a later reset still goes wherever the reset ruleset says.
 
+With **Serve in pits** on, a stop also serves any checkpoint-skip penalty
+seconds the driver owes, holding the car that much longer (see
+[Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)).
+
 Every stall in the lane is drawn as a box; only the nearest gets the stop bar,
 the chevron and the two-band walls. With a **Pit In** gate placed, the stalls
 appear only once a driver has crossed it. That gate carries a large white **P**
@@ -1183,6 +1187,8 @@ crossed, so it is not left stuck, and the skip costs a **warning**, then the
 | Penalty per skip / If not served (s) | `checkpointSkipPenaltySeconds` | `5` | 0.5-300, in steps of 0.5 |
 | Lift (s) | `checkpointSkipLiftSeconds` | `3` | 0.5-30, in steps of 0.5 |
 | Serve within (s) | `checkpointSkipLiftWindow` | `30` | 5-300 seconds of green-flag running |
+| Serve in pits | `checkpointSkipPitServe` | `"off"` | `"off"`, `"optional"`, `"required"` (see [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)) |
+| within (laps) | `checkpointSkipPitLaps` | `3` | 1-20: laps to serve them in, when required |
 | (not in the panel) | `checkpointSkipMaxGates` | `2` | 1-5: how far ahead, in gates, a crossing still counts as a skip |
 
 The `config.json` values are what the server starts with; the panel changes
@@ -1263,6 +1269,50 @@ again. When it runs out, every lift still owed becomes `penalty seconds` each.
 A lift still owed when the car takes the flag is turned into time at once,
 before its place is worked out. A car that retires (DNF or DSQ) has its owed
 lift dropped; its warnings and seconds stay in the results.
+
+#### Serving penalty seconds in the pits
+
+**Serve in pits** (beside the other checkpoint-skip rules) lets a driver clear
+penalty seconds by stopping in a [pit stall](#pit-stalls). It is off as shipped.
+It covers every second on the driver's time from a skip: a time penalty, the
+time half of Lift + time, and a lift turned into time.
+
+| Setting | What happens to penalty seconds |
+|---------|--------------------------------|
+| **Off** | They go on the race time at the flag, as before |
+| **Optional** | A pit stop can serve them. Any not served go on the race time |
+| **Required** | They must be served by a pit stop within **N laps** of the penalty, or the driver is **disqualified at the flag** |
+
+**How a stop serves them.** Stop in a stall as usual. With seconds owed, the
+hold is the usual 5 seconds **plus** the seconds owed, and the car is repaired
+as usual. The HUD shows `PIT STOP: 5s + PENALTY 5.0s`, then
+`PENALTY SERVED (5.0s) - GO!`. Serving costs the same time as keeping the seconds,
+but the order on the road becomes the real order and the result is no longer
+provisional. A stop cut short (the session ends) serves nothing. Seconds added
+while the car is held wait for the next stop.
+
+**The window, when required.** A penalty on lap 4 with a 3 lap window can be
+served on laps 4 to 7. Each new penalty starts the window again from its own
+lap. Past the window with seconds still owed, the driver is told
+`PENALTY NOT SERVED IN THE PITS: disqualified at the flag`, the board shows
+`PIT ✕`, and a stop no longer serves anything. At the flag that car is
+`Disqualified - Penalty Not Served`, ruled the same way as a missed joker. A car
+that takes the flag with its window still open keeps the seconds as time.
+
+**Required needs stalls.** It only runs on a saved layout that has pit stalls.
+With none loaded it runs as Optional, and the panel says so, so a field is never
+disqualified for having nowhere to stop.
+
+What the driver sees:
+
+- The penalty line ends `- serve it in the pits to clear it` (Optional) or
+  `- serve it in the pits within 3 laps` (Required).
+- The `CUTS` readout shows `+5.0s (PIT TO CLEAR)` or `+5.0s PIT BY LAP 7`.
+
+Race control gets `Alice served 5.0s in the pits` and
+`Dan did not serve 5.0s in the pits in time`. The results file states the rule
+under the header, and the **Track cuts** column adds `5.0s served in pit` and
+`pit stop not served`.
 
 **Cut laps.** A lap with a skip on it still counts toward the distance, but its
 time is not used: no best lap, no fastest lap, no qualifying time and so no lap
@@ -2328,6 +2378,15 @@ had already said, in the form nobody can read at speed. **The editor still
 numbers and labels everything, joker included**: that is where the words are
 worth reading, and where there is time to read them.
 
+**Hiding the pillars is each player's own choice.** The pillar button (two
+posts, beside 🔊 on the menu bar and on the driver bar) hides the checkpoint
+poles on your screen only, and is remembered like the sound setting. It changes
+nothing else: a hidden gate still has to be driven through, still counts the
+lap, and still catches a track cut. The joker gate, the pit lane and direction
+markers stay, because each one tells you what to do. It is separate from the
+editor's **Hide/Show Gates**, so hiding pillars to race never hides a track you
+are building.
+
 Two gates ahead and nothing else - a whole lap's worth of numbered rectangles
 across the racing line is clutter, but a checkpoint nobody can see is worse.
 
@@ -2965,6 +3024,56 @@ turn it off; the setting is kept in your BeamNG user folder
   the folder its logos and fonts are kept in; **Show link** shows the editor's
   link to paste into a browser yourself; **New key** makes the old links stop
   working.
+- **Race control page** (admins). The race-night buttons on a page of their
+  own, for a second screen or a phone. See [Race control page](#race-control-page).
+
+### Race control page
+
+Spectating as race director, you may want the game's screen clear and the
+controls somewhere else: a second monitor, a tablet or a phone. The **race
+control page** puts the session buttons there, served by your own game from the
+same port as the feed.
+
+**Turning it on.** It is off as shipped and only an admin's panel offers it. With
+the feed running, open **Feed** and press **Turn on** beside **Race control
+page**. It asks first: anyone with its link can run the race as you while your
+game is logged in. Then:
+
+- **Copy link** copies this PC's link (`http://127.0.0.1:8128/control#key=...`),
+  for a browser on a second monitor.
+- **Copy network link** copies the link for a phone or another PC
+  (`http://192.168.x.x:8128/control#key=...`). It appears once **Other PCs** is
+  allowed above. The phone has to be on the same network as this PC.
+- **Show link** shows both, to copy by hand. **New key** makes the old links stop
+  working, and **Turn off** takes the page down until you turn it on again (the
+  same key comes back).
+
+Paste the link into the browser's address bar. Keep the links off stream.
+
+**What it has.** The same buttons as the race controls in the panel, shown in the
+same phases:
+
+| Group | Buttons |
+|-------|---------|
+| Session | **Start Quali**, **Generate Grid**, then **Start Countdown** (or **Start Race** with a pace lap) and **Ready All** with the ready count |
+| Flags | **Red flag** / **Lift red**; in qualifying **Yellow** and **Green**; on the pace lap **Green flag** to end it |
+| Caution | **Caution**, then **Restart** or **Cancel restart** |
+| End | **End Session**, **Restart from grid** and **Reset**, each a second tap to confirm |
+
+Under them is the field: place, name, lap and gap, and **Watch** on each driver
+puts your game's camera on them, as clicking a name on the broadcast board does.
+The header shows the phase, lap, clock and flag, and **Admin** or **Moderator**.
+
+**It runs as your game.** Every button sends the name of an action to your game,
+which runs the same function as the panel's button, so the server sees your login
+and nothing new. If your game is not logged in as an admin the page says so and
+shows only the field and **Watch**. It works while your game is running,
+connected to the server, with the feed on.
+
+**What it refuses.** Its key is its own: the style editor's key does not work
+here, and this key does not work there. Requests from another web page are
+refused, and ten wrong keys in a minute shut it for a minute. Only the actions
+above exist; anything else is refused.
 
 ### What it serves
 
@@ -3606,6 +3715,7 @@ these were collapsed sections.
 | **Feed** | everyone | The broadcast feed: race data for your stream's overlay, served on this PC (see [Broadcast feed](#broadcast-feed)) |
 | **Map** | drivers | Call a vote to switch maps, while voting is open |
 | **Admin** | admins | Master passwords, results housekeeping, the map switch, display names |
+| Pillars (two posts) | everyone | Checkpoint pillars on or off, on your screen only (see [Seeing the checkpoints](#seeing-the-checkpoints)) |
 | 🔊 | everyone | Start sounds on or off (see [Race Lights (PRM)](#race-lights-prm)) |
 
 **Never behind the menu:** the header (phase, clock, flag), the READY banner, a
