@@ -686,16 +686,21 @@ local function drawDriverGate(derbyLive)
   -- joker carries its state as a glyph instead (cross, tick, arrow). The editor
   -- still labels everything. ALL of a checkpoint's gates are drawn: a branch
   -- gate is the driver's choice.
-  local a = session.armedWp
-  if a < 1 or a > n then a = 1 end
-  branch.eachAt(a, poles, p.armed)
+  --
+  -- The player's pillar switch hides the armed and next gates and nothing
+  -- below: the joker, the pit lane and the markers each tell a driver what to do.
+  if edit.poles ~= false then
+    local a = session.armedWp
+    if a < 1 or a > n then a = 1 end
+    branch.eachAt(a, poles, p.armed)
 
-  -- The gate after, dimmed. Skipped on a one-gate route, and on the last lap
-  -- when the line is armed: the wrap would light CP 1 of a lap nobody drives.
-  local lastLap = session.phase == 'racing' and not track.pointToPoint
-    and session.totalLaps > 0 and session.localLap >= session.totalLaps
-  if n > 1 and not (lastLap and a == n) then
-    branch.eachAt(a % n + 1, poles, p.routeNext or p.route)
+    -- The gate after, dimmed. Skipped on a one-gate route, and on the last lap
+    -- when the line is armed: the wrap would light CP 1 of a lap nobody drives.
+    local lastLap = session.phase == 'racing' and not track.pointToPoint
+      and session.totalLaps > 0 and session.localLap >= session.totalLaps
+    if n > 1 and not (lastLap and a == n) then
+      branch.eachAt(a % n + 1, poles, p.routeNext or p.route)
+    end
   end
 
   -- Markers, all of them, always: there is no "next" sign. The editor pass

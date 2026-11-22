@@ -29,6 +29,12 @@
 -- once (`event: style`). Writing takes the style key the Feed panel shows, and
 -- an Origin, if a browser sends one, of this feed itself. Nothing a write can
 -- reach is the race: only the style file and the overlay folder.
+--
+-- RACE CONTROL (/control) is the one exception, and it is off as shipped: an
+-- admin's race-night buttons on a page for a second screen or a phone. It takes
+-- its own key, and each action is a NAME on Ctl.ACTIONS calling the function
+-- the panel's own button calls, so the server sees this game's login and
+-- nothing new. A page never sends Lua.
 
 local D = {}
 local Style = require('raceManager/feedstyle')
@@ -39,6 +45,9 @@ local SETTINGS_FILE = 'settings/raceManager/feed.json'
 -- mounted client zip), as splash.lua reads its logo.
 local OVERLAY_FILE = '/ui/modules/apps/RaceManager/overlay.html'
 local STYLE_PAGE_FILE = '/ui/modules/apps/RaceManager/style.html'
+local CONTROL_PAGE_FILE = '/ui/modules/apps/RaceManager/control.html'
+-- Race control: declared here, filled in after the write path it shares.
+local Ctl = { MAX_BODY = 512 }
 local DEFAULT_PORT = 8128
 local PORT_MIN, PORT_MAX = 1024, 65535
 local SCHEMA = 1
@@ -60,7 +69,9 @@ local EVENT_RING = 30
 -- ---------------------------------------------------------------------------
 -- State
 -- ---------------------------------------------------------------------------
-local host = { build = '?' }
+-- The extension's side: its build, its functions (race control calls them by
+-- name) and whether this game is logged in as an admin, and at which tier.
+local host = { build = '?', ext = nil, isAdmin = nil, role = nil }
 local S = {
   settings = nil,        -- { on, port, lan }, read once
   running = false,       -- listening
@@ -898,17 +909,24 @@ local function validPort(p)
   return math.floor(p)
 end
 
+-- A stored key: 20 lower-case letters and digits, or nothing.
+local function validKey(k)
+  return type(k) == 'string' and #k == 20 and k:match('^[a-z0-9]+$') and k or nil
+end
+
 local function settings()
   if not S.settings then
-    local s = { on = false, port = DEFAULT_PORT, lan = false }
+    local s = { on = false, port = DEFAULT_PORT, lan = false, control = false }
     if type(jsonReadFile) == 'function' then
       local ok, data = pcall(jsonReadFile, SETTINGS_FILE)
       if ok and type(data) == 'table' then
         s.on = data.on == true
         s.port = validPort(data.port) or DEFAULT_PORT
         s.lan = data.lan == true
-        s.styleKey = type(data.styleKey) == 'string' and data.styleKey:match('^[a-z0-9]+$')
-          and #data.styleKey == 20 and data.styleKey or nil
+        s.styleKey = validKey(data.styleKey)
+        -- Race control needs its key: on without one is off.
+        s.controlKey = validKey(data.controlKey)
+        s.control = data.control == true and s.controlKey ~= nil
       end
     end
     S.settings = s
@@ -920,7 +938,8 @@ local function saveSettings()
   local s = settings()
   if type(jsonWriteFile) ~= 'function'
       or not pcall(jsonWriteFile, SETTINGS_FILE,
-        { on = s.on, port = s.port, lan = s.lan, styleKey = s.styleKey }, true) then
+        { on = s.on, port = s.port, lan = s.lan, styleKey = s.styleKey,
+          control = s.control, controlKey = s.controlKey }, true) then
     say('W', 'could not save ' .. SETTINGS_FILE)
   end
 end
@@ -992,9 +1011,15 @@ local function status()
       -- The style editor: the key rides the fragment, which no request carries.
       styleBase = base .. '/style',
       style = s.styleKey and (base .. '/style#key=' .. s.styleKey) or nil,
+      -- Race control, the same way: this PC's link, and the network's.
+      control = (s.control and s.controlKey) and (base .. '/control#key=' .. s.controlKey) or nil,
+      lanControl = (s.control and s.controlKey and lanBase)
+        and (lanBase .. '/control#key=' .. s.controlKey) or nil,
     },
     canOpen = type(openWebBrowser) == 'function',
     styleSeq = S.styleSeq,
+    control = s.control,
+    admin = Ctl.isAdmin(),
   }
 end
 
@@ -1251,6 +1276,11 @@ end
 
 local function overlayPage() return bundled(OVERLAY_FILE, 'overlay', FALLBACK_OVERLAY) end
 local function stylePage() return bundled(STYLE_PAGE_FILE, 'stylePage', FALLBACK_STYLE) end
+function Ctl.page()
+  return bundled(CONTROL_PAGE_FILE, 'controlPage', '<!doctype html><html><head><meta charset="utf-8">'
+    .. '<title>PRM race control</title></head><body style="font:16px system-ui">The race control '
+    .. 'page is missing from this install.</body></html>')
+end
 
 local JSON = 'application/json; charset=utf-8'
 local HTML = 'text/html; charset=utf-8'
@@ -1314,6 +1344,9 @@ local function writeRoute(method, path)
   if method == 'POST' and path == '/style.json' then
     return { kind = 'style', max = Style.MAX_STYLE_BODY }
   end
+  if method == 'POST' and path == '/control' then
+    return { kind = 'control', max = Ctl.MAX_BODY }
+  end
   local name = path:match('^/assets/(.+)$')
   if name and (method == 'POST' or method == 'DELETE') then
     return { kind = method == 'POST' and 'upload' or 'delete', name = name,
@@ -1327,6 +1360,14 @@ local function finishWrite(cl)
   cl.parts = nil
   if S.writing == cl then S.writing = nil end
   local ok, res = pcall(function ()
+    if route.kind == 'control' then
+      if type(jsonDecode) ~= 'function' then return refuse(500, 'No JSON reader in this game build') end
+      local okJ, input = pcall(jsonDecode, body)
+      if not okJ or type(input) ~= 'table' then return refuse(400, 'The action is not a JSON object') end
+      local code, why = Ctl.run(input)
+      if code then return refuse(code, why) end
+      return jsonReply(200, { { 'ok', 'true' }, { 'action', jsonString(input.action) } })
+    end
     if route.kind == 'style' then
       if type(jsonDecode) ~= 'function' then return refuse(500, 'No JSON reader in this game build') end
       local okJ, input = pcall(jsonDecode, body)
@@ -1370,11 +1411,123 @@ local function badKey()
   if #kept >= BAD_KEYS then S.lockUntil = now + LOCKOUT end
 end
 
+-- ---------------------------------------------------------------------------
+-- Race control: the page, its state, and the actions it may ask for
+-- ---------------------------------------------------------------------------
+local CONTROL_OFF = 'Race control is off. Turn it on in the Feed panel.'
+local CONTROL_BADKEY = 'The race control key is missing or wrong: copy the link from the Feed panel again'
+
+-- name = { fn = the extension function, admin = needs the login, arg = what it takes }
+Ctl.ACTIONS = {
+  startQualifying = { fn = 'startQualifying', admin = true },
+  generateGrid    = { fn = 'generateGrid', admin = true },
+  startCountdown  = { fn = 'startCountdown', admin = true },
+  startRace       = { fn = 'startRace', admin = true },
+  readyAll        = { fn = 'readyAll', admin = true },
+  flag            = { fn = 'setFlag', admin = true, arg = 'flag' },
+  caution         = { fn = 'caution', admin = true },
+  restart         = { fn = 'restart', admin = true },
+  cancelRestart   = { fn = 'cancelRestart', admin = true },
+  endSession      = { fn = 'endRace', admin = true },
+  restartFromGrid = { fn = 'restartFromGrid', admin = true },
+  resetSession    = { fn = 'resetLeaderboard', admin = true },
+  -- This PC's camera, as the broadcast board's names do: no login needed.
+  watch           = { fn = 'spectateDriver', arg = 'id' },
+}
+
+-- The key a request carries: the header, or ?key= for a client that cannot set one.
+function Ctl.keyOf(lower, query)
+  return lower:match('\nx%-prm%-key:[ \t]*([%w]+)') or ('&' .. (query or '')):match('&key=(%w+)')
+end
+
+function Ctl.isAdmin()
+  if type(host.isAdmin) ~= 'function' then return false end
+  local ok, v = pcall(host.isAdmin)
+  return ok and v == true
+end
+
+-- One action. Returns nothing, or the HTTP code and why not.
+function Ctl.run(input)
+  local name = type(input.action) == 'string' and input.action or ''
+  local a = Ctl.ACTIONS[name]
+  if not a then return 400, 'Unknown action: ' .. name:sub(1, 40) end
+  if a.admin and not Ctl.isAdmin() then return 403, 'This game is not logged in as an admin' end
+  local fn = type(host.ext) == 'table' and host.ext[a.fn] or nil
+  if type(fn) ~= 'function' then return 500, 'Not available in this build' end
+  local arg = nil
+  if a.arg == 'flag' then
+    arg = input.flag
+    if arg ~= 'green' and arg ~= 'yellow' and arg ~= 'red' then
+      return 400, 'The flag is green, yellow or red'
+    end
+  elseif a.arg == 'id' then
+    arg = tonumber(input.id)
+    if not arg or arg ~= arg or arg < 0 or arg ~= math.floor(arg) then return 400, 'No driver id' end
+  end
+  local ok, err = pcall(fn, arg)
+  if not ok then return 500, 'The action failed: ' .. tostring(err) end
+  say('I', 'race control: ' .. name .. (arg ~= nil and (' ' .. tostring(arg)) or ''))
+end
+
+-- What the page needs beyond the public feed: whether this game can run the
+-- race, and what decides which buttons a phase gets (as the panel's).
+function Ctl.state()
+  local d = S.last or {}
+  local ready, total = 0, 0
+  for _, r in ipairs(type(d.drivers) == 'table' and d.drivers or {}) do
+    if type(r) == 'table' then
+      if r.status == 'gridded' then ready, total = ready + 1, total + 1
+      elseif r.status == 'called' then total = total + 1 end
+    end
+  end
+  local role = nil
+  if type(host.role) == 'function' then
+    local ok, r = pcall(host.role)
+    if ok and type(r) == 'string' then role = r end
+  end
+  local admin = Ctl.isAdmin()
+  return encode({
+    _k = { 'admin', 'role', 'build', 'connected', 'phase', 'kind', 'flag', 'pacing',
+      'caution', 'cautionPending', 'restartPending', 'paceLap', 'pointToPoint',
+      'readyCheck', 'ready', 'readyTotal' },
+    admin = admin, role = admin and role or nil, build = tostring(host.build),
+    connected = S.connected == true,
+    phase = type(d.phase) == 'string' and d.phase or 'waiting',
+    kind = d.sessionKind == 'quali' and 'quali' or 'race',
+    flag = (d.flag == 'yellow' or d.flag == 'red') and d.flag or 'green',
+    pacing = d.pacing == true, caution = d.caution == true,
+    cautionPending = d.cautionPending == true, restartPending = d.restartPending == true,
+    paceLap = d.paceLap == true, pointToPoint = d.pointToPoint == true,
+    readyCheck = d.readyCheck ~= false, ready = ready, readyTotal = total,
+  })
+end
+
+-- GET /control (the page) and /control.json (its state, with the key).
+function Ctl.get(cl, path, query, lower, headOnly)
+  local s = settings()
+  if not s.control then return sendOnce(cl, response(404, nil, CONTROL_OFF .. '\n')) end
+  if path ~= '/control.json' then
+    -- It acts with the key it holds: no other site may frame it.
+    return sendOnce(cl, response(200, HTML, Ctl.page(),
+      { "Content-Security-Policy: frame-ancestors 'none'", 'X-Frame-Options: DENY' }, headOnly))
+  end
+  if S.clock < S.lockUntil then
+    return sendOnce(cl, refuse(429, 'Too many wrong keys: try again in a minute'))
+  end
+  if not s.controlKey or Ctl.keyOf(lower, query) ~= s.controlKey then
+    badKey()
+    return sendOnce(cl, refuse(403, CONTROL_BADKEY))
+  end
+  sendOnce(cl, response(200, JSON, Ctl.state(), nil, headOnly))
+end
+
 local function beginWrite(cl, method, path, query, lower, hostHeader, rest)
   local route = writeRoute(method, path)
   if not route then
     return sendOnce(cl, response(405, nil, 'Read only\n', { 'Allow: GET, HEAD, OPTIONS' }))
   end
+  local control = route.kind == 'control'
+  if control and not settings().control then return sendOnce(cl, refuse(404, CONTROL_OFF)) end
   -- From a browser, only from this feed's own pages.
   local origin = lower:match('\norigin:[ \t]*([^\r\n]*)')
   if origin and origin ~= '' and origin:gsub('%s+$', '') ~= 'http://' .. tostring(hostHeader or ''):gsub('%s+$', '') then
@@ -1383,12 +1536,12 @@ local function beginWrite(cl, method, path, query, lower, hostHeader, rest)
   if S.clock < S.lockUntil then
     return sendOnce(cl, refuse(429, 'Too many wrong keys: writes are shut for a minute'))
   end
-  local key = lower:match('\nx%-prm%-key:[ \t]*([%w]+)') or ('&' .. (query or '')):match('&key=(%w+)')
-  local want = settings().styleKey
+  local key = Ctl.keyOf(lower, query)
+  local want = control and settings().controlKey or settings().styleKey
   if not want or key ~= want then
     badKey()
-    return sendOnce(cl, refuse(403, 'The style key is missing or wrong: open the style editor '
-      .. 'from the Feed panel'))
+    return sendOnce(cl, refuse(403, control and CONTROL_BADKEY
+      or 'The style key is missing or wrong: open the style editor from the Feed panel'))
   end
   if lower:find('\ntransfer%-encoding:') then
     return sendOnce(cl, refuse(411, 'Send a Content-Length, not chunks'))
@@ -1399,7 +1552,9 @@ local function beginWrite(cl, method, path, query, lower, hostHeader, rest)
   if len > route.max then
     return sendOnce(cl, refuse(413, 'Too large: at most ' .. route.max .. ' bytes'))
   end
-  if S.writing and S.writing ~= cl then
+  -- One upload at a time. A race control action is a few bytes and never waits
+  -- behind a logo.
+  if not control and S.writing and S.writing ~= cl then
     return sendOnce(cl, refuse(503, 'Another upload is running: try again in a moment'))
   end
   if lower:find('\nexpect:[ \t]*100%-continue') then
@@ -1408,7 +1563,7 @@ local function beginWrite(cl, method, path, query, lower, hostHeader, rest)
   rest = rest or ''
   cl.state, cl.route, cl.want = 'body', route, len
   cl.parts, cl.got, cl.bodyAt = { rest:sub(1, len) }, math.min(#rest, len), S.clock
-  S.writing = cl
+  if not control then S.writing = cl end
   if cl.got >= cl.want then return finishWrite(cl) end
 end
 
@@ -1455,6 +1610,9 @@ local function handle(cl, head, rest)
     return sendOnce(cl, response(405, nil, 'Read only\n', { 'Allow: GET, HEAD, OPTIONS' }))
   end
   local headOnly = method == 'HEAD'
+  if path == '/control' or path == '/control.html' or path == '/control.json' then
+    return Ctl.get(cl, path, query, lower, headOnly)
+  end
 
   if path == '/stream' and not headOnly then
     cl.state = 'stream'
@@ -1634,7 +1792,9 @@ end
 -- Entry points, merged onto the extension (raceManager.lua)
 -- ---------------------------------------------------------------------------
 function D.init(hostApi)
-  if type(hostApi) == 'table' and hostApi.build then host.build = hostApi.build end
+  if type(hostApi) ~= 'table' then return end
+  if hostApi.build then host.build = hostApi.build end
+  host.ext, host.isAdmin, host.role = hostApi.ext, hostApi.isAdmin, hostApi.role
 end
 
 -- Extension load: up again if it was left on. Idempotent.
@@ -1743,6 +1903,36 @@ function D.feedOpenStyle()
   if url and not copied and type(openWebBrowser) == 'function' then pcall(openWebBrowser, url) end
   if type(guihooks) == 'table' and type(guihooks.trigger) == 'function' then
     pcall(guihooks.trigger, 'RaceManagerFeedCopy', { copied = copied })
+  end
+end
+
+-- The panel's Race control switch. Its key is made the first time it goes on,
+-- and kept, so a link given out works again after off and on.
+function D.feedSetControl(on)
+  local s = settings()
+  s.control = on == true
+  if s.control and not s.controlKey then s.controlKey = newKey() end
+  saveSettings()
+  pushStatus()
+end
+
+-- New key: race control links given out stop working.
+function D.feedNewControlKey()
+  local s = settings()
+  s.controlKey = newKey()
+  saveSettings()
+  pushStatus()
+end
+
+-- The race control link onto the clipboard: this PC's, or with `lan` the
+-- network's, for a phone or a second PC. As the style editor's, for the same reason.
+function D.feedCopyControl(lan)
+  local u = status().urls
+  local url = (lan == true and u.lanControl) or u.control
+  local copied = false
+  if url and type(setClipboard) == 'function' then copied = pcall(setClipboard, url) end
+  if type(guihooks) == 'table' and type(guihooks.trigger) == 'function' then
+    pcall(guihooks.trigger, 'RaceManagerFeedCopy', { copied = copied, what = 'control' })
   end
 end
 

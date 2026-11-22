@@ -93,6 +93,11 @@ local CFG = {
   checkpointSkipPenaltySeconds  = 5,      -- per penalised skip, and per unserved lift
   checkpointSkipLiftSeconds     = 3,      -- seconds off the throttle per penalised skip
   checkpointSkipLiftWindow      = 30,     -- seconds of green running to serve a lift
+  -- Penalty seconds served in a pit stall: 'off' (they go on the race time),
+  -- 'optional' (a stop may clear them) or 'required' (a stop within pitLaps
+  -- laps, or disqualified at the flag).
+  checkpointSkipPitServe        = 'off',
+  checkpointSkipPitLaps         = 3,
   -- Furthest ahead (gates) a crossing still counts as a skip; further is
   -- ignored, as it always was. config.json only, never the panel.
   checkpointSkipMaxGates        = 2,
@@ -234,6 +239,8 @@ local race = {
   checkpointSkipPenaltySeconds  = CFG.checkpointSkipPenaltySeconds,
   checkpointSkipLiftSeconds     = CFG.checkpointSkipLiftSeconds,
   checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow,
+  checkpointSkipPitServe        = CFG.checkpointSkipPitServe,
+  checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps,
   -- The rules this race's cautions ran under ({ line = true, call = true }),
   -- for the results file: the setting may have changed between them.
   cautionRulesUsed = {},
@@ -559,6 +566,12 @@ local function newRecord(pid)
     liftFrom   = nil,        -- race.time the lift being served became due; not sent
     liftsServed = 0,         -- results file
     liftsConverted = 0,      -- results file
+    -- Penalty seconds served in a pit stall (checkpointSkipPitServe).
+    penaltyServed = 0,       -- seconds taken off penaltySeconds by stops
+    pitServeBy = nil,        -- 'required': the last lap a stop may be made on
+    pitMissed  = nil,        -- 'required': true once that lap passed unserved
+    pitStopAt  = nil,        -- race.time the current stop began; not sent
+    pitServing = nil,        -- penalty seconds owed when it began; not sent
     cutLaps    = 0,          -- race laps with a skip on them (no time, results)
     qualiCutLaps = 0,        -- the same in qualifying, kept with qualiBest
     cutOnLap   = nil,        -- lap a skip was reported on (RM_onLap's cross-check)
@@ -700,6 +713,8 @@ function race.resetSkips(rec, quali)
   rec.checkpointSkips = 0
   rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = nil, nil, nil
   rec.liftsServed, rec.liftsConverted = 0, 0
+  rec.penaltyServed, rec.pitServeBy, rec.pitMissed = 0, nil, nil
+  rec.pitStopAt, rec.pitServing = nil, nil
   rec.cutLaps = 0
   rec.cutOnLap, rec.skipSeen = nil, nil
   if quali then rec.qualiCutLaps = 0 end
@@ -1165,6 +1180,9 @@ local DRIVER_WIRE_FIELDS = {
   -- Checkpoint skips: warnings spent, penalty seconds, lift units owed and the
   -- seconds left to serve them. Zero goes out as nil (driverForWire).
   'checkpointWarningsUsed', 'penaltySeconds', 'liftOwed', 'liftWindowLeft',
+  -- Serving penalty seconds in the pits: served so far, the last lap a stop
+  -- counts on, and a window missed. All nil until there is something to say.
+  'penaltyServed', 'pitServeBy', 'pitMissed',
   -- The broadcast feed (client feed.lua): the last lap, the crossing it was
   -- completed on, and pit stops. Zero stops go out as nil (driverForWire).
   'lastLap', 'lastLapOn', 'pitStops',
@@ -1193,6 +1211,7 @@ local function driverForWire(rec)
   if wire.checkpointWarningsUsed == 0 then wire.checkpointWarningsUsed = nil end
   if wire.penaltySeconds == 0 then wire.penaltySeconds = nil end
   if wire.liftOwed == 0 then wire.liftOwed = nil end
+  if wire.penaltyServed == 0 then wire.penaltyServed = nil end
   if wire.pitStops == 0 then wire.pitStops = nil end
   return wire
 end
@@ -1419,6 +1438,12 @@ local function broadcastState(targetPid)
       liftSec    = race.checkpointSkipLiftSeconds,
       liftWindow = race.checkpointSkipLiftWindow,
       maxGates   = CFG.checkpointSkipMaxGates,
+      -- Serving in the pits: the rule as set, the rule in force (required
+      -- falls back without stalls) and the loaded layout's stall count.
+      pitServe   = race.checkpointSkipPitServe,
+      pitMode    = race.pitServeMode(),
+      pitLaps    = race.checkpointSkipPitLaps,
+      pitStalls  = race.pitStalls(),
     },
     -- The heat program; heatLaps because the flags are waved client-side and
     -- must reach the same distance as sessionLapTarget.
@@ -2042,6 +2067,10 @@ local function buildResultsText(cupRound)
     if (rec.penaltySeconds or 0) > 0 then
       parts[#parts + 1] = string.format('+%.1fs', rec.penaltySeconds)
     end
+    if (rec.penaltyServed or 0) > 0 then
+      parts[#parts + 1] = string.format('%.1fs served in pit', rec.penaltyServed)
+    end
+    if rec.pitMissed then parts[#parts + 1] = 'pit stop not served' end
     if (rec.liftsServed or 0) > 0 then parts[#parts + 1] = rec.liftsServed .. ' lift served' end
     if (rec.liftsConverted or 0) > 0 then
       parts[#parts + 1] = rec.liftsConverted .. ' lift converted'
@@ -2103,6 +2132,13 @@ local function buildResultsText(cupRound)
       race.checkpointSkipPenaltyType ~= 'time' and string.format(
         ' (lift within %ds or +%.1fs)', race.checkpointSkipLiftWindow,
         race.checkpointSkipPenaltySeconds) or ''))
+    local pm = race.pitServeMode()
+    if pm == 'required' then
+      add(string.format(' Penalty seconds: served in the pits within %d lap%s, or disqualified',
+        race.checkpointSkipPitLaps, race.checkpointSkipPitLaps == 1 and '' or 's'))
+    elseif pm == 'optional' then
+      add(' Penalty seconds: could be served in the pits')
+    end
   end
   if race.closedHow then add(' Ended: ' .. race.closedHow) end
   add('==================================================')
@@ -2607,6 +2643,8 @@ local function finishSession(reason)
   end
 
   local excluded = applyJokerRuling()
+  -- And a required pit stop not served in its window, ruled the same way.
+  local unserved = race.pitRuling()
   race.phase = 'finished'
   -- THE HEAT RESULT, recorded once final (after the joker ruling, so an excluded
   -- driver never transfers), onto the record and the identity registry.
@@ -2651,6 +2689,11 @@ local function finishSession(reason)
     MP.SendChatMessage(-1, string.format(
       '[RaceManager] Joker lap ruling: %d driver%s disqualified for not taking the Joker Route exactly once.',
       excluded, excluded == 1 and '' or 's'))
+  end
+  if unserved > 0 then
+    MP.SendChatMessage(-1, string.format(
+      '[RaceManager] Pit ruling: %d driver%s disqualified for a penalty not served in the pits.',
+      unserved, unserved == 1 and '' or 's'))
   end
   print('[RaceManager] Race over: ' .. reason)
   race.closedHow = race.voided
@@ -3355,8 +3398,10 @@ function RM_onPitStop(pid, rawData)
     if ok and type(data) == 'table' then stall = tonumber(data.stall) or 0 end
   end
   rec.pitStops = (rec.pitStops or 0) + 1
-  print(string.format('[RaceManager] %s pitted (stall %s) on lap %s at race time %.1fs: stop #%d',
-    rec.name, tostring(stall), tostring(rec.currentLap or '?'), race.time, rec.pitStops))
+  race.pitStopBegan(rec)
+  print(string.format('[RaceManager] %s pitted (stall %s) on lap %s at race time %.1fs: stop #%d%s',
+    rec.name, tostring(stall), tostring(rec.currentLap or '?'), race.time, rec.pitStops,
+    rec.pitServing and string.format(', serving %.1fs', rec.pitServing) or ''))
   broadcastState()
 end
 
@@ -5169,10 +5214,115 @@ function race.convertLift(rec, why)
   rec.penaltySeconds = (rec.penaltySeconds or 0) + add
   rec.liftsConverted = (rec.liftsConverted or 0) + n
   rec.liftOwed, rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = 0, nil, nil, nil
-  MP.SendChatMessage(rec.id, string.format('[RaceManager] Lift not served: +%.1fs penalty', add))
+  race.owePitTime(rec)
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Lift not served: +%.1fs penalty%s', add,
+    onTrack(rec) and race.pitServeHint() or ''))
   race.tellRaceControl(string.format('[RaceManager] Race control: %s lift converted to +%.1fs (%s)',
     displayName(rec), add, why or 'not served'))
   return add
+end
+
+-- ---------------------------------------------------------------------------
+-- SERVING PENALTY SECONDS IN THE PITS (checkpointSkipPitServe)
+-- ---------------------------------------------------------------------------
+-- The stop is the client's, like every pit stop: RM_PitStop starts it and
+-- RM_PenaltyServed ends it, and the server times the two on its own clock.
+
+-- Stalls on the loaded layout. 0 with no layout loaded through this server.
+function race.pitStalls()
+  local l = race.layout
+  return (l and type(l.pits) == 'table') and #l.pits or 0
+end
+
+-- The rule in force. 'required' needs stalls on a loaded layout: without them
+-- it would disqualify cars that had nowhere to stop, so it runs as 'optional'.
+function race.pitServeMode()
+  if not race.enableCheckpointSkipPenalty then return 'off' end
+  local m = race.checkpointSkipPitServe
+  if m == 'required' and race.pitStalls() == 0 then return 'optional' end
+  return m == 'optional' and 'optional' or (m == 'required' and 'required' or 'off')
+end
+
+-- How a time penalty's line ends while serving is on.
+function race.pitServeHint()
+  local m = race.pitServeMode()
+  if m == 'required' then
+    local n = race.checkpointSkipPitLaps
+    return string.format(' - serve it in the pits within %d lap%s', n, n == 1 and '' or 's')
+  end
+  return m == 'optional' and ' - serve it in the pits to clear it' or ''
+end
+
+-- Penalty seconds were added to a car still racing: under 'required' the
+-- window starts again, as a new lift restarts its own.
+function race.owePitTime(rec)
+  if race.pitServeMode() ~= 'required' or not onTrack(rec) or rec.pitMissed then return end
+  if (rec.penaltySeconds or 0) <= 0 then return end
+  rec.pitServeBy = (rec.currentLap or 0) + race.checkpointSkipPitLaps
+end
+
+-- The window closed with seconds still owed. The car races on and is ruled
+-- out at the flag (race.pitRuling), as a missed joker is.
+function race.missPit(rec)
+  rec.pitServeBy, rec.pitMissed = nil, true
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Penalty not served in the pits '
+    .. 'within %d lap%s: disqualified at the flag', race.checkpointSkipPitLaps,
+    race.checkpointSkipPitLaps == 1 and '' or 's'))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s did not serve %.1fs in '
+    .. 'the pits in time: disqualified at the flag', displayName(rec), rec.penaltySeconds or 0))
+end
+
+-- finishSession, after the joker ruling. Returns how many were ruled out.
+function race.pitRuling()
+  local n = 0
+  for _, rec in pairs(players) do
+    if rec.status == 'finished' and rec.pitMissed then
+      rec.status = 'dsq'
+      rec.outReason = 'Disqualified - Penalty Not Served'
+      n = n + 1
+      print(string.format('[RaceManager] Pit ruling: %s %s (%.1fs owed)', rec.name,
+        rec.outReason, rec.penaltySeconds or 0))
+    end
+  end
+  return n
+end
+
+-- A stop began: what it may serve is what is owed NOW. Anything added while
+-- the car is held waits for the next stop.
+function race.pitStopBegan(rec)
+  rec.pitStopAt, rec.pitServing = nil, nil
+  if race.sessionKind ~= 'race' or race.pitServeMode() == 'off' or rec.pitMissed then return end
+  if (rec.penaltySeconds or 0) <= 0 then return end
+  rec.pitStopAt, rec.pitServing = race.time, rec.penaltySeconds
+end
+
+-- The client held the stop for the seconds it owed. Not watchable, but it
+-- cannot have been served sooner than that after the stop began.
+function RM_onPenaltyServed(pid, rawData)
+  if not sessionRunning() or race.sessionKind ~= 'race' then return end
+  local rec = players[pidKey(pid) or -1]
+  if not onTrack(rec) or not rec.pitStopAt then return end
+  local from, owed = rec.pitStopAt, rec.pitServing or 0
+  rec.pitStopAt, rec.pitServing = nil, nil
+  local claimed = decodeNumber(rawData, 'seconds')
+  if not claimed or claimed ~= claimed or claimed <= 0 then return end
+  local served = math.min(claimed, owed, rec.penaltySeconds or 0)
+  if served <= 0 then return end
+  if race.time - from < served - 0.5 then
+    print(string.format('[RaceManager] %s: %.1fs served %.1fs after the stop began: ignored',
+      rec.name, served, race.time - from))
+    return
+  end
+  rec.penaltySeconds = (rec.penaltySeconds or 0) - served
+  if rec.penaltySeconds < 0.05 then rec.penaltySeconds = 0 end
+  rec.penaltyServed = (rec.penaltyServed or 0) + served
+  if rec.penaltySeconds == 0 then rec.pitServeBy = nil end
+  local left = rec.penaltySeconds > 0
+    and string.format(' (%.1fs still owed)', rec.penaltySeconds) or ''
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Penalty served: %.1fs%s', served, left))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s served %.1fs in the pits%s',
+    displayName(rec), served, left))
+  broadcastState()
 end
 
 -- THE SERVE WINDOW, from RM_Tick. It runs on GREEN-FLAG RUNNING only: under a
@@ -5193,6 +5343,15 @@ function race.skipTick(dt, paused)
       if rec.liftDeadline then
         rec.liftWindowLeft = math.floor(math.max(rec.liftDeadline - race.time, 0) * 10 + 0.5) / 10
       end
+    end
+    -- A pit window is laps, on the server's own count: past its last lap with
+    -- seconds still owed, it is missed. Not while a stop serving it is held; a
+    -- stop that never reported back stops counting as held after 15 s.
+    local held = rec.pitStopAt and race.time - rec.pitStopAt < (rec.pitServing or 0) + 15
+    if rec.pitServeBy and onTrack(rec) and not held
+       and (rec.currentLap or 0) > rec.pitServeBy then
+      if (rec.penaltySeconds or 0) > 0 then race.missPit(rec) else rec.pitServeBy = nil end
+      changed = true
     end
   end
   if changed then broadcastState() end
@@ -5252,6 +5411,7 @@ function RM_onCheckpointSkip(pid, rawData)
       rec.liftDeadline = race.time + race.checkpointSkipLiftWindow   -- restarts on each penalty
       rec.liftWindowLeft = race.checkpointSkipLiftWindow
     end
+    if hasTime then race.owePitTime(rec) end
   end
 
   -- The driver's line (the HUD says the same, off the row), race control's,
@@ -5283,6 +5443,7 @@ function RM_onCheckpointSkip(pid, rawData)
         penalised * race.checkpointSkipPenaltySeconds, tail)
     end
   end
+  if penalised > 0 and hasTime then msg = msg .. race.pitServeHint() end
   MP.SendChatMessage(rec.id, '[RaceManager] ' .. msg)
 
   local ruling = {}
@@ -5361,13 +5522,21 @@ function RM_onSetCheckpointSkip(pid, rawData)
   if n and n == n then
     race.checkpointSkipLiftWindow = math.min(math.max(math.floor(n), 5), 300)
   end
+  if data.pitServe == 'off' or data.pitServe == 'optional' or data.pitServe == 'required' then
+    race.checkpointSkipPitServe = data.pitServe
+  end
+  n = tonumber(data.pitLaps)
+  if n and n == n then
+    race.checkpointSkipPitLaps = math.min(math.max(math.floor(n), 1), 20)
+  end
   broadcastState()
   print(string.format('[RaceManager] Checkpoint skips %s by %s: %d warning(s), then %s '
-    .. '(%.1fs, lift %.1fs within %ds)',
+    .. '(%.1fs, lift %.1fs within %ds, pit serving %s within %d laps)',
     race.enableCheckpointSkipPenalty and 'ENABLED' or 'disabled',
     tostring(MP.GetPlayerName(pid) or pid), race.checkpointSkipWarningsAllowed,
     race.checkpointSkipPenaltyType, race.checkpointSkipPenaltySeconds,
-    race.checkpointSkipLiftSeconds, race.checkpointSkipLiftWindow))
+    race.checkpointSkipLiftSeconds, race.checkpointSkipLiftWindow,
+    race.checkpointSkipPitServe, race.checkpointSkipPitLaps))
 end
 
 -- Clear Results Cache: delete every saved results file. ADMIN ONLY (the
@@ -5892,7 +6061,10 @@ local function applyConfigTable(data)
   num('checkpointSkipLiftSeconds', 0.5, 30)
   num('checkpointSkipLiftWindow', 5, 300)
   num('checkpointSkipMaxGates', 1, 5)
+  str('checkpointSkipPitServe', { off = true, optional = true, required = true })
+  num('checkpointSkipPitLaps', 1, 20)
   -- Whole numbers where a count is meant, and half seconds where a time is.
+  CFG.checkpointSkipPitLaps         = math.floor(CFG.checkpointSkipPitLaps)
   CFG.checkpointSkipWarningsAllowed = math.floor(CFG.checkpointSkipWarningsAllowed)
   CFG.checkpointSkipLiftWindow      = math.floor(CFG.checkpointSkipLiftWindow)
   CFG.checkpointSkipMaxGates        = math.floor(CFG.checkpointSkipMaxGates)
@@ -5995,6 +6167,8 @@ local function configFileText()
     checkpointSkipPenaltySeconds  = CFG.checkpointSkipPenaltySeconds,
     checkpointSkipLiftSeconds     = CFG.checkpointSkipLiftSeconds,
     checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow,
+    checkpointSkipPitServe        = CFG.checkpointSkipPitServe,
+    checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps,
     checkpointSkipMaxGates        = CFG.checkpointSkipMaxGates,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
@@ -6052,6 +6226,8 @@ local function applyConfigToRace()
   race.checkpointSkipPenaltySeconds  = CFG.checkpointSkipPenaltySeconds
   race.checkpointSkipLiftSeconds     = CFG.checkpointSkipLiftSeconds
   race.checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow
+  race.checkpointSkipPitServe        = CFG.checkpointSkipPitServe
+  race.checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
   race.readyCheck     = CFG.readyCheck
@@ -10119,6 +10295,7 @@ function onInit()
   MP.RegisterEvent('RM_StartPositionCount', 'RM_onStartPositionCount')
   MP.RegisterEvent('RM_SetPointToPoint',    'RM_onSetPointToPoint')
   MP.RegisterEvent('RM_PitStop',            'RM_onPitStop')
+  MP.RegisterEvent('RM_PenaltyServed',      'RM_onPenaltyServed')
   MP.RegisterEvent('RM_HoldPos',            'RM_onHoldPos')
   -- Qualifying session rules
   MP.RegisterEvent('RM_SetGhostQuali',    'RM_onSetGhostQuali')

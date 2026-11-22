@@ -6,6 +6,29 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Added
+
+- **Hide the checkpoint pillars for yourself.** A pillar button beside 🔊, on
+  the menu bar and on the driver bar, turns the checkpoint poles off on your
+  screen only, and is remembered. Gates still have to be driven through and
+  still count; the joker gate, the pit lane and direction markers stay. See
+  [Seeing the checkpoints](docs/REFERENCE.md#seeing-the-checkpoints).
+- **Serve track-cut penalties in the pits.** A new **Serve in pits** rule beside
+  the checkpoint-skip settings. **Optional**: a driver who owes penalty seconds
+  and stops in a pit stall is held that much longer and the seconds come off.
+  **Required**: they must do it within the laps you set, or they are
+  disqualified at the flag. Off as shipped, and Required runs as Optional on a
+  layout with no stalls. See
+  [Serving penalty seconds in the pits](docs/REFERENCE.md#serving-penalty-seconds-in-the-pits).
+- **Race control on a second screen or a phone.** Admins can turn on a race
+  control page in the Feed panel: start, flags, caution, restart and end, the
+  field with a button to put your camera on any driver, in a browser on this PC
+  or on a phone on your network. It runs through your own game's login, has its
+  own key, and is off as shipped. See
+  [Race control page](docs/REFERENCE.md#race-control-page).
+
 ## 0.28.2 - The style editor link
 
 #### Fixed

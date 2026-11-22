@@ -1,0 +1,381 @@
+<!doctype html>
+<!--
+  Phoenix Race Manager: RACE CONTROL, served by the game at /control (feed.lua).
+
+  The admin's race-night buttons on a second screen or a phone, so the game can
+  spectate with nothing on screen. Off until it is turned on in the Feed panel,
+  which gives the link: the key rides the fragment (#key=...), which no request
+  carries, and goes up only in the X-PRM-Key header.
+
+  Reads /stream (or /live.json) for the board, and /control.json once a second
+  for what decides the buttons. Sends a NAME (POST /control), never code; the
+  game calls the same function its own button calls. Text is drawn with
+  textContent only.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>PRM Race Control</title>
+<style>
+  :root {
+    --page: #0d0f14;
+    --card: #161a23;
+    --edge: #272c3a;
+    --text: #e9ecf3;
+    --muted: #98a1b3;
+    --accent: #ff8a3d;
+    --green: #3ddc84;
+    --yellow: #ffd23f;
+    --red: #ff4d4f;
+    --blue: #4ea8ff;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--page); color: var(--text); }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 12px 16px 32px; max-width: 760px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; letter-spacing: .02em; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--edge); color: var(--muted); white-space: nowrap; }
+  .pill.ok { color: var(--green); border-color: rgba(61, 220, 132, .45); }
+  .pill.bad { color: var(--red); border-color: rgba(255, 77, 79, .45); }
+  .card { background: var(--card); border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  .status { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
+  .phase { font-size: 20px; font-weight: 700; }
+  .sub { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .flag { font-weight: 700; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; font-size: 13px; letter-spacing: .05em; grid-row: span 2; }
+  .flag.green { background: rgba(61, 220, 132, .15); color: var(--green); }
+  .flag.yellow { background: rgba(255, 210, 63, .18); color: var(--yellow); }
+  .flag.red { background: rgba(255, 77, 79, .2); color: var(--red); }
+  .note { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  .warn { color: var(--yellow); }
+  .buttons { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  button { font: inherit; font-weight: 600; color: var(--text); background: #222837; border: 1px solid var(--edge); border-radius: 8px; padding: 12px 10px; min-height: 48px; cursor: pointer; }
+  button:hover { border-color: #3a4256; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.go { background: rgba(61, 220, 132, .16); border-color: rgba(61, 220, 132, .5); }
+  button.yellow { background: rgba(255, 210, 63, .14); border-color: rgba(255, 210, 63, .5); }
+  button.red { background: rgba(255, 77, 79, .16); border-color: rgba(255, 77, 79, .55); }
+  button.on { box-shadow: inset 0 0 0 2px currentColor; }
+  button.armed { background: var(--accent); border-color: var(--accent); color: #111; }
+  .label { grid-column: 1 / -1; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
+  .pending { grid-column: 1 / -1; color: var(--yellow); font-weight: 600; padding: 6px 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td { padding: 7px 6px; border-top: 1px solid var(--edge); vertical-align: middle; }
+  td.pos { width: 2.6em; color: var(--muted); font-weight: 700; }
+  td.name { font-weight: 600; overflow-wrap: anywhere; }
+  td.name small { display: block; font-weight: 400; color: var(--muted); }
+  td.gap { text-align: right; color: var(--muted); white-space: nowrap; }
+  td.act { width: 1%; }
+  td.act button { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+  tr.cam td.name { color: var(--blue); }
+  tr.out td { opacity: .5; }
+  .toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); background: #2a3142; border: 1px solid var(--edge); padding: 10px 14px; border-radius: 8px; max-width: calc(100% - 32px); }
+  .toast.bad { border-color: var(--red); color: #ffd6d6; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Race Control</h1>
+  <span id="role" class="pill" hidden></span>
+  <span id="conn" class="pill">Connecting</span>
+</header>
+
+<div id="problem" class="card warn" hidden></div>
+
+<section class="card status">
+  <div id="phase" class="phase">Waiting</div>
+  <div id="flag" class="flag green">Green</div>
+  <div id="sub" class="sub"></div>
+</section>
+
+<section class="card">
+  <div id="controls" class="buttons"></div>
+  <p id="adminNote" class="note warn" hidden>This game is not logged in as an admin. Log in from the Race Manager panel in the game; the buttons appear here once it is.</p>
+</section>
+
+<section class="card">
+  <h2>Field</h2>
+  <table><tbody id="board"></tbody></table>
+  <p class="note">Watch puts the game's camera on that driver.</p>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+  var KEY = ((location.hash || '').match(/key=([a-z0-9]{20})/) || [])[1] || '';
+  var ctl = null;           // /control.json
+  var doc = null;           // the feed document
+  var armed = null;         // the action waiting for its second tap
+  var armTimer = null, toastTimer = null, lastSig = '';
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) { e.className = cls; }
+    if (text !== undefined && text !== null) { e.textContent = String(text); }
+    return e;
+  }
+
+  function toast(msg, bad) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast' + (bad ? ' bad' : '');
+    t.hidden = false;
+    if (toastTimer) { clearTimeout(toastTimer); }
+    toastTimer = setTimeout(function () { t.hidden = true; }, bad ? 6000 : 2500);
+  }
+  function problem(msg) {
+    var p = $('problem');
+    p.textContent = msg || '';
+    p.hidden = !msg;
+  }
+
+  // ---- Sending ------------------------------------------------------------
+  function send(action, extra, label) {
+    var body = { action: action };
+    if (extra) { for (var k in extra) { if (extra.hasOwnProperty(k)) { body[k] = extra[k]; } } }
+    fetch('/control', {
+      method: 'POST', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-PRM-Key': KEY },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok && j && j.ok, j: j }; },
+        function () { return { ok: false, j: null }; });
+    }).then(function (res) {
+      if (res.ok) { toast('Sent: ' + label); pollCtl(); }
+      else { toast((res.j && res.j.error) || 'The game refused it', true); }
+    }).catch(function () { toast('Could not reach the game', true); });
+  }
+
+  // Destructive actions take two taps, four seconds apart at most. `id` names
+  // the button (three flag buttons send one action).
+  function press(id, opts, label) {
+    if (opts.confirm && armed !== id) {
+      armed = id;
+      if (armTimer) { clearTimeout(armTimer); }
+      armTimer = setTimeout(function () { armed = null; render(true); }, 4000);
+      render(true);
+      return;
+    }
+    armed = null;
+    if (armTimer) { clearTimeout(armTimer); armTimer = null; }
+    send(opts.action || id, opts.extra, label);
+    render(true);
+  }
+
+  // ---- The buttons, as the panel's race control bar ---------------------
+  function button(box, label, id, opts) {
+    opts = opts || {};
+    var b = el('button', opts.cls || '', armed === id ? (opts.confirmText || 'Tap again: ' + label) : label);
+    if (armed === id) { b.className += ' armed'; }
+    if (opts.on) { b.className += ' on'; }
+    if (opts.disabled) { b.disabled = true; }
+    if (opts.title) { b.title = opts.title; }
+    b.addEventListener('click', function () { press(id, opts, label); });
+    box.appendChild(b);
+  }
+
+  function renderControls() {
+    var box = $('controls');
+    box.textContent = '';
+    var s = ctl;
+    $('adminNote').hidden = !s || s.admin;
+    if (!s || !s.admin) { return; }
+    var phase = s.phase;
+    var underWay = phase === 'countdown' || phase === 'racing' || phase === 'qualifying';
+    var raceUnderWay = phase === 'countdown' || phase === 'racing';
+    var running = phase === 'racing' || phase === 'qualifying';
+    var quali = s.kind === 'quali';
+    var paceStart = s.paceLap && !s.pointToPoint && !quali;
+    var readyShown = phase === 'grid' && s.readyCheck && s.readyTotal > 0;
+    var nobody = readyShown && s.ready === 0;
+    var partial = readyShown && s.ready > 0 && s.ready < s.readyTotal;
+
+    // A heading only over buttons this phase has.
+    if (!raceUnderWay) { box.appendChild(el('div', 'label', 'Session')); }
+    if (!underWay) { button(box, 'Start Quali', 'startQualifying'); }
+    if (!raceUnderWay) { button(box, 'Generate Grid', 'generateGrid'); }
+    if (phase === 'grid') {
+      var notReady = s.readyTotal - s.ready;
+      var startOpts = {
+        cls: 'go', disabled: nobody, confirm: partial,
+        confirmText: 'Start without ' + notReady + '?',
+        title: nobody ? 'Nobody is ready yet: wait, or Ready All' : ''
+      };
+      if (paceStart) { button(box, 'Start Race', 'startRace', startOpts); }
+      else { button(box, 'Start Countdown', 'startCountdown', startOpts); }
+      if (readyShown && s.ready < s.readyTotal) { button(box, 'Ready All (' + s.ready + '/' + s.readyTotal + ')', 'readyAll'); }
+    }
+
+    if (running) {
+      box.appendChild(el('div', 'label', 'Flags'));
+      button(box, s.flag === 'red' ? 'Lift red' : 'Red flag', 'flag-red', {
+        action: 'flag', cls: 'red', on: s.flag === 'red',
+        extra: { flag: s.flag === 'red' ? 'green' : 'red' }
+      });
+      if (quali) {
+        button(box, 'Yellow flag', 'flag-yellow', { action: 'flag', cls: 'yellow',
+          on: s.flag === 'yellow', extra: { flag: 'yellow' } });
+        button(box, 'Green flag', 'flag-green', { action: 'flag', cls: 'go',
+          on: s.flag === 'green', extra: { flag: 'green' } });
+      }
+      if (s.pacing) {
+        button(box, 'Green flag', 'flag-green', { action: 'flag', cls: 'go', extra: { flag: 'green' },
+          title: 'End the formation lap now and go racing' });
+      }
+    }
+    var cautionOk = phase === 'racing' && !quali && !s.pacing;
+    if (cautionOk) {
+      if (!s.caution && !s.cautionPending) { button(box, 'Caution', 'caution', { cls: 'yellow' }); }
+      if (s.cautionPending) { box.appendChild(el('div', 'pending', 'Racing back to the line')); }
+      if (s.caution && !s.restartPending) { button(box, 'Restart', 'restart', { cls: 'go' }); }
+      if (s.caution && s.restartPending) { button(box, 'Cancel restart', 'cancelRestart', { cls: 'yellow' }); }
+    }
+
+    box.appendChild(el('div', 'label', 'End'));
+    if (underWay) { button(box, 'End Session', 'endSession', { cls: 'red', confirm: true }); }
+    if (!quali && raceUnderWay) {
+      button(box, 'Restart from grid', 'restartFromGrid', { cls: 'red', confirm: true,
+        title: 'Stop this race and line the field up again on the same grid' });
+    }
+    button(box, 'Reset', 'resetSession', { confirm: true,
+      title: 'Clear the session for the next one, qualifying included' });
+  }
+
+  // ---- The status line and the board -------------------------------------
+  function renderStatus() {
+    var s = doc && doc.session;
+    var c = ctl;
+    var phase = (s && s.phaseText) || (c && c.phase) || 'Waiting';
+    $('phase').textContent = phase;
+    var sub = [];
+    if (s) {
+      if (s.lapText) { sub.push(s.lapText); }
+      if (s.timeLeftText) { sub.push(s.timeLeftText + ' left'); }
+      else if (s.clockText) { sub.push(s.clockText); }
+      if (s.layout) { sub.push(s.layout); }
+    }
+    $('sub').textContent = sub.join('  ·  ');
+    var flag = (c && c.flag) || (s && s.flag) || 'green';
+    var f = $('flag');
+    f.className = 'flag ' + (flag === 'red' || flag === 'yellow' ? flag : 'green');
+    var word = (s && s.flagText) || (flag === 'red' ? 'Red flag' : flag === 'yellow' ? 'Yellow' : 'Green');
+    // A red flag out under a caution is still a red flag.
+    if (c && c.caution && flag !== 'red') { word = 'Caution'; f.className = 'flag yellow'; }
+    f.textContent = word;
+  }
+
+  function renderBoard() {
+    var body = $('board');
+    body.textContent = '';
+    var list = (doc && doc.drivers) || [];
+    if (!list.length) {
+      var tr = el('tr');
+      var td = el('td', 'name', 'Nobody in the field yet.');
+      tr.appendChild(td);
+      body.appendChild(tr);
+      return;
+    }
+    list.forEach(function (d) {
+      var tr = el('tr', (d.onCamera ? 'cam' : '') + (d.out ? ' out' : ''));
+      tr.appendChild(el('td', 'pos', d.posText || d.position || ''));
+      var name = el('td', 'name', d.name || '');
+      var extra = [];
+      if (d.lapText) { extra.push(d.lapText); }
+      if (d.statusText && d.out) { extra.push(d.statusText); }
+      if (d.penalty) { extra.push('+' + Number(d.penalty).toFixed(1) + 's pen'); }
+      if (extra.length) { name.appendChild(el('small', null, extra.join('  ·  '))); }
+      tr.appendChild(name);
+      tr.appendChild(el('td', 'gap', d.gapText || d.intervalText || ''));
+      var act = el('td', 'act');
+      if (d.id !== null && d.id !== undefined) {
+        var b = el('button', d.onCamera ? 'on' : '', d.onCamera ? 'Watching' : 'Watch');
+        b.addEventListener('click', function () { send('watch', { id: d.id }, 'camera on ' + (d.name || 'driver')); });
+        act.appendChild(b);
+      }
+      tr.appendChild(act);
+      body.appendChild(tr);
+    });
+  }
+
+  function render(force) {
+    var sig = JSON.stringify(ctl) + '|' + armed;
+    if (force || sig !== lastSig) { lastSig = sig; renderControls(); }
+    renderStatus();
+  }
+
+  // ---- Reading ------------------------------------------------------------
+  function setConn(ok, text) {
+    var c = $('conn');
+    c.textContent = text;
+    c.className = 'pill ' + (ok ? 'ok' : 'bad');
+  }
+
+  // The page's own reasons, told apart from the browser's network errors.
+  function said(msg) { var e = new Error(msg); e.said = true; return e; }
+
+  function pollCtl() {
+    fetch('/control.json', { cache: 'no-store', headers: { 'X-PRM-Key': KEY } })
+      .then(function (r) {
+        if (r.status === 404) { throw said('Race control is off. Turn it on in the Feed panel.'); }
+        if (r.status === 403) { throw said('This link\'s key is wrong or old. Copy the race control link from the Feed panel again.'); }
+        if (r.status === 429) { throw said('Too many wrong keys. Try again in a minute.'); }
+        return r.json();
+      })
+      .then(function (j) {
+        ctl = j;
+        problem(j.connected ? '' : 'The game is not connected to a server.');
+        setConn(j.connected, j.connected ? 'Connected' : 'Not connected');
+        var role = $('role');
+        role.hidden = !j.admin;
+        role.textContent = j.role === 'moderator' ? 'Moderator' : 'Admin';
+        role.className = 'pill ok';
+        render(false);
+      })
+      .catch(function (e) {
+        ctl = null;
+        setConn(false, 'Offline');
+        problem(e && e.said ? e.message : 'Cannot reach the game. Is it running, with the Feed on?');
+        render(false);
+      });
+  }
+
+  function showDoc(j) { doc = j; renderStatus(); renderBoard(); }
+
+  var pollTimer = null;
+  function pollDoc() {
+    fetch('/live.json', { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(showDoc).catch(function () { /* the control poll says why */ });
+  }
+  function connect() {
+    if (typeof EventSource === 'undefined') { pollTimer = setInterval(pollDoc, 1000); pollDoc(); return; }
+    var es = new EventSource('/stream');
+    es.addEventListener('state', function (ev) {
+      try { showDoc(JSON.parse(ev.data)); } catch (e) { /* a torn frame: the next one is whole */ }
+    });
+    es.addEventListener('error', function () {
+      if (!pollTimer) { pollTimer = setInterval(pollDoc, 2000); }
+    });
+    es.addEventListener('open', function () {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    });
+  }
+
+  if (!KEY) {
+    problem('This link has no key. Copy the race control link from the Feed panel in the game.');
+  }
+  render(true);
+  pollCtl();
+  setInterval(pollCtl, 1000);
+  pollDoc();
+  connect();
+})();
+</script>
+</body>
+</html>
