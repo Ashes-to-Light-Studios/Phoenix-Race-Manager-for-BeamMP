@@ -187,8 +187,10 @@ local files = {}
 jsonReadFile = function (path) return files[path] end
 jsonWriteFile = function (path, data) files[path] = data; return true end
 local statusPushes = {}
+local copyPushes = {}
 guihooks = { trigger = function (name, data)
   if name == 'RaceManagerFeed' then statusPushes[#statusPushes + 1] = data end
+  if name == 'RaceManagerFeedCopy' then copyPushes[#copyPushes + 1] = data end
 end }
 log = function () end
 local overlayOnDisk = true
@@ -1205,6 +1207,30 @@ do
   check(live().camera == NULL, 'not connected: nobody')
 
   getPlayerVehicle, be, commands, MPVehicleGE = nil, nil, nil, nil
+end
+
+-- Copy editor link: 0.40's openWebBrowser refuses 127.0.0.1 (domain filter).
+do
+  local clip, opened = nil, nil
+  setClipboard = function (s) clip = s end
+  openWebBrowser = function (u) opened = u end
+  local key = S.settings.styleKey
+  feed.feedOpenStyle()
+  check(type(key) == 'string' and clip ~= nil
+    and clip:match('^http://127%.0%.0%.1:%d+/style#key=(.+)$') == key,
+    'the editor link, key and all, goes to the clipboard (got ' .. tostring(clip) .. ')')
+  check(opened == nil, 'and no browser is tried once it is copied')
+  check(copyPushes[#copyPushes] and copyPushes[#copyPushes].copied == true,
+    'the panel hears it was copied')
+  setClipboard = function () error('no clipboard') end
+  feed.feedOpenStyle()
+  check(copyPushes[#copyPushes].copied == false, 'a copy that fails says so, and the panel shows the link')
+  check(opened ~= nil, 'with the browser tried as a fallback')
+  setClipboard = nil
+  opened = nil
+  feed.feedOpenStyle()
+  check(copyPushes[#copyPushes].copied == false and opened ~= nil, 'no clipboard call at all: the same')
+  setClipboard, openWebBrowser = nil, nil
 end
 feed.feedStop('unload')
 

@@ -1730,10 +1730,20 @@ function D.feedNewKey()
   pushStatus()
 end
 
--- Open the style editor in the system browser, where the game can.
+-- The style editor's link, onto the clipboard. The game will not open a page on
+-- this PC: 0.40's openWebBrowser logs "unable to open webpage due to domain
+-- filter" for 127.0.0.1 and does nothing. The panel hears whether it copied.
 function D.feedOpenStyle()
   local url = status().urls.style
-  if url and type(openWebBrowser) == 'function' then pcall(openWebBrowser, url) end
+  local copied = false
+  if url and type(setClipboard) == 'function' then
+    copied = pcall(setClipboard, url)
+  end
+  -- INERT on 0.40 (the domain filter). Kept for a game with no setClipboard.
+  if url and not copied and type(openWebBrowser) == 'function' then pcall(openWebBrowser, url) end
+  if type(guihooks) == 'table' and type(guihooks.trigger) == 'function' then
+    pcall(guihooks.trigger, 'RaceManagerFeedCopy', { copied = copied })
+  end
 end
 
 -- The overlay folder, for logos and fonts by hand.

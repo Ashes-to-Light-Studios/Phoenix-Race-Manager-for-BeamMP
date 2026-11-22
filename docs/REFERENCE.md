@@ -2959,8 +2959,9 @@ turn it off; the setting is kept in your BeamNG user folder
   shows the address the other PC uses.
 - **The links.** Once it is running the panel lists the overlay and data links;
   click one to select it, ready to copy. It also counts what is reading it.
-- **The overlay's look.** **Open style editor** opens the
-  [style editor](#styling-the-overlay) in your browser; **Overlay folder** opens
+- **The overlay's look.** **Copy editor link** copies the
+  [style editor](#styling-the-overlay)'s link, to paste into your browser's
+  address bar (the game will not open a page on your own PC); **Overlay folder** opens
   the folder its logos and fonts are kept in; **Show link** shows the editor's
   link to paste into a browser yourself; **New key** makes the old links stop
   working.
@@ -3043,8 +3044,10 @@ words are yours to change: next.
 
 ### Styling the overlay
 
-**The style editor.** On the Feed panel, **Open style editor**. It opens in your
-browser: every setting on the left, and on the right the five views previewing
+**The style editor.** On the Feed panel, **Copy editor link**, then paste it
+into your browser's address bar. BeamNG only opens websites it knows, never a
+page on your own PC, so the game cannot open it for you. In your browser: every
+setting on the left, and on the right the five views previewing
 what you are doing, on a sample race (or **Live**, the session itself) over a
 checker, a track, dark or light. Start from a **preset** (Phoenix, Midnight,
 Paddock, Neon, Mono, Carbon) and change what you like. Nothing changes on stream
@@ -3058,9 +3061,9 @@ and fonts it uses along with it.
 **The style key.** Saving and uploading take a key. The Feed panel's editor link
 carries it after `#key=`, a part of an address no browser ever sends anywhere,
 and the page takes it out of the address bar as soon as it opens. Without it the
-page still shows and previews, but cannot save. Where the game cannot open your
-browser, **Show link** shows the link to paste in yourself: it can change what
-your stream shows, so keep it, and that panel, off stream. **New key** makes a
+page still shows and previews, but cannot save. **Show link** shows the same
+link in the panel, to copy by hand (it also appears if copying fails). It can
+change what your stream shows, so keep it, and that panel, off stream. **New key** makes a
 new one; links already given out stop working. Ten wrong keys in a minute shut
 writes for a minute.
 
@@ -3288,8 +3291,9 @@ use and ignore the rest.
   from the Feed panel again: after **New key**, older links stop working.
 - **"Too many wrong keys".** Ten wrong keys in a minute shut writes for a
   minute. Wait, then open the editor from the Feed panel.
-- **The editor does not open from the game.** **Show link**, and paste it into
-  your browser.
+- **Nothing opens when I copy the editor link.** It is not meant to: paste it
+  into your browser's address bar. If the panel shows the link instead of
+  "Copied", select it and copy it yourself.
 - **A team logo does not show.** A logo appears only once it has loaded, and a
   link that fails is left out. Discord attachment links stop working within a
   day: put the logo somewhere lasting, or upload it in the style editor and pick

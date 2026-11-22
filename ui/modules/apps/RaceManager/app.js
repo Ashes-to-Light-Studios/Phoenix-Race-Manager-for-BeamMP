@@ -1534,7 +1534,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.28.1';
+      var APP_BUILD = '0.28.2';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -1884,7 +1884,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
                       port: 8128, lan: false, error: null, clients: 0, streams: 0,
                       lanIp: null, urls: {} };
       $scope.feedUi = { port: '8128', portEditing: false, lanConfirm: false,
-                        showKey: false, newKeyConfirm: false };
+                        showKey: false, newKeyConfirm: false, copied: false };
       // Built when the status arrives, not per digest: ng-repeat over a fresh
       // array of fresh objects never settles.
       $scope.feedLinks = [];
@@ -1944,14 +1944,30 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.feedSelect = function ($event) {
         try { $event.target.select(); } catch (e) { /* not an input */ }
       };
-      // The overlay's look: the style editor opens in the PC's browser (the
+      // The overlay's look: the style editor's link goes to the clipboard, since
+      // the game will not open a page on this PC (feed.lua feedOpenStyle). The
       // link carries the style key, so it is shown only on request, with a
-      // warning to keep it off stream), and the folder its files live in.
+      // warning to keep it off stream. And the folder its files live in.
+      var feedCopyTimer = null;
       $scope.feedOpenStyle = function () {
+        $scope.feedUi.copied = false;
         bngApi.engineLua('raceManager.feedOpenStyle()');
-        // Where the game cannot open a browser, the link is the way in.
-        if (!$scope.feed.canOpen) { $scope.feedUi.showKey = true; }
       };
+      // Not copied: the link is shown, to copy by hand.
+      $scope.$on('RaceManagerFeedCopy', function (event, data) {
+        $scope.$evalAsync(function () {
+          var ok = !!(data && data.copied);
+          $scope.feedUi.copied = ok;
+          if (!ok) { $scope.feedUi.showKey = true; }
+          if (feedCopyTimer) { clearTimeout(feedCopyTimer); feedCopyTimer = null; }
+          if (ok) {
+            feedCopyTimer = setTimeout(function () {
+              feedCopyTimer = null;
+              $scope.$evalAsync(function () { $scope.feedUi.copied = false; });
+            }, 8000);
+          }
+        });
+      });
       $scope.feedOpenFolder = function () { bngApi.engineLua('raceManager.feedOpenFolder()'); };
       $scope.feedToggleKey = function () { $scope.feedUi.showKey = !$scope.feedUi.showKey; };
       $scope.feedNewKeyAsk = function () { $scope.feedUi.newKeyConfirm = true; };

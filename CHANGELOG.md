@@ -6,6 +6,16 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.28.2 - The style editor link
+
+#### Fixed
+
+- **The style editor button did nothing.** BeamNG only opens websites it knows
+  and refuses a page on your own PC, so **Open style editor** never reached
+  your browser. It is now **Copy editor link**: it copies the editor's link,
+  the panel says "Copied", and you paste it into your browser's address bar. If
+  the copy fails, the panel shows the link to copy by hand.
+
 ## 0.28.1 - Broadcast feed: who the camera is on
 
 #### Added

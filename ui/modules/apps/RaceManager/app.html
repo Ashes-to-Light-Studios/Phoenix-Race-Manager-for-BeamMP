@@ -634,7 +634,8 @@
     <div class="rm-mapvote-row" ng-if="feed.running">
       <span class="rm-layouts-hint">The overlay's look:</span>
       <button class="rm-btn rm-btn-mini rm-btn-start" ng-click="feedOpenStyle()"
-              title="Colors, logos, fonts and words, with a live preview, in your browser">Open style editor</button>
+              title="Copies the editor's link to paste into your browser. Keep it off stream.">Copy editor link</button>
+      <span class="rm-layouts-hint" ng-if="feedUi.copied">Copied: paste it into your browser's address bar.</span>
       <button class="rm-btn rm-btn-mini" ng-click="feedOpenFolder()"
               title="Where the style and its logos and fonts are kept">Overlay folder</button>
       <button class="rm-btn rm-btn-mini" ng-click="feedToggleKey()">{{ feedUi.showKey ? 'Hide link' : 'Show link' }}</button>
