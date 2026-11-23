@@ -4,8 +4,19 @@ name: Build RaceManager Package
 # RM_BUILD in the source, so bumping is an edit to the files and a commit, not a
 # dropdown at release time. Offering the choice here is what let a tag be
 # invented that the tree it tagged did not agree with.
+#
+# A MERGE TO main PUBLISHES when it carries a new version (tools/release.py
+# sets it): `gate` lets a push through only while RM_BUILD has no tag. A run by
+# hand always goes on, as before.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+
+# One release at a time: two quick merges must not race for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 # AN EXPLICIT BLOCK SETS EVERY SCOPE IT DOES NOT NAME TO none, which is the
 # trap here rather than the two lines themselves. `contents: write` alone is
@@ -27,7 +38,33 @@ permissions:
 # publish. A release page missing its installer, or a tag with no release, is
 # what doing it in one pass would leave behind when the Windows half fails.
 jobs:
+  # --- Anything to publish? ---
+  # A push stops here, green, when vX.Y.Z for the source's RM_BUILD exists:
+  # an ordinary merge, not a release. The later jobs skip with it. An unread
+  # version goes on, so `package` fails with the real reason.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: New version?
+        id: check
+        run: |
+          v=$(sed -n "s/^local RM_BUILD = '\([^']*\)'.*/\1/p" server/RaceManager/main.lua | head -1)
+          publish=true
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ -n "$v" ] \
+             && git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+            publish=false
+            echo "v$v is already released: nothing to publish"
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
   package:
+    needs: gate
+    if: needs.gate.outputs.publish == 'true'
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.new_tag }}
@@ -42,8 +79,8 @@ jobs:
         # Nothing in how they are CALLED changed. checkout v5 is the runtime
         # move, v6 writes credentials to a separate file, v7 is ESM and blocks
         # checking out fork PRs for pull_request_target and workflow_run -- and
-        # this workflow is workflow_dispatch only, so that last one cannot
-        # apply. upload-artifact v5 and v6 are the same runtime move twice over
+        # this workflow runs on dispatch and pushes to main only, so that last
+        # one cannot apply. upload-artifact v5 and v6 are the same runtime move twice over
         # and v7 adds an optional `archive` input nothing here passes.
         # action-gh-release v3 is a pure runtime move; tag_name and files are
         # untouched.
