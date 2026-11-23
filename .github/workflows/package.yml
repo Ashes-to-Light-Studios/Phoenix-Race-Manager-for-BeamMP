@@ -227,11 +227,14 @@ jobs:
           cat notes.md
 
       # --- Hand the files to the next two jobs ---
+      # 14 days on every artifact: the release keeps the files, and at the
+      # 90-day default every run's copies piled up.
       - name: Upload release files
         uses: actions/upload-artifact@v7
         with:
           name: release-files
           if-no-files-found: error
+          retention-days: 14
           path: |
             RaceManager-${{ steps.version.outputs.new_tag }}.zip
             PRM-Install.sh
@@ -242,6 +245,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: RaceManager-${{ steps.version.outputs.new_tag }}
+          retention-days: 14
           path: package/
 
   # --- The Windows installer: the release zip inside a small exe ---
@@ -274,6 +278,7 @@ jobs:
         with:
           name: windows-installer
           if-no-files-found: error
+          retention-days: 14
           path: dist/PRM-Setup.exe
 
   # --- Tag and publish, once every file has passed ---
