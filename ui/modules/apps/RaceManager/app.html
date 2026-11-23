@@ -3126,6 +3126,33 @@
                   title="Save what is placed right now as a NEW layout under this name">
             Save As New
           </button>
+          <button class="rm-btn rm-btn-grid" ng-click="openExport()"
+                  ng-disabled="!layouts.length"
+                  title="Write saved layouts to this map's .prm.json file to share. Nothing in the file is replaced.">
+            Export…
+          </button>
+        </div>
+        <!-- EXPORT: ticked saved layouts, full copies from the server, merged
+             into <map>.prm.json in this PC's settings/raceManager/layouts. -->
+        <div class="rm-export" ng-if="exportUi.open">
+          <div class="rm-layouts-row">
+            <span class="rm-layouts-map">Tick the layouts to export</span>
+            <button class="rm-btn rm-btn-mini" ng-click="exportAll(true)">All</button>
+            <button class="rm-btn rm-btn-mini" ng-click="exportAll(false)">None</button>
+          </div>
+          <div class="rm-export-list">
+            <label class="rm-export-row" ng-repeat="l in layouts track by l.name">
+              <input type="checkbox" ng-model="exportUi.ticked[l.name]">
+              {{ l.name }} <span class="rm-layouts-map">{{ l.checkpoints.length }} gates</span>
+            </label>
+          </div>
+          <div class="rm-layouts-row">
+            <button class="rm-btn rm-btn-start" ng-click="sendExport()" ng-disabled="!exportCount()"
+                    title="Add them to this map's file. An identical layout already in it is skipped; a different one with the same name goes in as Name (2).">
+              Export {{ exportCount() }}
+            </button>
+            <button class="rm-btn rm-btn-mini" ng-click="exportUi.open = false">Cancel</button>
+          </div>
         </div>
         <!-- Open, Overwrite, Delete and Practice work on the layout SELECTED
              here, so none needs a name typed. Loading from the Layouts menu
@@ -3181,6 +3208,52 @@
                   ng-click="togglePracticeApproval()" ng-disabled="!layoutUi.selected"
                   title="Let any driver load this track on their own between sessions and be timed on it. Their laps are theirs alone: nothing is scored, reported or saved. Off by default.">
             Practice: {{ practiceApproved(layoutUi.selected) ? 'OPEN' : 'closed' }}
+          </button>
+        </div>
+        <!-- FROM OUTSIDE THE SERVER: shared .prm.json files in this PC's
+             settings/raceManager/layouts, and BeamNG's own races on this map.
+             Opens privately like Open in Editor; nothing reaches the server
+             until Save As New. -->
+        <div class="rm-layouts-row">
+          <div class="rm-layout-dropdown" ng-class="{'rm-layout-dropdown-open': libraryUi.open}">
+            <button type="button" class="rm-layout-trigger"
+                    ng-class="{'rm-layout-trigger-empty': !libraryUi.selected}"
+                    ng-click="toggleLibraryDropdown()" ng-disabled="!canEdit()"
+                    title="Shared layout files for this map, then BeamNG's own time trials, AI races and rally stages">
+              <span class="rm-layout-trigger-label">{{ libraryLabel() }}</span>
+              <span class="rm-layout-caret">▾</span>
+            </button>
+            <div class="rm-layout-menu rm-library-menu" ng-if="libraryUi.open">
+              <div class="rm-layout-option"
+                   ng-repeat="t in libraryUi.tracks track by t.id"
+                   ng-class="{'rm-layout-option-active': t.id === libraryUi.selected}"
+                   ng-click="pickLibrary(t)">
+                {{ t.name }} <span class="rm-layouts-map">{{ libraryDetail(t) }}</span>
+              </div>
+              <div class="rm-layout-option rm-cup-off" ng-if="!libraryUi.tracks.length">
+                {{ libraryUi.loaded ? 'No shared files or stock races for this map' : 'Reading…' }}
+              </div>
+              <div class="rm-layout-option rm-cup-off" ng-if="libraryUi.elsewhere">
+                {{ libraryUi.elsewhere }} shared layout(s) are for other maps
+              </div>
+            </div>
+          </div>
+          <button class="rm-btn rm-btn-grid" ng-click="openLibrary()"
+                  ng-disabled="!libraryUi.selected || !canEdit()"
+                  title="Open it in YOUR editor only. Check it, then Save As New to keep it on this server.">
+            Open
+          </button>
+          <button class="rm-btn rm-btn-grid" ng-click="importLibrary()" ng-disabled="!libraryIsFile()"
+                  title="Add the selected shared layout to the server. Nothing there is replaced: a different layout with the same name is saved as Name (2).">
+            Import
+          </button>
+          <button class="rm-btn rm-btn-mini" ng-click="importAllLibrary()"
+                  title="Add every shared layout for this map to the server, the same way.">
+            Import All
+          </button>
+          <button class="rm-btn rm-btn-mini" ng-click="openLayoutFolder()"
+                  title="Open the folder shared layout files go in. Put downloaded .prm.json files there.">
+            Folder
           </button>
         </div>
         <!-- ITS OWN ROW, because it is not a per-layout action. Open, Overwrite
@@ -6302,6 +6375,9 @@
     border-radius: 3px;
   }
   .rm-layouts-target-empty { color: #6b7075; font-weight: 400; font-style: italic; }
+  .rm-export { margin: 4px 0; padding: 4px 6px; border: 1px solid rgba(255, 102, 0, 0.35); border-radius: 3px; }
+  .rm-export-list { max-height: 160px; overflow-y: auto; margin: 4px 0; }
+  .rm-export-row { display: block; padding: 1px 0; cursor: pointer; }
   .rm-layouts-confirm {
     display: flex;
     flex-direction: column;
