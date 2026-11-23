@@ -32,7 +32,7 @@ set -euo pipefail
 # link to match, or Discord keeps showing the copy it already fetched. The
 # League Manager repo links to the same file.
 POST_AS_NAME='Ashes to Light Studios'
-POST_AS_AVATAR='https://raw.githubusercontent.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/main/.github/discord/ashes-to-light.png'
+POST_AS_AVATAR='https://raw.githubusercontent.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP/main/.github/discord/ashes-to-light.png'
 
 event="${1:?usage: discord-post.sh <event name> <event payload file>}"
 payload="${2:?usage: discord-post.sh <event name> <event payload file>}"

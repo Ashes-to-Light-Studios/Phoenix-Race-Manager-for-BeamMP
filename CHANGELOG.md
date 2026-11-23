@@ -33,6 +33,11 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 #### Changed
 
+- **The repository is now Phoenix-Race-Manager-for-BeamMP.** In-game updates
+  look for releases there, and a `config.json` that names the old
+  `Phoenix-Race-Manager-for-BeamNG` is updated to the new name when the server
+  starts. A fork's own `updateRepo` is kept. Links in the README, the reference
+  and the website point at the new name.
 - **A client with no car of its own stops searching for one every frame.** A
   spectator without a car walked every vehicle in the world sixty times a
   second looking for theirs. "None" is now remembered for a quarter of a
