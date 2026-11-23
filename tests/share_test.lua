@@ -347,6 +347,22 @@ handlers['RM_LayoutExport']({ map = 'lvl', index = 1, total = 1, layout = copy(C
 check(lastHook('RaceManagerEditorMsg').msg:find('0 added; 1 already in it', 1, true),
   'exporting it again adds nothing, and says so')
 
+-- Folder: says where and copies it, window or not.
+local clip
+Sh.io.realPath = function () return 'C:/BeamNG/current/' .. Sh.DIR end
+Sh.io.copy = function (text) clip = text; return true end
+explored = 0
+RM.layoutFolder()
+check(explored == 1 and clip == 'C:/BeamNG/current/' .. Sh.DIR
+  and lastHook('RaceManagerEditorMsg').msg:find(clip .. '. Path copied', 1, true),
+  'Folder opens it, copies the path and shows it')
+Sh.io.realPath = function () return nil end
+Sh.io.copy = function () return false end
+RM.layoutFolder()
+local folderMsg = lastHook('RaceManagerEditorMsg').msg
+check(folderMsg:find(Sh.DIR, 1, true) and not folderMsg:find('copied', 1, true),
+  'no real path and no clipboard: the game path, and no claim it was copied')
+
 -- Somebody else's PC: the file in their folder, nothing loaded.
 RM.setEditorOpen(true)
 RM.libraryList()

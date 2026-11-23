@@ -221,7 +221,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.29.0'
+local RM_BUILD = '0.29.1'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -9455,8 +9455,15 @@ function M.libraryUpdate(dt)
   if share then share.update(dt) end
 end
 
+-- Says where and copies it: on some PCs no window appears, and a silent
+-- button reads as a dead one.
 function M.layoutFolder()
-  require('raceManager/share').openFolder()
+  local share = require('raceManager/share')
+  local where = share.openFolder()
+  local copied = share.io.copy(where)
+  log('I', 'raceManager', 'Shared layouts folder: ' .. where)
+  editorMsg('Layout files go in ' .. where
+    .. (copied and '. Path copied: paste it into File Explorer.' or ''))
 end
 
 -- The server refused an overwrite that would have emptied part of a layout. The

@@ -1997,8 +1997,10 @@ later adds what is new and skips what is already in it.
 **To use a file someone sent:**
 
 1. Press **Folder** in the Track Layouts panel and put the `.prm.json` file in
-   the folder that opens. Renamed copies such as `west_coast_usa (1).prm.json`
-   are fine: the map is read from inside the file.
+   the folder that opens. Folder also shows where that folder is and copies the
+   path: if no window appears, paste it into File Explorer. Renamed copies such
+   as `west_coast_usa (1).prm.json` are fine: the map is read from inside the
+   file.
 2. Join your server with that map loaded.
 3. Either **Import All**, which adds every shared layout for this map to the
    server, or pick one in the **Shared file or stock track** picker and press

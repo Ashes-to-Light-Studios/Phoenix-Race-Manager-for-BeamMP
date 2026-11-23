@@ -72,6 +72,16 @@ D.io = {
       pcall(Engine.Platform.exploreFolder, '/' .. D.DIR .. '/')
     end
   end,
+  -- The folder on disk, or nil.
+  realPath = function ()
+    if not (FS and FS.getFileRealPath) then return nil end
+    local ok, p = pcall(function () return FS:getFileRealPath(D.DIR) end)
+    return ok and type(p) == 'string' and p ~= '' and p or nil
+  end,
+  copy = function (text)
+    if type(setClipboard) ~= 'function' then return false end
+    return (pcall(setClipboard, text))
+  end,
 }
 
 -- id -> { path, index }, from the last list(). open() and import take nothing else.
@@ -265,9 +275,12 @@ function D.write(map, layouts, build)
   return file, res
 end
 
+-- Returns where the folder is. exploreFolder fails without raising, so the
+-- window may never appear and the path is the only proof of anything.
 function D.openFolder()
   D.io.mkdir()
   D.io.explore()
+  return D.io.realPath() or D.DIR
 end
 
 -- ---------------------------------------------------------------------------

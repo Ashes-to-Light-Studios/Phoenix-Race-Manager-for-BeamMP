@@ -6,6 +6,16 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.29.1 - Layouts folder path
+
+#### Fixed
+
+- **Folder in Track Layouts could seem to do nothing.** On some PCs BeamNG
+  opens no window and shows no error. Folder now also shows where the folder
+  is on your PC and copies that path, so you can paste it into File Explorer
+  when no window opens. See
+  [Sharing layouts as files](docs/REFERENCE.md#sharing-layouts-as-files).
+
 ## 0.29.0 - Stock tracks and layout files
 
 #### Added
