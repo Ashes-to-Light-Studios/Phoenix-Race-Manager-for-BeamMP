@@ -6,6 +6,28 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Added
+
+- **Share layouts as files.** **Export…** in the Track Layouts panel writes
+  the layouts you tick (or **All** of them) to one file per map,
+  `<map>.prm.json`, with their grids, pit lanes, branch gates, markers, props
+  and sectors, and opens the folder. On another server, put the file in the
+  folder (**Folder**) and press **Import All**, or **Import** one. It goes
+  through BeamMP's own connection, so a rented host works too. **Nothing is
+  ever overwritten**, in a file or on a server: an identical layout is
+  skipped, and a different one whose name is taken is added as "Name (2)". See
+  [Sharing layouts as files](docs/REFERENCE.md#sharing-layouts-as-files).
+- **BeamNG's own races as a starting point.** The same picker lists the time
+  trials, AI races and rally stages BeamNG ships for the map you are on (222
+  across the stock maps). **Open** puts one in your editor only, with its
+  gates, its pole and the layout name filled in. Check it, build the grid,
+  and **Save As New**. The tracks are read from your own game rather than
+  shipped with the mod, and a mod map that ships its own races in BeamNG's
+  format is listed too. See
+  [Opening BeamNG's own races](docs/REFERENCE.md#opening-beamngs-own-races-stock-tracks).
+
 ## 0.28.4 - Spectators see the race
 
 #### Fixed

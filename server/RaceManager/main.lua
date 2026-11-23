@@ -6775,45 +6775,15 @@ function RM_onClearEverything(pid)
   print(msg)
 end
 
--- Save the client's bundle as a named layout for this map; the same name
--- overwrites. Every rejection is logged.
-function RM_onSaveLayout(pid, rawData)
-  if not requireAuth(pid) then return end
-  print(string.format('[RaceManager] RM_SaveLayout from %s: %s byte(s)',
-    MP.GetPlayerName(pid) or pid, type(rawData) == 'string' and #rawData or 'non-string'))
-  if type(rawData) ~= 'string' or rawData == '' then
-    print('[RaceManager] Save rejected: empty payload')
-    return
-  end
-  local ok, data = pcall(Util.JsonDecode, rawData)
-  if not ok or type(data) ~= 'table' then
-    print('[RaceManager] Save rejected: JSON decode failed (' .. tostring(data) .. ')')
-    return
-  end
-
-  local name = type(data.name) == 'string'
-    and data.name:gsub('^%s+', ''):gsub('%s+$', ''):sub(1, MAX_LAYOUT_NAME) or ''
-  local checkpoints = sanitizeCheckpoints(data.checkpoints)
-  if name == '' then
-    print('[RaceManager] Save rejected: missing/empty layout name')
-    return
-  end
-  if not checkpoints then
-    print('[RaceManager] Save rejected: checkpoint array missing or malformed')
-    return
-  end
-
-  local map = getCurrentMap()
+-- A layout entry from a client's payload, every field sanitized. Save and
+-- import build theirs here, so a field added to one reaches the other.
+-- `existing` carries practice approval through a re-save.
+function race.layoutEntry(data, name, map, checkpoints, existing)
   local starts = sanitizeCheckpoints(data.startPositions)
   -- The gate the out lap arms first; nil is CP 1. A sprint has no out lap.
   local first = math.floor(tonumber(data.firstCheckpoint) or 1)
   if first <= 1 or first > #checkpoints or data.pointToPoint == true then first = nil end
-  -- What is stored under this name already, for the silent-drop guard below.
-  local existing = nil
-  for _, l in ipairs(getLayouts()) do
-    if l.map == map and l.name:lower() == name:lower() then existing = l; break end
-  end
-  local entry = {
+  return {
     name        = name,
     map         = map,
     width       = tonumber(data.width)  or 20,
@@ -6846,6 +6816,44 @@ function RM_onSaveLayout(pid, rawData)
     -- Optional sectors; false (malformed) is turned away just below.
     sectors      = race.sanitizeSectors(data.sectors, #checkpoints),
   }
+end
+
+-- Save the client's bundle as a named layout for this map; the same name
+-- overwrites. Every rejection is logged.
+function RM_onSaveLayout(pid, rawData)
+  if not requireAuth(pid) then return end
+  print(string.format('[RaceManager] RM_SaveLayout from %s: %s byte(s)',
+    MP.GetPlayerName(pid) or pid, type(rawData) == 'string' and #rawData or 'non-string'))
+  if type(rawData) ~= 'string' or rawData == '' then
+    print('[RaceManager] Save rejected: empty payload')
+    return
+  end
+  local ok, data = pcall(Util.JsonDecode, rawData)
+  if not ok or type(data) ~= 'table' then
+    print('[RaceManager] Save rejected: JSON decode failed (' .. tostring(data) .. ')')
+    return
+  end
+
+  local name = type(data.name) == 'string'
+    and data.name:gsub('^%s+', ''):gsub('%s+$', ''):sub(1, MAX_LAYOUT_NAME) or ''
+  local checkpoints = sanitizeCheckpoints(data.checkpoints)
+  if name == '' then
+    print('[RaceManager] Save rejected: missing/empty layout name')
+    return
+  end
+  if not checkpoints then
+    print('[RaceManager] Save rejected: checkpoint array missing or malformed')
+    return
+  end
+
+  local map = getCurrentMap()
+  -- What is stored under this name already, for the silent-drop guard below.
+  local existing = nil
+  for _, l in ipairs(getLayouts()) do
+    if l.map == map and l.name:lower() == name:lower() then existing = l; break end
+  end
+  local entry = race.layoutEntry(data, name, map, checkpoints, existing)
+  local starts = entry.startPositions
   -- A branch array sent but invalid rejects the save.
   if data.branches ~= nil and not entry.branches then
     print('[RaceManager] Save rejected: branch gates malformed '
@@ -6918,6 +6926,128 @@ function RM_onSaveLayout(pid, rawData)
   MP.SendChatMessage(-1, msg)
   print(msg)
   sendLayoutList(-1)
+end
+
+-- SHARED LAYOUT FILES. Export sends the admin full copies, props included
+-- (the layout list leaves them out), one event per layout. Import ADDS and
+-- never replaces: a layout identical to one already here is skipped, and a
+-- different one under a taken name is saved as "Name (2)".
+
+-- The same gates in the same places, the same kind of track.
+function race.sameTrack(a, b)
+  if type(a) ~= 'table' or type(b) ~= 'table' then return false end
+  if (a.pointToPoint == true) ~= (b.pointToPoint == true) then return false end
+  local ca, cb = a.checkpoints, b.checkpoints
+  if type(ca) ~= 'table' or type(cb) ~= 'table' or #ca ~= #cb then return false end
+  for i = 1, #ca do
+    for _, k in ipairs({ 'x', 'y', 'z' }) do
+      if math.abs((tonumber(ca[i][k]) or 0) - (tonumber(cb[i][k]) or 0)) > 0.05 then return false end
+    end
+  end
+  return true
+end
+
+function RM_onExportLayouts(pid, rawData)
+  if not requireAuth(pid) then return end
+  local ok, data = pcall(Util.JsonDecode, rawData or '')
+  if not ok or type(data) ~= 'table' or type(data.names) ~= 'table' then return end
+  local wanted = {}
+  for i, n in ipairs(data.names) do
+    if i > 500 then break end
+    if type(n) == 'string' then wanted[n:lower()] = true end
+  end
+  local list, map = layoutsForCurrentMap()
+  local out = {}
+  for _, l in ipairs(list) do
+    if wanted[l.name:lower()] then out[#out + 1] = l end
+  end
+  if #out == 0 then
+    MP.SendChatMessage(pid, '[RaceManager] None of those layouts are on this map.')
+    return
+  end
+  for i, l in ipairs(out) do
+    MP.TriggerClientEvent(pid, 'RM_LayoutExport',
+      Util.JsonEncode({ map = map, index = i, total = #out, layout = l }))
+  end
+  print(string.format('[RaceManager] Sent %d layout(s) on %s to %s to export',
+    #out, map, tostring(MP.GetPlayerName(pid) or pid)))
+end
+
+-- One layout of an import, `index` of `total`; the summary goes out after the
+-- last. Only for the map the server is on.
+function RM_onImportLayout(pid, rawData)
+  if not requireAuth(pid) then return end
+  local ok, data = pcall(Util.JsonDecode, rawData or '')
+  if not ok or type(data) ~= 'table' or type(data.layout) ~= 'table' then return end
+  race.imports = race.imports or {}
+  local rec = race.imports[pid]
+  if not rec or tonumber(data.index) == 1 then
+    rec = { added = 0, renamed = {}, same = 0, failed = 0 }
+    race.imports[pid] = rec
+  end
+  local map = getCurrentMap()
+  local l = data.layout
+  local base = type(l.name) == 'string'
+    and l.name:gsub('^%s+', ''):gsub('%s+$', ''):sub(1, MAX_LAYOUT_NAME) or ''
+  local checkpoints = sanitizeCheckpoints(l.checkpoints)
+  local entry, why = nil, 'no name or no checkpoints'
+  if type(data.map) ~= 'string' or data.map:lower() ~= map:lower() then
+    why = 'it is for ' .. tostring(data.map) .. ', and the server is on ' .. map
+  elseif base ~= '' and checkpoints and #checkpoints > 0 then
+    entry = race.layoutEntry(l, base, map, checkpoints, nil)
+    -- Never open for practice on arrival, whatever the payload says.
+    entry.practice = false
+    if (l.branches ~= nil and not entry.branches) or entry.sectors == false then
+      entry, why = nil, 'its branch gates or sectors do not fit its route'
+    end
+  end
+
+  if entry then
+    local taken = {}
+    for _, e in ipairs(getLayouts()) do
+      if e.map == map then taken[e.name:lower()] = e end
+    end
+    local name, n = base, 1
+    while taken[name:lower()] and not race.sameTrack(taken[name:lower()], entry) and n < 1000 do
+      n = n + 1
+      local tag = ' (' .. n .. ')'
+      name = base:sub(1, MAX_LAYOUT_NAME - #tag) .. tag
+    end
+    if taken[name:lower()] then
+      rec.same = rec.same + 1
+      print(string.format('[RaceManager] Import: "%s" is already here as "%s", skipped', base, name))
+    else
+      entry.name = name
+      local all = getLayouts()
+      all[#all + 1] = entry
+      local wrote, werr = saveLayoutsToDisk()
+      if wrote then
+        rec.added = rec.added + 1
+        if name ~= base then rec.renamed[#rec.renamed + 1] = '"' .. base .. '" as "' .. name .. '"' end
+        print(string.format('[RaceManager] Import: "%s" saved on %s (%d gates)', name, map, #checkpoints))
+      else
+        all[#all] = nil
+        rec.failed = rec.failed + 1
+        print('[RaceManager] Import: failed to write ' .. LAYOUTS_FILE .. ': ' .. tostring(werr))
+      end
+    end
+  else
+    rec.failed = rec.failed + 1
+    print(string.format('[RaceManager] Import of "%s" refused: %s', base, why))
+  end
+
+  local index, total = tonumber(data.index), tonumber(data.total)
+  if not index or not total or index >= total then
+    race.imports[pid] = nil
+    local who = tostring(MP.GetPlayerName(pid) or pid)
+    local msg = string.format('[RaceManager] %d layout(s) imported on %s by %s', rec.added, map, who)
+    if #rec.renamed > 0 then msg = msg .. ', name taken so saved as: ' .. table.concat(rec.renamed, ', ') end
+    if rec.same > 0 then msg = msg .. string.format('. %d already here, skipped', rec.same) end
+    if rec.failed > 0 then msg = msg .. string.format('. %d refused (see the server log)', rec.failed) end
+    MP.SendChatMessage(-1, msg .. '.')
+    print(msg)
+    if rec.added > 0 then sendLayoutList(-1) end
+  end
 end
 
 -- Show the field a flag, while a session runs; announced in chat too.
@@ -10365,6 +10495,8 @@ function onInit()
   MP.RegisterEvent('RM_PracticeEnd',      'RM_onPracticeEnd')
   MP.RegisterEvent('RM_PracticeGhost',    'RM_onPracticeGhost')
   MP.RegisterEvent('RM_SaveLayout',       'RM_onSaveLayout')
+  MP.RegisterEvent('RM_ExportLayouts',    'RM_onExportLayouts')
+  MP.RegisterEvent('RM_ImportLayout',     'RM_onImportLayout')
   MP.RegisterEvent('RM_LoadLayout',       'RM_onLoadLayout')
   MP.RegisterEvent('RM_DeleteLayout',     'RM_onDeleteLayout')
   MP.RegisterEvent('RM_SetFlag',          'RM_onSetFlag')

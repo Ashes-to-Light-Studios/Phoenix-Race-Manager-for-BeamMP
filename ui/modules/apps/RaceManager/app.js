@@ -735,6 +735,10 @@ angular.module('beamng.apps')
       // A DOM dropdown, not a <select>: in BeamNG's CEF a native popup is an OS
       // window that never renders over the game.
       $scope.layoutDropdownOpen = false;
+      // From outside the server: shared files and BeamNG's own races on this
+      // map, listed by Lua each time the menu opens. Ids only: Lua opens
+      // nothing it did not list.
+      $scope.libraryUi = { open: false, tracks: [], selected: '', loaded: false, elsewhere: 0 };
 
       // ----------------------------------------------------------------
       // CUP / SERIES POINTS, mirrored from RM_CupUpdate. Read-only: the panel
@@ -5959,7 +5963,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.toggleLayoutDropdown = function () {
         if (!$scope.layouts.length) { $scope.layoutDropdownOpen = false; return; }
         $scope.layoutDropdownOpen = !$scope.layoutDropdownOpen;
-        if ($scope.layoutDropdownOpen) { revealDropdown('.rm-layouts .rm-layout-menu'); }
+        if ($scope.layoutDropdownOpen) {
+          $scope.libraryUi.open = false;
+          revealDropdown('.rm-layouts .rm-layout-menu');
+        }
       };
 
       $scope.selectLayoutOption = function (l) {
@@ -5974,6 +5981,90 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         var sel = selectedLayout();
         if (!sel) { return 'Select a layout…'; }
         return sel.name + ' (' + toArray(sel.checkpoints).length + ' gates)';
+      };
+
+      // --- Shared files and stock tracks -----------------------------------
+      function selectedLibrary() {
+        var list = $scope.libraryUi.tracks;
+        for (var i = 0; i < list.length; i++) {
+          if (list[i].id === $scope.libraryUi.selected) { return list[i]; }
+        }
+        return null;
+      }
+      $scope.toggleLibraryDropdown = function () {
+        $scope.libraryUi.open = !$scope.libraryUi.open;
+        if (!$scope.libraryUi.open) { return; }
+        $scope.layoutDropdownOpen = false;
+        $scope.libraryUi.loaded = false;
+        bngApi.engineLua('raceManager.libraryList()');
+        revealDropdown('.rm-library-menu');
+      };
+      $scope.pickLibrary = function (t) {
+        $scope.libraryUi.selected = t.id;
+        $scope.libraryUi.open = false;
+      };
+      $scope.libraryLabel = function () {
+        var t = selectedLibrary();
+        return t ? t.name : 'Shared file or stock track…';
+      };
+      $scope.libraryDetail = function (t) {
+        return t.kind + ', ' + (t.circuit ? 'circuit' : 'sprint') + ', ' + t.gates + ' gates';
+      };
+      // Names the save after it, so keeping it is one press of Save As New.
+      $scope.openLibrary = function () {
+        var t = selectedLibrary();
+        if (!t) { return; }
+        $scope.layoutUi.name = t.name;
+        bngApi.engineLua('raceManager.libraryOpen(' + luaStr(t.id) + ')');
+      };
+      $scope.$on('RaceManagerLibrary', function (event, data) {
+        $scope.$evalAsync(function () {
+          $scope.libraryUi.tracks = toArray(data && data.tracks);
+          $scope.libraryUi.elsewhere = (data && data.elsewhere) || 0;
+          $scope.libraryUi.loaded = true;
+          if (!selectedLibrary()) { $scope.libraryUi.selected = ''; }
+          if ($scope.libraryUi.open) { revealDropdown('.rm-library-menu'); }
+        });
+      });
+      $scope.libraryIsFile = function () {
+        var t = selectedLibrary();
+        return !!t && t.id.indexOf('file/') === 0;
+      };
+      $scope.importLibrary = function () {
+        if (!$scope.libraryIsFile()) { return; }
+        bngApi.engineLua('raceManager.libraryImport(' + luaStr($scope.libraryUi.selected) + ')');
+      };
+      $scope.importAllLibrary = function () {
+        askLayout('Add every shared layout for this map to the server? Nothing there is replaced: '
+          + 'an identical layout is skipped, and a different one with a name already taken is '
+          + 'saved as "Name (2)".', 'Import all', function () {
+            bngApi.engineLua("raceManager.libraryImport('all')");
+          });
+      };
+
+      // Export: ticked saved layouts, the selected one ticked to start with.
+      $scope.exportUi = { open: false, ticked: {} };
+      $scope.openExport = function () {
+        $scope.exportUi.ticked = {};
+        if ($scope.layoutUi.selected) { $scope.exportUi.ticked[$scope.layoutUi.selected] = true; }
+        $scope.exportUi.open = !$scope.exportUi.open;
+      };
+      $scope.exportAll = function (on) {
+        $scope.layouts.forEach(function (l) { $scope.exportUi.ticked[l.name] = on; });
+      };
+      function exportNames() {
+        return $scope.layouts.filter(function (l) { return $scope.exportUi.ticked[l.name]; })
+          .map(function (l) { return l.name; });
+      }
+      $scope.exportCount = function () { return exportNames().length; };
+      $scope.sendExport = function () {
+        var names = exportNames();
+        if (!names.length) { return; }
+        bngApi.engineLua('raceManager.layoutExport(' + luaStr(JSON.stringify(names)) + ')');
+        $scope.exportUi.open = false;
+      };
+      $scope.openLayoutFolder = function () {
+        bngApi.engineLua('raceManager.layoutFolder()');
       };
 
       // ------------------------------------------------------------------

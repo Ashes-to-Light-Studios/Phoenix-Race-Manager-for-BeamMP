@@ -23,6 +23,12 @@ and can be prepped days before an event:
 - **Overwrite** and **Delete** act on the layout selected in the **Track**
   picker, so putting an edited track back needs no retyping. Both ask before
   they act.
+- **Export…** writes saved layouts to the map's `.prm.json` file to share;
+  **Import** and **Import All** add a shared file's layouts to the server without
+  replacing any; the **Shared file or stock track** picker also opens one, or one
+  of BeamNG's own races, in your editor to check and save. See
+  [Sharing layouts as files](#sharing-layouts-as-files) and
+  [Opening BeamNG's own races](#opening-beamngs-own-races-stock-tracks).
 - A save can never quietly empty part of a stored layout. If the client sending
   it is not holding a section the saved copy has - its joker route, pit lane,
   grid or branch gates - the server **refuses the save** and reports exactly what
@@ -1965,6 +1971,92 @@ Hand-editing is expected, and two things make it safe:
   between folders never silently re-homes the tracks inside it.
 - **A map whose last track is deleted loses its file.** Left behind, it would be
   read again on the next restart and hand back the track that was just deleted.
+
+### Sharing layouts as files
+
+Layouts pass between servers as files: posted in Discord, sent in a message,
+kept as a backup. There is **one file per map**, `<map>.prm.json`
+(`west_coast_usa.prm.json`), holding any number of layouts. Getting them onto a
+server goes through BeamMP's own connection, so it works on a rented host with
+no file access.
+
+**Nothing is ever overwritten**, in a file or on a server:
+
+- a layout **identical** to one already there (the same gates in the same
+  places) is **skipped**;
+- a **different** layout whose name is taken goes in as **"Name (2)"**, then
+  "(3)", and the one already there is untouched.
+
+**To share layouts:** press **Export…** beside Save As New, tick the layouts
+(the selected one is ticked already; **All** ticks every one on this map), and
+press **Export**. The server sends full copies, props included, and they are
+merged into `<map>.prm.json` in `settings/raceManager/layouts` in your BeamNG
+user folder by the rule above. The folder opens. Send that file. Exporting again
+later adds what is new and skips what is already in it.
+
+**To use a file someone sent:**
+
+1. Press **Folder** in the Track Layouts panel and put the `.prm.json` file in
+   the folder that opens. Renamed copies such as `west_coast_usa (1).prm.json`
+   are fine: the map is read from inside the file.
+2. Join your server with that map loaded.
+3. Either **Import All**, which adds every shared layout for this map to the
+   server, or pick one in the **Shared file or stock track** picker and press
+   **Import**. The chat says what was added, renamed and skipped.
+4. To look a layout over first, pick it and press **Open** instead: it opens in
+   your editor only, and **Save As New** keeps it.
+
+Each layout carries everything Save As New sends: gates and their sizes, the
+joker route, branch gates, the grid, the pit lane, direction markers, props,
+sectors and the circuit or point-to-point setting. Practice approval does not
+travel: an imported layout starts closed, like any new one.
+
+- **Only this map's layouts are listed and imported.** A layout is for the map
+  it was exported on; the picker counts the ones for other maps, so a file that
+  seems to be missing is explained.
+- **A file is somebody else's text.** One over 4 MB, one that is not a PRM
+  layout file, or one from a newer PRM is not listed. Only a layout's own fields
+  are read, and the server checks every one again before it keeps it.
+- **Export never writes over a file it does not recognise.** If
+  `<map>.prm.json` is there and is not a PRM layout file for that map, the
+  export stops and says so.
+- **A layout for a custom map** only lines up on the same version of that map.
+  Say which version when you post it.
+
+While a layout opened with **Open** is unsaved it counts as unsaved work, the
+same as a stock track (below).
+
+### Opening BeamNG's own races (stock tracks)
+
+The **Shared file or stock track** picker in the **Track Layouts** panel lists
+the time trials, AI races and rally stages BeamNG ships for the map you are on,
+after any shared files. Pick one and press **Open**: it opens in **your editor
+only**, like Open in Editor, with the layout name filled in. Check the gates,
+build the grid from slot 1 on the **Grid** tab, then press **Save As New**.
+Nothing reaches the server before that.
+
+The tracks are read from your own game, not shipped with the mod, so a game update
+brings its changes with it. A mod map that ships races in the same format
+(`gameplay/missions/<map>/timeTrial/...`) is listed too.
+
+How a stock race becomes a layout:
+
+- **A race that comes back to its start is a circuit**, with the start as the
+  start/finish line. Anything else is a point-to-point stage.
+- **Width is the stock radius times two**, and each gate faces the way the stock
+  race crosses it. A node with no facing faces along the route, and the message
+  says how many.
+- **Pole is the stock start**, moved back a car's length. On a stage, pole always
+  sits behind the start gate, because the start gate is the first one armed: AI
+  races start past it, and a car parked there would never cross it.
+- **A second way through** that rejoins the route after the same number of gates
+  becomes [branch gates](#branch-gates-two-ways-through-a-checkpoint). Any other
+  is left out, and the message says so.
+- Barriers and props from the stock race are not brought across.
+
+While it is open and unsaved it counts as unsaved work: a layout someone else
+loads does not replace it, and another file or stock track will not open over
+it. Save it, or press **Load** to take the server's track back.
 
 ### Importing BeamMP scenarii races and derbies
 

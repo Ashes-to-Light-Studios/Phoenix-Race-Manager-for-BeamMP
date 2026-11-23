@@ -6584,6 +6584,7 @@ function M.onUpdate(dt)
   M.splashUpdate(dt)        -- the welcome splash, only while it is up
   M.feedUpdate(dt)          -- the broadcast feed: one comparison while it is off
   M.uploadUpdate(dt)        -- Install from this PC: one comparison unless sending
+  M.libraryUpdate(dt)       -- A layout import: one lookup unless sending
   -- Props: the world follows props.list; the overlay only on the Props tab.
   props.update(dt)
   props.draw()
@@ -9337,6 +9338,127 @@ local function onApplyLayout(rawData)
     .. #track.startPositions .. ' start positions')
 end
 
+-- LAYOUTS FROM OUTSIDE THE SERVER: shared files (share.lua) and BeamNG's own
+-- races (stock.lua) on this level, opened like a private load, through the
+-- same apply. Required per call, for the locals ceiling.
+function M.libraryList()
+  local stock, share = require('raceManager/stock'), require('raceManager/share')
+  local races, level = stock.list()
+  level = level or share.io.level()
+  local files, elsewhere = share.list(level)
+  log('I', 'raceManager', 'Library for ' .. tostring(level) .. ': ' .. #files .. ' shared layout(s), '
+    .. #races .. ' stock race(s), ' .. elsewhere .. ' shared layout(s) for other maps')
+  for _, r in ipairs(races) do files[#files + 1] = r end
+  guihooks.trigger('RaceManagerLibrary', { map = level or '', tracks = files, elsewhere = elsewhere })
+end
+
+function M.libraryOpen(id)
+  if edit.running() then
+    editorMsg('Not while a session is running')
+    return
+  end
+  if edit.holdsBuffer() then
+    editorMsg('Your editor holds unsaved work: save it, or press Load, before opening another track')
+    return
+  end
+  local isFile = tostring(id or ''):sub(1, 5) == 'file/'
+  local layout, notes = require(isFile and 'raceManager/share' or 'raceManager/stock').open(id)
+  if not layout then
+    log('W', 'raceManager', 'Library: could not open ' .. tostring(id) .. ': ' .. tostring(notes))
+    editorMsg('Could not open that track: ' .. tostring(notes))
+    return
+  end
+  local raw = jsonEncode(layout)
+  onApplyLayout(raw)
+  if track.appliedRaw ~= raw then
+    log('W', 'raceManager', 'Library: ' .. tostring(id) .. ' was refused by the apply')
+    editorMsg('Could not open that track: see the game log')
+    return
+  end
+  log('I', 'raceManager', 'Library: opened "' .. layout.name .. '" from ' .. tostring(id)
+    .. ' in the editor only' .. (#notes > 0 and (' (' .. table.concat(notes, '; ') .. ')') or ''))
+  -- Not the server's copy: held as unsaved work until a save or a Load. -1 is
+  -- never a fingerprint.
+  edit.stamp = -1
+  editorMsg('Opened "' .. layout.name .. '" in your editor only: ' .. #track.route .. ' gates'
+    .. (#notes > 0 and ('; ' .. table.concat(notes, '; ')) or '')
+    .. (isFile and '. Check it, then Save As New.'
+      or '. Check it, build the grid from slot 1, then Save As New.'))
+end
+
+-- Write what is in the editor to a shared file, and show the folder.
+-- Ask the server for full copies of these saved layouts (a JSON array of
+-- names). They come back one at a time on RM_LayoutExport.
+function M.layoutExport(namesJson)
+  if not inMultiplayer() then
+    editorMsg('Exporting needs a BeamMP server')
+    return
+  end
+  local ok, names = pcall(jsonDecode, namesJson)
+  local wanted = {}
+  for _, n in ipairs(ok and type(names) == 'table' and names or {}) do
+    if type(n) == 'string' and n ~= '' then wanted[#wanted + 1] = n end
+  end
+  if #wanted == 0 then
+    editorMsg('Tick the layouts to export first')
+    return
+  end
+  TriggerServerEvent('RM_ExportLayouts', jsonEncode({ names = wanted }))
+  editorMsg('Asking the server for ' .. #wanted .. ' layout(s) to export...')
+end
+
+-- One layout of an export. The last one merges them all into the map's file.
+function M.onLayoutExport(rawData)
+  local ok, data = pcall(jsonDecode, rawData)
+  if not ok or type(data) ~= 'table' then return end
+  local share = require('raceManager/share')
+  local file, res = share.receive(data, RM_BUILD)
+  if not file then
+    -- Nothing and no reason: more to come.
+    if res then
+      log('W', 'raceManager', 'Export failed: ' .. tostring(res))
+      editorMsg('Export failed: ' .. tostring(res))
+    end
+    return
+  end
+  local said = res.added .. ' added'
+    .. (#res.renamed > 0 and ('; name taken, so ' .. table.concat(res.renamed, ', ')) or '')
+    .. (res.same > 0 and ('; ' .. res.same .. ' already in it') or '')
+  log('I', 'raceManager', 'Exported to ' .. share.DIR .. '/' .. file .. ': ' .. said)
+  share.openFolder()
+  editorMsg('Exported to ' .. file .. ': ' .. said .. '. The folder is open.')
+end
+
+-- Send listed shared layouts to the server: an id, or 'all' for every one
+-- listed. The server adds them and never replaces one.
+function M.libraryImport(which)
+  if not inMultiplayer() then
+    editorMsg('Importing needs a BeamMP server')
+    return
+  end
+  local share = require('raceManager/share')
+  local level = share.io.level()
+  -- Every file in the folder now, not the list from when the menu last opened.
+  if which == 'all' then share.list(level) end
+  local n, why = share.importStart(which, level)
+  if not n then
+    editorMsg('Import: ' .. tostring(why))
+    return
+  end
+  log('I', 'raceManager', 'Importing ' .. n .. ' shared layout(s) to the server')
+  editorMsg('Importing ' .. n .. ' layout(s). Nothing on the server is replaced: the chat says what was added.')
+end
+
+-- Paces an import; nothing to do until share.lua has been used.
+function M.libraryUpdate(dt)
+  local share = package.loaded['raceManager/share']
+  if share then share.update(dt) end
+end
+
+function M.layoutFolder()
+  require('raceManager/share').openFolder()
+end
+
 -- The server refused an overwrite that would have emptied part of a layout. The
 -- UI asks the admin and re-sends confirmed if that is what they meant.
 local function onSaveHeld(rawData)
@@ -10011,6 +10133,8 @@ local DISPATCH = {
   RM_Layouts         = onLayoutList,
   RM_ApplyLayout     = onApplyLayout,
   RM_SaveHeld        = onSaveHeld,
+  -- Full copies of saved layouts, for an export to a file.
+  RM_LayoutExport    = M.onLayoutExport,
   RM_ClearTrack      = onClearTrack,
   RM_LoginResult     = onLoginResult,
   RM_PasswordChanged = onPasswordChanged,
@@ -10205,6 +10329,7 @@ function M.onExtensionUnloaded()
   M.feedStop('unload')
   -- An upload in progress stops here; the server gives it up on its own.
   if M.uploadCancel then M.uploadCancel(true) end
+  if package.loaded['raceManager/share'] then package.loaded['raceManager/share'].importCancel() end
   -- Resident across sessions (manual unload), so purge explicitly.
   resetToIdle('extension unloaded')
   -- No frame is coming to take the props out.
@@ -10231,6 +10356,7 @@ local function onSessionLeave()
   -- Readers see "not connected" rather than a frozen race.
   M.feedOffline()
   if M.uploadCancel then M.uploadCancel(true) end
+  if package.loaded['raceManager/share'] then package.loaded['raceManager/share'].importCancel() end
   resetToIdle('BeamMP session ended')
 end
 
