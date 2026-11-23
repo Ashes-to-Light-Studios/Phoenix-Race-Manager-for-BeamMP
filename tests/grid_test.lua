@@ -146,6 +146,7 @@ check(#released >= 3, 'every driver gets their car back when qualifying ends')
 -- ===========================================================================
 -- Grid order: qualifying, random and custom
 -- ===========================================================================
+released = {}
 RM_onGenerateGrid(1)
 check(lastState.phase == 'grid', 'grid formed')
 check(driver('Bob').gridPos == 1 and driver('Alice').gridPos == 2
@@ -154,6 +155,11 @@ check(driver('Dan').gridPos == nil, 'a driver sitting out is left off the grid')
 check(gridAssign[2] == 1 and gridAssign[1] == 2 and gridAssign[3] == 3,
   'every gridded driver is told which start position to take')
 check(gridAssign[4] == false, 'and is told to stand down')
+-- Spectators get no slot, only this release: it has to say how many cars are
+-- landing, or their placement ghost lifts before the back of the grid arrives.
+check(#released == 1 and released[1].count == 3,
+  'the release at a forming grid carries the field size (got '
+    .. tostring(released[1] and released[1].count) .. ')')
 
 -- Sitting out AFTER a grid has formed clears that driver's placement: the slot
 -- goes back, and the client is told to stand down rather than sit on a grid it

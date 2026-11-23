@@ -1547,9 +1547,11 @@ local function forceSpectate(pid, reason, source, place, provisional)
   }))
 end
 
-local function releaseSpectators(source, targetPid)
+-- `count`: how many cars are about to land, so a client with no slot of its
+-- own (a spectator) holds its placement ghost until the last one has.
+local function releaseSpectators(source, targetPid, count)
   MP.TriggerClientEvent(targetPid or -1, 'RM_ReleaseSpectate',
-    Util.JsonEncode({ source = source or 'race' }))
+    Util.JsonEncode({ source = source or 'race', count = count }))
 end
 
 -- The server picks the slot; the client places the car (nil clears).
@@ -3134,8 +3136,10 @@ formGrid = function (kind, byName)
     race.appendTo = nil
   end
   -- Locks come off BEFORE the slots go out (a client with no car would drop
-  -- the slot); the client coalesces the two into one ghosted operation.
-  releaseSpectators('race')
+  -- the slot); the client coalesces the two into one ghosted operation. The
+  -- count is for spectators: the field is solid on their screens now, so the
+  -- placement ghost is all that covers the whole field landing.
+  releaseSpectators('race', nil, #ordered)
   race.gridSize = #ordered
   for gridPos, rec in ipairs(ordered) do
     local wasReady = reform and rec.status == 'gridded'

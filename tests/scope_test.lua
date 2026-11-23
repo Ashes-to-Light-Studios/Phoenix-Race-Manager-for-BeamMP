@@ -95,7 +95,42 @@ local function stripped(line)
   return s
 end
 
+-- Only uses that look like a CALL or a field access (`name(`, `name.`,
+-- `name:`). A bare mention is usually the name being assigned or passed and
+-- is not worth the false positives. ONE PASS over the identifiers: matching a
+-- pattern per declared name per line took minutes on the two big files.
+-- `uses` takes a name after `:` too (the declaration check always has);
+-- `plain` does not (the orphan check, where `obj:name()` is a method).
+local function useIndex(code)
+  local uses, plain = {}, {}
+  for i, l in ipairs(code) do
+    for s, name, e in l:gmatch('()([%a_][%w_]*)()') do
+      if l:find('^%s*[%(%.:]', e) then
+        local before = s > 1 and l:sub(s - 1, s - 1) or ''
+        if not before:find('[%w_%.]') then
+          local t = uses[name]
+          if not t then t = {}; uses[name] = t end
+          if t[#t] ~= i then t[#t + 1] = i end
+          if before ~= ':' then
+            local p = plain[name]
+            if not p then p = {}; plain[name] = p end
+            if p[#p] ~= i then p[#p + 1] = i end
+          end
+        end
+      end
+    end
+  end
+  return uses, plain
+end
+
+-- Each file once: the orphan check asks about the same host many times.
+local scanned = {}
+
 local function scan(path)
+  if scanned[path] then
+    local r = scanned[path]
+    return r.bad, r.declAt, r.code, r.plain
+  end
   local f = assert(io.open(path, 'r'), 'cannot open ' .. path)
   local src = f:read('*a')
   f:close()
@@ -116,21 +151,18 @@ local function scan(path)
     if v and not declAt[v] then declAt[v] = i end
   end
 
-  -- Only uses that look like a CALL or a field access (`name(`, `name.`,
-  -- `name:`). A bare mention is usually the name being assigned or passed and
-  -- is not worth the false positives.
+  local uses, plain = useIndex(code)
   local bad = {}
   for name, declLine in pairs(declAt) do
-    for i = 1, declLine - 1 do
-      local l = code[i]
-      if l:find('[^%w_%.]' .. name .. '%s*[%(%.:]')
-         or l:find('^' .. name .. '%s*[%(%.:]') then
+    for _, i in ipairs(uses[name] or {}) do
+      if i < declLine then
         bad[#bad + 1] = string.format('%s:%d uses "%s", which is declared at line %d',
           path, i, name, declLine)
       end
     end
   end
-  return bad, declAt, code
+  scanned[path] = { bad = bad, declAt = declAt, code = code, plain = plain }
+  return bad, declAt, code, plain
 end
 
 for _, path in ipairs(FILES) do
@@ -165,8 +197,7 @@ end
 -- Every future extraction can leave one of these, which is what makes it worth
 -- a test rather than a careful read.
 local function orphans(EXTENSION, MODULES)
-  local declared = {}
-  for name in pairs(select(2, scan(EXTENSION))) do declared[name] = true end
+  local _, declared, _, hostUses = scan(EXTENSION)
 
   local found = {}
   for _, mod in ipairs(MODULES) do
@@ -174,14 +205,10 @@ local function orphans(EXTENSION, MODULES)
       -- A name the module owns and the host does not declare. Bare uses only:
       -- `render.palette` is the module's public surface and correct.
       if not declared[name] then
-        local code = select(3, scan(EXTENSION))
-        for i, l in ipairs(code) do
-          if l:find('[^%w_%.:]' .. name .. '%s*[%(%.:]')
-             or l:find('^' .. name .. '%s*[%(%.:]') then
-            found[#found + 1] = string.format(
-              '%s:%d calls "%s", which now lives in %s',
-              EXTENSION, i, name, mod:match('([%w_]+)%.lua$'))
-          end
+        for _, i in ipairs(hostUses[name] or {}) do
+          found[#found + 1] = string.format(
+            '%s:%d calls "%s", which now lives in %s',
+            EXTENSION, i, name, mod:match('([%w_]+)%.lua$'))
         end
       end
     end
@@ -213,6 +240,21 @@ local caught = scan(tmp)
 os.remove(tmp)
 check(#caught == 1, 'the scanner detects a use-before-declaration when there is one '
   .. '(found ' .. #caught .. ')')
+
+-- ...and the orphan check, on a host still calling what moved out. A method
+-- call of the same name is the module's business, not an orphan.
+local hostTmp, modTmp = os.tmpname(), os.tmpname()
+w = assert(io.open(hostTmp, 'w'))
+w:write('local function top()\n  movedOut()\n  obj:movedOut()\nend\n')
+w:close()
+w = assert(io.open(modTmp, 'w'))
+w:write('local function movedOut() end\n')
+w:close()
+local orphaned = orphans(hostTmp, { modTmp })
+os.remove(hostTmp)
+os.remove(modTmp)
+check(#orphaned == 1, 'the orphan check detects a call left behind in the host '
+  .. '(found ' .. #orphaned .. ')')
 
 print(string.format('scope_test: %d checks, %d failures', checks, fails))
 os.exit(fails == 0 and 0 or 1)

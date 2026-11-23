@@ -284,6 +284,27 @@ frames(0.3)
 check(frozen == false, 'the session ending releases the car')
 
 -- ===========================================================================
+-- A bystander parking in a stall is not making a stop
+-- ===========================================================================
+-- Spectating, waiting for another heat, or joined mid-race: not in it. A
+-- spectator who parked in a box to watch used to be frozen and repaired.
+clearLog()
+veh.x, veh.y = 0, 0
+local out = { { id = 1, name = 'Me', status = 'waiting', bystander = true } }
+serverState({ phase = 'racing', maxResets = -1, totalLaps = 3, drivers = out })
+frames(9.0)
+local repairsBefore = repairs
+veh.x, veh.y = 50, 0
+frames(0.5)
+check(frozen ~= true, 'a bystander in a stall is not held')
+check(repairs == repairsBefore and countSent('RM_PitStop') == 0,
+  'nor repaired, nor reported')
+veh.x, veh.y = 0, 0
+serverState({ phase = 'finished', maxResets = -1, totalLaps = 3,
+  drivers = { { id = 1, name = 'Me', status = 'finished' } } })
+frames(0.3)
+
+-- ===========================================================================
 -- A stall does not re-trigger while you sit in it
 -- ===========================================================================
 clearLog()

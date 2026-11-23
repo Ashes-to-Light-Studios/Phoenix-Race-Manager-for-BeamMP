@@ -1215,5 +1215,84 @@ check(rival.ghosted == false, 'the sweep re-applies only what is still wanted')
 serverState({ phase = 'waiting', maxResets = -1, totalLaps = 3, drivers = {} })
 frames(0.5)
 
+-- ===========================================================================
+-- A SPECTATOR SEES THE FIELD SOLID; ONLY THEIR OWN CAR IS A GHOST
+-- ===========================================================================
+-- Reported: "when I spectate, every car is a ghost, so I can't see damage or
+-- anything". The bystander ghost used to go on every OTHER car on the
+-- spectator's own client. Every other client already ghosts the spectator
+-- through the finished roster, so the field ghost bought nothing but a
+-- translucent race with no contact in it.
+own.x, own.y = 0, 0
+rival.x, rival.y = 700, 0
+third.x, third.y = 900, 0
+own.alpha, rival.alpha, third.alpha = 1, 1, 1
+local spectating = { { id = OWN_PID, name = 'Me', status = 'waiting', bystander = true } }
+serverState({ phase = 'racing', maxResets = -1, totalLaps = 3, drivers = spectating,
+  ghosts = {}, ghostFinished = {} })
+frames(0.5)
+check(own.ghosted == true, 'a spectator s own car is a ghost')
+check(own.alpha == 1, 'and is not faded for them')
+check(rival.ghosted ~= true and third.ghosted ~= true,
+  'the field stays SOLID on a spectator s screen, so contact and damage show')
+check(rival.alpha == 1 and third.alpha == 1, 'and opaque')
+
+-- Racers still hit each other here: the spectator's ghost is per car.
+rival.x, rival.y = 900, 0
+frames(2.5)
+check(rival.ghosted ~= true and third.ghosted ~= true,
+  'two racers overlapping on a spectator s screen are not ghosted by it')
+rival.x, rival.y = 700, 0
+
+-- A reset reloads the car's VM and drops the ghost; the sweep puts it back.
+own.ghosted = false
+frames(2.5)
+check(own.ghosted == true, 'a spectator s car that lost its ghost silently gets it back')
+
+-- A car spawned while spectating starts solid: ghosted on the spot.
+local wasOwn = MPVehicleGE.isOwn
+MPVehicleGE.isOwn = function (id) return id == OWN_ID or id == LATE_ID end
+world[LATE_ID] = makeVehicle(LATE_ID, 50, 0)
+RM.onVehicleSpawned(LATE_ID)
+check(world[LATE_ID].ghosted == true, 'a car a spectator spawns is a ghost at once')
+check(world[LATE_ID].alpha == 1, 'and unfaded for them')
+
+-- The forming grid: spectators get no slot, only a release saying how many
+-- cars land. The placement ghost has to outlast the last of them, because
+-- nothing else ghosts the field on this screen any more.
+handlers['RM_ReleaseSpectate']({ source = 'race', count = 12 })
+frames(2.0)
+check(rival.ghosted == true,
+  'the field is ghosted while twelve cars land: (12-1) x 0.18 s + 1.2 s')
+frames(2.5)
+check(rival.ghosted ~= true, 'and solid once the last one has')
+check(own.ghosted == true and world[LATE_ID].ghosted == true,
+  'the placement lifting leaves the spectator s own cars ghosted')
+
+-- Back in the field: the ghost comes off every car that had it, through the
+-- weld gate like any other.
+rival.x, rival.y = 0, 0           -- a racer parked inside our car
+serverState({ phase = 'racing', maxResets = -1, totalLaps = 3,
+  drivers = { { id = OWN_PID, name = 'Me', status = 'racing' } },
+  ghosts = {}, ghostFinished = {} })
+frames(0.5)
+check(own.ghosted == true, 'out of spectating with a car inside ours: still a ghost')
+check(world[LATE_ID].ghosted == false, 'the second car, clear, goes solid')
+rival.x, rival.y = 700, 0
+frames(0.5)
+check(own.ghosted == false, 'and ours goes solid once the space is clear')
+RM.onVehicleDestroyed(LATE_ID)
+world[LATE_ID] = nil
+MPVehicleGE.isOwn = wasOwn
+
+-- Leaving the server as a spectator leaves nothing to re-ghost the car.
+serverState({ phase = 'racing', maxResets = -1, totalLaps = 3, drivers = spectating,
+  ghosts = {}, ghostFinished = {} })
+frames(0.5)
+check(own.ghosted == true, 'spectating again')
+RM.onBeamMPServerLeave()
+frames(0.5)
+check(own.ghosted == false, 'leaving the server ends the spectator ghost for good')
+
 print(string.format('ghost_test: %d checks, %d failures', checks, fails))
 if fails > 0 then os.exit(1) end

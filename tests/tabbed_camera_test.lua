@@ -324,5 +324,50 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- A BYSTANDER'S CAR IS THEIRS, BUT NOT IN THE RACE
+-- ---------------------------------------------------------------------------
+-- The other half of "whose laps are these": a driver out of the session
+-- (spectating, another heat, joined mid-race) driving their OWN car round the
+-- circuit. The server ignores all of it; this client used to time their laps,
+-- count their resets against the race allowance and kill the reset key.
+do
+  local function count(name)
+    local n = 0
+    for _, m in ipairs(sent) do if m.event == name then n = n + 1 end end
+    return n
+  end
+  local out = { { id = 1, name = 'Me', status = 'waiting', bystander = true } }
+  attached = own
+  serverState({ phase = 'waiting', totalLaps = 10, maxResets = 1, drivers = out })
+  serverState({ phase = 'racing', totalLaps = 10, maxResets = 1, drivers = out })
+  own.x, own.y = 0, 10
+  frame()
+  sent = {}
+  moveTo(own, 95); moveTo(own, 105)
+  coast()
+  moveTo(own, 195); moveTo(own, 205)
+  moveTo(own, 10)
+  coast()
+  check(lapsReported() == 0, 'a bystander driving the circuit reports no laps')
+  check(count('RM_Progress') == 0, 'and no progress')
+
+  RM.onVehicleResetted(OWN_ID); frame(2)
+  RM.onVehicleResetted(OWN_ID); frame(2)
+  check(count('RM_VehicleReset') == 0 and count('RM_ResetDenied') == 0,
+    'a bystander s resets are neither counted nor refused')
+  check(count('RM_GhostStart') == 0, 'nor armed as a reset ghost')
+
+  -- The same client IN the race: counted, which is what makes the above a
+  -- narrowing rather than resets switched off.
+  serverState({ phase = 'racing', totalLaps = 10, maxResets = 1,
+    drivers = { { id = 1, name = 'Me', status = 'racing' } } })
+  frame()
+  RM.onVehicleResetted(OWN_ID); frame(2)
+  check(count('RM_VehicleReset') == 1, 'a racer s reset in the same race is counted')
+  serverState({ phase = 'waiting', totalLaps = 10, maxResets = -1, drivers = {} })
+  frame()
+end
+
+-- ---------------------------------------------------------------------------
 print(string.format('tabbed_camera_test: %d checks, %d failures', checks, fails))
 os.exit(fails == 0 and 0 or 1)

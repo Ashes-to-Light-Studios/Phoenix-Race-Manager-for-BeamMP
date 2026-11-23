@@ -83,20 +83,18 @@ local function jsonDecode(text)
   local function err(msg) error(('json: %s at %d'):format(msg, pos), 0) end
   local function ws() pos = text:match('^[ \t\r\n]*()', pos) end
   local parseValue
+  -- A run at a time up to the next quote or escape, not a character at a
+  -- time: decoding every broadcast was most of this file's wall clock.
   local function parseString()
     pos = pos + 1
     local out = {}
     while true do
-      local c = text:sub(pos, pos)
-      if c == '' then err('unterminated string') end
-      if c == '"' then pos = pos + 1; break end
-      if c == '\\' then
-        out[#out + 1] = text:sub(pos + 1, pos + 1)
-        pos = pos + 2
-      else
-        out[#out + 1] = c
-        pos = pos + 1
-      end
+      local s = text:find('["\\]', pos)
+      if not s then err('unterminated string') end
+      out[#out + 1] = text:sub(pos, s - 1)
+      if text:byte(s) == 34 then pos = s + 1; break end   -- '"'
+      out[#out + 1] = text:sub(s + 1, s + 1)
+      pos = s + 2
     end
     return table.concat(out)
   end
@@ -131,7 +129,8 @@ local function jsonDecode(text)
         if sep == ']' then return arr end
       end
     end
-    local lit = text:match('^true', pos) or text:match('^false', pos) or text:match('^null', pos)
+    local lit = (c == 't' or c == 'f' or c == 'n')
+      and (text:match('^true', pos) or text:match('^false', pos) or text:match('^null', pos))
     if lit then
       pos = pos + #lit
       if lit == 'true' then return true elseif lit == 'false' then return false end
