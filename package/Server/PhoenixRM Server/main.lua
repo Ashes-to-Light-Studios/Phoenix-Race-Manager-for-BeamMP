@@ -158,7 +158,7 @@ local CFG = {
   onlineFeatures  = false,
   -- Updates from GitHub. See update.lua. false never contacts GitHub at all.
   updateCheck     = true,
-  updateRepo      = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG',  -- owner/name
+  updateRepo      = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP',  -- owner/name
 }
 -- Forward declarations: the layout store's validators are needed by the grid
 -- hold code above them.
@@ -1275,7 +1275,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.28.3'
+local RM_BUILD = '0.28.4'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -1547,9 +1547,11 @@ local function forceSpectate(pid, reason, source, place, provisional)
   }))
 end
 
-local function releaseSpectators(source, targetPid)
+-- `count`: how many cars are about to land, so a client with no slot of its
+-- own (a spectator) holds its placement ghost until the last one has.
+local function releaseSpectators(source, targetPid, count)
   MP.TriggerClientEvent(targetPid or -1, 'RM_ReleaseSpectate',
-    Util.JsonEncode({ source = source or 'race' }))
+    Util.JsonEncode({ source = source or 'race', count = count }))
 end
 
 -- The server picks the slot; the client places the car (nil clears).
@@ -3134,8 +3136,10 @@ formGrid = function (kind, byName)
     race.appendTo = nil
   end
   -- Locks come off BEFORE the slots go out (a client with no car would drop
-  -- the slot); the client coalesces the two into one ghosted operation.
-  releaseSpectators('race')
+  -- the slot); the client coalesces the two into one ghosted operation. The
+  -- count is for spectators: the field is solid on their screens now, so the
+  -- placement ghost is all that covers the whole field landing.
+  releaseSpectators('race', nil, #ordered)
   race.gridSize = #ordered
   for gridPos, rec in ipairs(ordered) do
     local wasReady = reform and rec.status == 'gridded'
@@ -6092,10 +6096,13 @@ local function applyConfigTable(data)
   -- owner/name and nothing else: it becomes part of a URL a download job runs.
   if type(data.updateRepo) == 'string' then
     local repo = data.updateRepo
-    -- The repo's old home. Every config.json saved before the move names it,
-    -- and only GitHub's redirect still reaches it.
-    if repo:lower() == 'aosjay13/beamng-race-manager-by-phoenix' then
-      repo = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG'
+    -- The repo's old names. Every config.json saved before a move or rename
+    -- names one, and only GitHub's redirect still reaches it. A fork's own
+    -- repo is kept.
+    local was = repo:lower()
+    if was == 'aosjay13/beamng-race-manager-by-phoenix'
+        or was == 'ashes-to-light-studios/phoenix-race-manager-for-beamng' then
+      repo = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP'
     end
     if #repo <= 140 and repo:match('^[%w][%w%-]*/[%w%-%._]+$') and not repo:find('..', 1, true) then
       CFG.updateRepo = repo; applied = applied + 1

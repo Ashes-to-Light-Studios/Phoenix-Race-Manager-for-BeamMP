@@ -419,6 +419,41 @@ check(editDraws <= 380, string.format(
 
 RM.setEditorOpen(false)
 
+-- ---------------------------------------------------------------------------
+-- 4. VEHICLE WALKS with no car of our own.
+-- ---------------------------------------------------------------------------
+-- A spectator with no car, watching a race. Finding "our car" falls through
+-- to a walk of every vehicle in the world, with an ownership call per car,
+-- and with nothing to find it used to do that every frame: twenty cars was
+-- twenty-odd BeamMP calls and a fresh vehicle list sixty times a second.
+local walks = 0
+local field = {}
+for i = 1, 20 do
+  local car = setmetatable({ id = 100 + i, x = i * 40, y = 0, z = 0 }, { __index = veh })
+  field[i] = car
+end
+getAllVehicles = function () walks = walks + 1; return field end
+MPVehicleGE = { isOwn = function (id) return id == veh.id end }
+getPlayerVehicle = function (_) return field[1] end
+be.getPlayerVehicle = function () return field[1] end
+serverState({ phase = 'racing', sessionKind = 'race', totalLaps = 5, maxResets = -1,
+  flag = 'green', drivers = { { id = 1, name = 'Me', status = 'waiting', bystander = true } } })
+RM.onUpdate(1 / 60)
+walks = 0
+for _ = 1, 60 do RM.onUpdate(1 / 60) end
+check(walks <= 6, string.format(
+  'a client with no car of its own walks the vehicle list %d times a second '
+    .. '(budget 6): "none of ours" is remembered for a moment, not re-proved '
+    .. 'every frame', walks))
+
+-- ...and a car arriving is seen at once, not when the moment is up.
+field[#field + 1] = veh
+RM.onVehicleSpawned(veh.id)
+local seenAt = walks
+RM.onUpdate(1 / 60)
+check(walks > seenAt, 'a spawn sends it looking again on the next frame')
+field[#field] = nil
+
 print(string.format('perf_test: %d checks, %d failures', checks, fails))
 print(string.format('  held grid: %d UI pushes/sec (%d to the Messages app)',
   heldPushes, heldMessages))

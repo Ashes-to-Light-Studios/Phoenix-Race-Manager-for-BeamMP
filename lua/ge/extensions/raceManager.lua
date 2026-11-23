@@ -221,7 +221,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.28.3'
+local RM_BUILD = '0.28.4'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -523,6 +523,9 @@ local ghost = {
   practiceOwn = nil,
   practiceList = {},
   practiceRemote = {},
+  -- The 'bystander' reason is on our own rig (ghost.syncBystander), never the
+  -- field: true while it is wanted.
+  bystander = false,
   applied = {},   -- [gameVehId] = true while the ghost is actually applied
   -- Cars whose reasons have gone but which still overlap another car: retried
   -- until the space is clear.
@@ -881,8 +884,9 @@ local qualiTimeLimit = 0         -- seconds, 0 = unlimited
 -- Does this session open with an untimed out lap? Server's call, mirrored for
 -- the driver's readout.
 local qualiOutLap    = false
--- Joined mid-session: flagged by the server and ghosted so they cannot affect
--- a race they are not in. Cleared when the next grid forms.
+-- Out of the field (spectating, another heat, joined mid-session): flagged by
+-- the server, and our own car is ghosted so it cannot affect the race. Cleared
+-- when the next grid forms.
 local isBystander    = false
 
 -- Forced spectator source ('race' | 'derby'), so neither can release the
@@ -963,10 +967,12 @@ function towed.is(veh)
   return is
 end
 
--- The car this driver last sat in. A search over owned vehicles answers with
--- whichever is listed first (the trailer, sometimes). Written only from the
--- attached vehicle; re-verified on every use, since vehicle ids are reused.
-local ownVehId = nil
+-- `id`: the car this driver last sat in. A search over owned vehicles answers
+-- with whichever is listed first (the trailer, sometimes). Written only from
+-- the attached vehicle; re-verified on every use, since vehicle ids are reused.
+-- `noneUntil`: the blind scan found no car of ours, so it is not repeated
+-- before then (a spectator with no car ran it every frame, over every car).
+local ownCar = { id = nil, noneUntil = -1 }
 
 -- Our own RACE CAR, or nil. A driver can own a car and a trailer: the attached
 -- vehicle when it is ours and not towed, else the last one that was. The blind
@@ -980,16 +986,18 @@ local function ownVehicle()
     local id = vehicleId(veh)
     -- Ours and not a trailer: tabbing into your own trailer is a camera move.
     if id ~= nil and isOwnVehicle(id) and not towed.is(veh) then
-      ownVehId = id
+      ownCar.id = id
       return veh
     end
   end
-  -- Re-verified, not trusted: see the note on ownVehId.
-  if ownVehId ~= nil then
-    local got, found = pcall(getObjectByID, ownVehId)
-    if got and found and isOwnVehicle(ownVehId) then return found end
-    ownVehId = nil
+  -- Re-verified, not trusted: see the note on ownCar.
+  if ownCar.id ~= nil then
+    local got, found = pcall(getObjectByID, ownCar.id)
+    if got and found and isOwnVehicle(ownCar.id) then return found end
+    ownCar.id = nil
   end
+  -- Cleared by any spawn or switch (M.onVehicleSpawned).
+  if localTime < ownCar.noneUntil then return nil end
   if type(getAllVehicles) == 'function' then
     local ok, list = pcall(getAllVehicles)
     if ok and type(list) == 'table' then
@@ -998,6 +1006,7 @@ local function ownVehicle()
       end
     end
   end
+  ownCar.noneUntil = localTime + 0.25
   return nil
 end
 
@@ -1896,6 +1905,8 @@ end
 
 local function checkGates()
   if session.spectatorLock then return end     -- out of the session: no more timing
+  -- Nor a bystander driving the map during it: their laps are nobody's.
+  if isBystander and sessionRunning() then return end
   if #track.route == 0 and #track.jokerRoute == 0 then return end
   -- ...or while practising, which is what makes practice timed. Drag practice
   -- is timed by drag.lua: its finish line is not a lap.
@@ -2185,7 +2196,7 @@ local lapTimerArmed  = false     -- was the clock running on the previous tick?
 local function lapTimerUpdate(dt)
   -- Runs in any session from GO and in free practice (the app draws sectors
   -- inside the lap-time block, so without a clock they only showed at the line).
-  local running = sessionRunning() or (practice.on and not practice.drag)
+  local running = (sessionRunning() and not isBystander) or (practice.on and not practice.drag)
   if not running then
     -- Tell the UI once, so it drops the readout rather than freezing it.
     if lapTimerArmed then
@@ -2218,7 +2229,7 @@ end
 -- last lap. Every frame, not off the throttled report (12 m between samples at
 -- 90 mph); the early-outs reject on integer compares before touching the car.
 local function whiteFlagWatch()
-  if session.phase ~= 'racing' or session.spectatorLock then return end
+  if session.phase ~= 'racing' or session.spectatorLock or isBystander then return end
   -- Driving at the S/F line: the last checkpoint IS the line.
   if session.armedWp ~= #track.route or #track.route == 0 then return end
 
@@ -2266,7 +2277,7 @@ local function whiteFlagWatch()
 end
 
 local function reportProgress(dt)
-  if not sessionRunning() or session.spectatorLock then return end
+  if not sessionRunning() or session.spectatorLock or isBystander then return end
   if #track.route == 0 then return end
 
   progressLeft = progressLeft - dt
@@ -3932,8 +3943,10 @@ local function spectatorUpdate(dt)
 end
 
 -- The reset allowance applies in any live session and its countdown.
+-- Not on a bystander: out of the race, their resets are their own.
 local function resetsEnforced()
-  return session.maxResets >= 0 and (sessionRunning() or session.phase == 'countdown')
+  return session.maxResets >= 0 and not isBystander
+    and (sessionRunning() or session.phase == 'countdown')
 end
 
 -- Derby reset state, ONE TABLE shared with the derby module, so neither side
@@ -3986,7 +3999,7 @@ end
 
 local function resetInputBlockUpdate()
   -- Teleports off for the whole session; a driver OUT of it keeps them.
-  setTeleportInputsBlocked(sessionRunning() and not session.spectatorLock)
+  setTeleportInputsBlocked(sessionRunning() and not session.spectatorLock and not isBystander)
   -- Not while a Recover press is open: from v0.40 its last allowed reset lands
   -- with the key still down, and a filter armed then can swallow the release.
   local wantBlocked = not session.spectatorLock
@@ -4188,6 +4201,8 @@ end
 -- Stalls work in a session and in practice. Practice is local: no ghost, no report.
 function pit.live()
   if session.spectatorLock then return false end
+  -- A bystander parking in a stall is not making a stop: no hold, no repair.
+  if isBystander and sessionRunning() then return false end
   return sessionRunning() or practice.on
 end
 
@@ -4707,6 +4722,9 @@ function M.onVehicleResetted(vehId)
     if session.spectatorLock ~= 'derby' then ghost.setFinished(true) end
     return
   end
+  -- A bystander is out of the race too: never counted, refused, ghosted again
+  -- (theirs already is, re-asserted above) or pulled back onto the track.
+  if isBystander and (sessionRunning() or session.phase == 'countdown') then return end
 
   -- A driver reset on the grid dropped the freeze: back on the slot, pinned,
   -- this frame.
@@ -4832,6 +4850,8 @@ end
 
 -- BeamNG hook: a vehicle appeared.
 function M.onVehicleSpawned(vehId)
+  -- It may be ours: look again rather than trust the last "none".
+  ownCar.noneUntil = -1
   -- A new car re-declares its configuration, shortly (not knowable yet).
   armVehicleConfigReport()
   -- Our car appearing somewhere is no checkpoint skip.
@@ -4844,6 +4864,8 @@ function M.onVehicleSpawned(vehId)
       ghost.reason(vehId, reason, true, got and veh or nil)
     end
   end
+  -- A spectator's new car starts solid: ghost it now, not at the next sweep.
+  if isBystander and isOwnVehicle(vehId) then ghost.syncBystander() end
   -- A car reloaded on a held grid arrives unfrozen: back on the slot, held.
   if holdWanted and isOwnVehicle(vehId) then
     hold.restore('vehicle respawned while held on the grid')
@@ -4871,12 +4893,13 @@ end
 -- BeamNG hook: the player switched cars. The next frame's segment runs from
 -- one car to the other, which is no checkpoint skip.
 function M.onVehicleSwitched()
+  ownCar.noneUntil = -1
   branch.skipQuiet()
 end
 
 function M.onVehicleDestroyed(vehId)
   if vehId == nil then return end
-  if ownVehId == vehId then ownVehId = nil end
+  if ownCar.id == vehId then ownCar.id = nil end
   ghost.veh[vehId]     = nil
   ghost.applied[vehId] = nil
   ghost.left[vehId]    = nil
@@ -5161,6 +5184,7 @@ local field = {
   settle  = 0,       -- until collisions come back
   timeout = 0,
   respawn = false,   -- put our removed car back as part of this operation
+  spawned = false,   -- ...and it was: the camera is rebound only if ours moved
   slot    = nil,     -- slot to stand on
   slots   = nil,     -- which slot list that indexes (race grid or derby arena)
   hold    = false,   -- freeze once placed
@@ -5216,6 +5240,7 @@ local function endFieldOperation()
   field.slot   = nil
   field.slots  = nil
   field.respawn = false
+  field.spawned = false
   field.holdSource = nil
   if setGhostReason then setGhostReason('placement', false) end
   -- The trailer goes back on from HERE, as collisions come back: a ghosted car
@@ -5257,6 +5282,7 @@ queueFieldPlacement = function (opts)
   field.settle  = settle
   field.timeout = FIELD.TIMEOUT
   field.respawn = opts.respawn == true
+  field.spawned = false
   field.slot    = opts.slot
   field.slots   = opts.slots
   field.hold    = opts.hold == true
@@ -5317,9 +5343,9 @@ local function fieldUpdate(dt)
   -- Timeout: whatever is stuck, the driver gets their car and collisions back.
   if field.timeout <= 0 then
     if field.step ~= 'settle' then
-      if field.respawn then respawnRemovedVehicle() end
+      if field.respawn and respawnRemovedVehicle() then field.spawned = true end
       if field.slot then placeOnAssignedSlot() end
-      bindCameraToOwnVehicle()
+      if field.slot or field.spawned then bindCameraToOwnVehicle() end
       log('W', 'raceManager', 'Field placement timed out: finishing it anyway')
     end
     endFieldOperation()
@@ -5338,6 +5364,7 @@ local function fieldUpdate(dt)
     if field.respawn then
       field.respawn = false
       if respawnRemovedVehicle() then
+        field.spawned = true
         field.grace = FIELD.SPAWN_GRACE
         field.step  = 'grace'
         return
@@ -5356,8 +5383,10 @@ local function fieldUpdate(dt)
 
   if field.step == 'place' then
     if field.slot then placeOnAssignedSlot() end
-    -- Explicitly: after a mass placement the game's camera pick is arbitrary.
-    bindCameraToOwnVehicle()
+    -- After placing or respawning OUR car the game's camera pick is arbitrary.
+    -- Nothing of ours moved (a spectator at a grid forming): leave the camera
+    -- on whoever they are watching.
+    if field.slot or field.spawned then bindCameraToOwnVehicle() end
     field.step = 'settle'
     pushRouteState()
     return
@@ -5374,9 +5403,9 @@ end
 -- leaving the server).
 local function flushFieldPlacement()
   if not field.active then return end
-  if field.respawn then respawnRemovedVehicle() end
+  if field.respawn and respawnRemovedVehicle() then field.spawned = true end
   if field.slot then placeOnAssignedSlot() end
-  bindCameraToOwnVehicle()
+  if field.slot or field.spawned then bindCameraToOwnVehicle() end
   endFieldOperation()
 end
 
@@ -5570,6 +5599,9 @@ function ghost.alphaFor(vehId)
   -- collision is off, but alpha is a separate call. Decided only here.
   if vehId ~= nil and vehId == ghost.finishedOwn then return 1 end
   if vehId ~= nil and vehId == ghost.practiceOwn then return 1 end
+  -- 'bystander' only ever sits on our own rig.
+  local set = vehId ~= nil and ghost.veh[vehId] or nil
+  if set and set.bystander then return 1 end
   local left = ghost.left[vehId]
   local fade = TUNE.GHOST_FADE_OUT_SEC
   if not left or fade <= 0 or left >= fade then return TUNE.GHOST_ALPHA end
@@ -5750,6 +5782,7 @@ local function clearGhostReasons()
   ghost.practiceOwn = nil
   ghost.practiceList = {}
   ghost.practiceRemote = {}
+  ghost.bystander = false
   ghost.respawn = {}
   -- Swept over EVERY car, whatever the bookkeeping thinks: an entry lost to a
   -- reused id or a reloaded extension would otherwise stay intangible.
@@ -5905,6 +5938,38 @@ function ghost.applyFinishedRoster(list)
   end
 end
 
+-- A BYSTANDER GHOSTS ITS OWN RIG, NOT THE FIELD. Every other client ghosts us
+-- through the finished roster; ghosting the field here as well hid every
+-- contact and all the damage from a spectator. Unfaded for us, as setFinished.
+-- Every own car, not just ownVehicle(): a spectator can spawn a second. Lifted
+-- from every car holding the reason, so a car whose ownership went unresolved
+-- (or a trailer since uncoupled) cannot keep it.
+function ghost.syncBystander()
+  if not isBystander then
+    if not ghost.bystander then return end
+    ghost.bystander = false
+    local held = {}
+    for id, set in pairs(ghost.veh) do
+      if set.bystander then held[#held + 1] = id end
+    end
+    for _, id in ipairs(held) do ghost.reason(id, 'bystander', false) end
+    return
+  end
+  ghost.bystander = true
+  -- Singleplayer has no ownership test: every car would read as ours.
+  if not ownershipFn() then
+    local veh = ownVehicle()
+    local id = vehicleId(veh)
+    if id then ghost.reasonRig(id, 'bystander', true, veh) end
+    return
+  end
+  forEachVehicle(nil, function (veh, id)
+    if isOwnVehicle(id) and not towed.is(veh) then
+      ghost.reasonRig(id, 'bystander', true, veh)
+    end
+  end)
+end
+
 -- PRACTICE GHOSTS, on every client including the driver's own (setFinished's
 -- reason). Ours is decided locally, everyone else's from `ghostPractice` on the
 -- broadcast. Re-issued on every call: practice is where drivers reset most.
@@ -5996,9 +6061,7 @@ local function ghostUpdate(dt)
   -- --- joined mid-session (or sitting out) ----------------------------------
   -- The server flags a mid-session arrival instead of entering them; their car
   -- is ghosted for as long as the flag lasts (cleared when the next grid forms).
-  if isBystander ~= (ghost.field.bystander == true) then
-    setGhostReason('bystander', isBystander)
-  end
+  if isBystander ~= ghost.bystander then ghost.syncBystander() end
   -- Said when the session RUNS, not when the ghost goes on: forming a grid
   -- calls everyone, and a called car is a ghost until Ready.
   local sayOut = isBystander and sessionRunning()
@@ -6115,6 +6178,8 @@ local function ghostUpdate(dt)
   if ghost.refresh > 0 then return end
   ghost.refresh = 2.0
   for reason in pairs(ghost.field) do setGhostReason(reason, true) end
+  -- A spectator's car spawned since, or one whose ownership was unresolved.
+  if isBystander then ghost.syncBystander() end
   for pid, endsAt in pairs(ghost.remote) do ghost.applyRemote(pid, endsAt) end
   ghost.practiceSync()
   -- EVERY GHOSTED CAR, re-issued: a reload we never heard about (a reset hook
@@ -6394,8 +6459,12 @@ do
     rows = function () return session.drivers end,
     slots = function () return #track.route end,
     racing = function () return session.phase == 'racing' and session.sessionKind ~= 'quali' end,
-    -- Nothing to show around a car that is gone or parked as a finished ghost.
-    quiet = function () return session.spectatorLock ~= nil or ghost.finishedOwn ~= nil end,
+    -- Nothing to show around a car that is gone or parked as a finished ghost,
+    -- or a bystander's: nobody racing can touch it either.
+    quiet = function ()
+      return session.spectatorLock ~= nil or ghost.finishedOwn ~= nil
+        or (isBystander and sessionRunning())
+    end,
   })
   M.radarUpdate = radar.radarUpdate
   M.radarForget = radar.forget
@@ -10061,6 +10130,8 @@ local function resetToIdle(reason)
   flushFieldPlacement()
   releaseGridHold()
   practice.stop('idle')
+  -- Or the next update ghosts our car again, with no server left to lift it.
+  isBystander = false
   clearGhostReasons()
   setResetInputsBlocked(false)   -- never leave the reset keys dead after unload
   spectate.setPropulsionBlocked(false)  -- nor the throttle

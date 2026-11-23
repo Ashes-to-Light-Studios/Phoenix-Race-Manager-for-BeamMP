@@ -2195,12 +2195,18 @@ do
   check(booted, 'a malformed config.json does not stop the plugin loading')
   check(lastState.totalLaps == 5, 'and it falls back to the built-in defaults')
 
-  -- THE REPO MOVED. Every file saved before then names the old one.
+  -- THE REPO MOVED, and was later renamed. Every file saved before then names
+  -- an old one.
   writeConfig('{"updateRepo":"aosjay13/BeamNG-Race-Manager-by-Phoenix"}')
   reboot()
   local moved = readConfig()
-  check(moved and moved.updateRepo == 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG',
+  check(moved and moved.updateRepo == 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP',
     'the old repo name in config.json is rewritten to the new one')
+  writeConfig('{"updateRepo":"Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG"}')
+  reboot()
+  moved = readConfig()
+  check(moved and moved.updateRepo == 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP',
+    'and so is the name before the rename (...-for-BeamNG)')
   writeConfig('{"updateRepo":"someone/a-fork"}')
   reboot()
   moved = readConfig()

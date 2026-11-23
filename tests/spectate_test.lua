@@ -529,6 +529,29 @@ do
   check(#watchPushes == 0, 'neither of which tells the board anything')
 end
 
+-- ---------------------------------------------------------------------------
+-- A GRID FORMING DOES NOT TAKE THE CAMERA OFF A SPECTATOR
+-- ---------------------------------------------------------------------------
+-- Forming a grid releases every client, and the placement that follows used to
+-- put everyone back in their own car whether or not it moved them. A spectator
+-- with a car parked somewhere was yanked off the race into it at every grid.
+do
+  serverState({ phase = 'waiting', totalLaps = 3, maxResets = -1,
+    drivers = { { id = 1, name = 'Me', status = 'waiting', bystander = true } } })
+  frames(0.2)
+  attached = world[A]
+  handlers['RM_ReleaseSpectate']({ source = 'race', count = 3 })
+  frames(1.0)
+  check(attached ~= nil and attached:getID() == A,
+    'a grid forming leaves a spectator on the car they were watching')
+
+  -- A driver the placement actually moved is put back in their own car.
+  handlers['RM_GridAssign']({ slot = 1, order = 1, count = 1 })
+  frames(1.0)
+  check(attached ~= nil and attached:getID() == OWN_ID,
+    'a driver placed on a slot is put back in their own car, as before')
+end
+
 if fails == 0 then
   print('spectate_test: ' .. checks .. ' checks, 0 failures')
 else

@@ -12,3 +12,7 @@ Resources/
 # Python bytecode from tools/. Created whenever deploy.py is imported rather
 # than run, which the package workflow does not do but a local check might.
 __pycache__/
+
+# Dev logs and one-off scripts written by Claude sessions: kept locally, not
+# part of the mod.
+Claude outputs/

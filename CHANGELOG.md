@@ -6,6 +6,49 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.28.4 - Spectators see the race
+
+#### Fixed
+
+- **Spectating, every car was a ghost.** Sitting a session out (Spectate,
+  waiting for your heat, or joining mid-race) made every other car a ghost on
+  your screen: translucent, passing through each other, no contact and no
+  damage. Now only your own car is a ghost. You see it normally, everyone else
+  sees it translucent, and nobody can touch it. The race is solid on your
+  screen, so crashes and damage show. See
+  [Broadcast board (spectators)](docs/REFERENCE.md#broadcast-board-spectators).
+- **A grid forming took the camera off a spectator.** With a car parked
+  somewhere, forming the grid put your camera back in it, whoever you were
+  watching. It stays where it is now. A driver placed on a slot is still put in
+  their own car.
+- **Leaving a server while spectating left a ghost behind.** The spectator flag
+  outlived the server and ghosted cars again after you left. It is cleared when
+  you leave.
+- **The race's rules reached drivers who were not in it.** Sitting a session
+  out, your own client still timed your laps, counted your resets against the
+  race allowance (and killed the reset key once it ran out), undid your
+  recovery teleports, blocked the teleport keys, ran the radar, and froze and
+  repaired your car if you parked in a pit stall. The server already ignored
+  all of it. None of it applies to you now until you are back in the field.
+
+#### Changed
+
+- **The repository is now Phoenix-Race-Manager-for-BeamMP.** In-game updates
+  look for releases there, and a `config.json` that names the old
+  `Phoenix-Race-Manager-for-BeamNG` is updated to the new name when the server
+  starts. A fork's own `updateRepo` is kept. Links in the README, the reference
+  and the website point at the new name.
+- **A client with no car of its own stops searching for one every frame.** A
+  spectator without a car walked every vehicle in the world sixty times a
+  second looking for theirs. "None" is now remembered for a quarter of a
+  second, and any spawn or car switch looks again at once.
+- **The test suite runs in about a minute, down from four.** `scope_test` was
+  most of it: it matched a pattern per declared name per line, and re-scanned
+  the whole extension for every name a module declared. It indexes each file
+  once now and finds the same things (checked against the old scanner on every
+  file), plus a self-test for the orphan check. `stress_test`'s JSON decoder
+  reads strings a run at a time instead of a character at a time.
+
 ## 0.28.3 - Race control, pit penalties and the pillar switch
 
 #### Added

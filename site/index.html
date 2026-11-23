@@ -174,7 +174,7 @@
       <p class="eyebrow">Free for BeamMP servers</p>
       <h1>Live timing and race control for your BeamNG race nights</h1>
       <p class="lead">Standings, gaps, qualifying, a held grid, flags, cautions and results files, run from one in-game app. Players get it automatically when they join your server.</p>
-      <a class="download" href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/releases/latest/download/PRM-Setup.exe">
+      <a class="download" href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP/releases/latest/download/PRM-Setup.exe">
         <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 3h2v9.6l3.3-3.3 1.4 1.4L12 16.4l-5.7-5.7 1.4-1.4 3.3 3.3V3zM4 18h16v2H4z"/></svg>
         Download for Windows
       </a>
@@ -190,13 +190,13 @@
         <h3>Linux server</h3>
         <p>In the server's folder, run:</p>
         <div class="cmd">
-          <code id="linux-cmd">curl -fsSLO https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/releases/latest/download/PRM-Install.sh &amp;&amp; bash PRM-Install.sh</code>
+          <code id="linux-cmd">curl -fsSLO https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP/releases/latest/download/PRM-Install.sh &amp;&amp; bash PRM-Install.sh</code>
           <button class="copy" type="button" data-copy="linux-cmd">Copy</button>
         </div>
       </div>
       <div class="card">
         <h3>Hosting panel with no shell</h3>
-        <p>Download <a id="zip" href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/releases/latest">the release zip</a>, upload it into the server's <code>Resources</code> folder and extract it there.</p>
+        <p>Download <a id="zip" href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP/releases/latest">the release zip</a>, upload it into the server's <code>Resources</code> folder and extract it there.</p>
         <p>To update: stop the server, upload the new zip, extract it over the old files, delete the zip and start the server. Your tracks, results and settings are kept.</p>
       </div>
     </div>
@@ -208,7 +208,7 @@
       <li><b>Start the server</b>, or restart it if it was running.</li>
       <li>Players download PRM automatically as they join. Nobody installs anything by hand.</li>
       <li>Each driver adds <b>Phoenix Race Manager (PRM)</b> once from <b>HUD Apps</b> (search <i>PRM</i>), plus the optional <b>Race Lights (PRM)</b> and <b>Radar (PRM)</b>.</li>
-      <li>Log in on the app's admin bar with the password from the <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG#install">guide</a>, then set your own.</li>
+      <li>Log in on the app's admin bar with the password from the <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP#install">guide</a>, then set your own.</li>
     </ol>
   </section>
 
@@ -226,10 +226,10 @@
 
   <footer>
     <nav>
-      <a id="notes" href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/releases/latest">What's new</a>
-      <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG#readme">Full guide</a>
-      <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG">Source code</a>
-      <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG#support-development">Support development</a>
+      <a id="notes" href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP/releases/latest">What's new</a>
+      <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP#readme">Full guide</a>
+      <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP">Source code</a>
+      <a href="https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP#support-development">Support development</a>
     </nav>
     <p>Free and open source under the MIT License. Not affiliated with BeamNG GmbH or the BeamMP team.</p>
   </footer>
@@ -239,7 +239,7 @@
   // The newest release's version and its zip, from GitHub. Without an answer
   // (offline, rate limited) the page keeps its "latest" wording and links.
   (function () {
-    var repo = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG';
+    var repo = 'Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP';
     if (window.fetch) {
       fetch('https://api.github.com/repos/' + repo + '/releases/latest')
         .then(function (r) { return r.ok ? r.json() : null; })

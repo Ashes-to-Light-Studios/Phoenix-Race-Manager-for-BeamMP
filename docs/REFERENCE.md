@@ -1602,6 +1602,14 @@ leader into a wall before they have finished reading the message telling them no
 to. The ghost lasts exactly as long as they are outside the session; forming the
 next grid clears it and puts them in the race properly.
 
+**On their own screen, only their car is a ghost.** They see it normally, and
+the race stays solid and opaque, so they watch it with its contact and damage.
+
+**None of the race's rules apply to them.** No lap timing, no reset allowance,
+no pulling a recovery back onto the track, no pit stops in a stall they park
+in, and their teleport keys still work. The same goes for anyone sitting a
+session out: Spectate, or waiting for another heat.
+
 ### Cars on and off the track
 
 Two things happen automatically so the track only ever holds cars that are
@@ -2184,9 +2192,10 @@ heat's drivers, and the entrant count reads the heat rather than the night.
 become ghosts.** They are not teleported, not frozen and not sent to a spectator
 camera: they can drive the map, park on the hill and watch, or tab between the
 cars in the race, for as long as the heat lasts. What they cannot do is touch it.
-From the moment the grid forms until the flag, every client ghosts them and they
-ghost every client, so a bored driver on the racing line is scenery rather than a
-race-ending accident. The panel says which heat they are in and which one is
+From the moment the grid forms until the flag, every client ghosts them, their
+own included, so a bored driver on the racing line is scenery rather than a
+race-ending accident. On their own screen it is only their car: the heat stays
+solid, contact and damage included. The panel says which heat they are in and which one is
 running, and a notice on screen says the same in words.
 
 Their cars go solid again at the flag, along with everyone else's &mdash; the
@@ -2919,6 +2928,11 @@ Broadcast**. The button is in the header between sessions and on the driver bar
 during one, and it is offered to **admins as well**: the person running the race
 night is usually the person streaming it, and spectating is an entry decision
 that has nothing to do with rights.
+
+**The race is solid on your screen.** Only your own car is a ghost: you see it
+normally, everyone else sees it translucent, and nobody can touch it. Every
+other car is solid and opaque, so contact and damage show. A grid forming no
+longer moves your camera: whoever you were watching, you stay on them.
 
 **It is the whole app while it is on.** The header, the session controls, both
 editors, the derby panel, the login bar, the leaderboard and every alert overlay
@@ -4053,7 +4067,7 @@ Three ways, all from the **Updates** row on the **Admin** panel:
 ### Updating by hand
 
 1. Download `RaceManager-vX.Y.Z.zip` from
-   [Releases](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG/releases/latest).
+   [Releases](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP/releases/latest).
 2. Stop the server.
 3. Upload the zip into the server's `Resources/` folder and extract it there,
    replacing the old files.
@@ -4176,7 +4190,7 @@ install by hand.
 |---|---|---|
 | `onlineFeatures` | `false` | `true` lets the server go online by itself: update checks, **Update and restart** and Discord posts. Also the **Online features** row on the **Admin** tab, which writes it here ([Online features](#online-features)). Leave it off on a rented game server ([Game hosts](#game-hosts)) |
 | `updateCheck` | `true` | With `onlineFeatures` on, `false` still keeps updates off GitHub: no check, no band, no button |
-| `updateRepo` | `Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG` | Where to look, as owner/name. A fork can point it at its own releases |
+| `updateRepo` | `Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP` | Where to look, as owner/name. A fork can point it at its own releases. A `config.json` naming one of the repo's old names is updated to this one when the server starts |
 
 A release must be tagged `vX.Y.Z` and carry `RaceManager-vX.Y.Z.zip` laid out
 the way the package workflow builds it. Anything else is refused, with the
