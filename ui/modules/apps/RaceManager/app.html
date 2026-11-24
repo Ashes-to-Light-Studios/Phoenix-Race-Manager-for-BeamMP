@@ -1133,6 +1133,37 @@
          TIMED IS "10 MINUTES + 1 LAP": when the clock expires nothing changes
          yet. The final lap begins when the LEADER next takes the line, and
          everyone still running finishes at the end of it. -->
+    <!-- SAVED RULESETS: every rule in Race, Quali and Grid under one name.
+         Chips, not a <select>: CEF draws no OS popup over the game. Pick, then
+         Load, so one stray click cannot replace the rules. -->
+    <span class="rm-setting rm-setting-wrap rm-rulesets" title="Every rule in the Race, Quali and Grid tabs, saved under a name.">
+      <label>Rulesets</label>
+      <span class="rm-setting-sub rm-ruleset-chips">
+        <button class="rm-btn rm-btn-mini rm-ruleset-default"
+                ng-class="{'rm-btn-toggle-on': rulesetUi.defaults}"
+                ng-click="pickRuleset('')"
+                title="The rules config.json starts the server on.">{{ rulesets.atDefaults ? '&#10003; ' : '' }}Server defaults</button>
+        <button class="rm-btn rm-btn-mini" ng-repeat="s in rulesets.sets track by $index"
+                ng-class="{'rm-btn-toggle-on': rulesetUi.selected === s}"
+                ng-click="pickRuleset(s)">{{ rulesets.active === s ? '&#10003; ' : '' }}{{ s }}</button>
+      </span>
+      <span class="rm-setting-sub">
+        <button class="rm-btn rm-btn-mini" ng-click="loadRuleset()"
+                ng-disabled="!rulesetPicked() || !canSetRules()"
+                title="Replace every rule in Race, Quali and Grid with this one.">Load</button>
+        <!-- ADMIN ONLY, like a garage set: nothing puts a deleted one back. -->
+        <button class="rm-btn rm-btn-mini" ng-if="isFullAdmin()" ng-click="deleteRuleset()"
+                ng-disabled="!rulesetUi.selected">Delete</button>
+      </span>
+      <span class="rm-setting-sub rm-ruleset-save">
+        <input type="text" class="rm-layout-name" placeholder="Ruleset name…" maxlength="32"
+               ng-model="rulesetUi.name">
+        <button class="rm-btn rm-btn-mini" ng-click="saveRuleset()"
+                ng-disabled="!rulesetUi.name"
+                title="Save the rules in force under this name.">{{ rulesetNameTaken() ? 'Update' : 'Save' }}</button>
+      </span>
+      <span class="rm-setting-val" ng-if="!rulesets.active &amp;&amp; !rulesets.atDefaults">In force: not saved as a ruleset</span>
+    </span>
     <span class="rm-setting" title="Race distance: a lap count, or a clock plus one lap.">
       <label>Race length</label>
       <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': isRaceLimitMode('laps')}"
@@ -6052,6 +6083,11 @@
   /* A row with more groups than a default-width panel holds (checkpoint skips):
      the groups wrap instead of running off the right edge. */
   .rm-setting.rm-setting-wrap { flex-wrap: wrap; row-gap: 4px; }
+  /* Rulesets: the whole first line of the Race tab, chips wrapping. */
+  .rm-rulesets { flex-basis: 100%; }
+  .rm-ruleset-chips { flex-wrap: wrap; gap: 4px; }
+  .rm-ruleset-default { font-style: italic; }
+  .rm-ruleset-save .rm-layout-name { flex: 0 1 150px; }
 
   /* Checkpoint editor */
   .rm-editor {

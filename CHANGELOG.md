@@ -6,6 +6,26 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Fixed
+
+- **Switching map reset the race rules.** A map switch that restarts the
+  server (any map it did not have loaded), a crash or a restart by hand put
+  every rule in the Race, Quali and Grid tabs back to `config.json`. They are
+  kept in `Data/rules.json` now and come back as they were. A rule you change
+  in `config.json` itself still wins at the next start. The heat draw, custom
+  grid slots and a joker lap with no track loaded do not come back, since what
+  they need left with the restart. See [Rulesets](docs/REFERENCE.md#rulesets).
+
+#### Added
+
+- **Rulesets.** Save every rule in the Race, Quali and Grid tabs under a name
+  and load it back in one click between sessions: a sprint, a heat night, an
+  endurance. **Server defaults** puts `config.json`'s rules back, and the set
+  the rules in force match is ticked. Deleting one is admin only. See
+  [Rulesets](docs/REFERENCE.md#rulesets).
+
 ## 0.29.1 - Layouts folder path
 
 #### Fixed

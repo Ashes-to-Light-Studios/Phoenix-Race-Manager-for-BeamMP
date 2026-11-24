@@ -213,6 +213,11 @@ angular.module('beamng.apps')
       // set the Load/Delete buttons act on.
       $scope.garageSets = [];
       $scope.garageSetUi = { name: '', selected: '' };
+      // Saved rulesets: every rule in Race, Quali and Grid under a name. Names
+      // from the server; `active` is the set the live rules equal. `defaults`
+      // picks the server's own defaults instead of a set.
+      $scope.rulesets = { sets: [], active: null, atDefaults: false };
+      $scope.rulesetUi = { name: '', selected: '', defaults: false };
       // Behind a dot: the panel sits inside an ng-if (ui_bindings_test).
       $scope.garagePickUi = { open: false };
       $scope.resultsPath = '';   // the server's results folder, admins only
@@ -2413,6 +2418,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (data.teams !== undefined && data.teams !== null) { takeTeams(data.teams); }
           if (data.teamEntries) { takeTeamEntries(data.teamEntries); }
           else if ($scope.adminTab === 'teams' && $scope.isAdmin) { teamsRebuildDrivers(); }
+          // Saved rulesets: admins' own sends and the broadcast after a change,
+          // absent otherwise (keep what we have).
+          if (data.rulesets) { takeRulesets(data.rulesets); }
           // Re-seed the distance box when the server's value moves (clamped, or
           // set by another admin).
           if (typeof data.totalLaps === 'number') {
@@ -5341,6 +5349,56 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         if (!name) { return; }
         bngApi.engineLua('raceManager.deleteGarageSet(' + luaStr(name) + ')');
         $scope.garageSetUi.selected = '';
+      };
+
+      // --- Saved rulesets ------------------------------------------------
+      // The server owns the names, the cap and every refusal (rules.lua).
+      function takeRulesets(r) {
+        $scope.rulesets = {
+          sets: toArray(r.sets),
+          active: r.active || null,
+          atDefaults: r.atDefaults === true
+        };
+        // A set deleted elsewhere must not stay selected.
+        if ($scope.rulesetUi.selected
+            && $scope.rulesets.sets.indexOf($scope.rulesetUi.selected) === -1) {
+          $scope.rulesetUi.selected = '';
+        }
+      }
+      // No name picks the server defaults.
+      $scope.pickRuleset = function (name) {
+        $scope.rulesetUi.selected = name || '';
+        $scope.rulesetUi.defaults = !name;
+      };
+      $scope.rulesetPicked = function () {
+        return $scope.rulesetUi.defaults || !!$scope.rulesetUi.selected;
+      };
+      // Saving under a name already kept replaces it: the button says so.
+      $scope.rulesetNameTaken = function () {
+        var name = ($scope.rulesetUi.name || '').trim().toLowerCase();
+        return !!name && $scope.rulesets.sets.some(function (s) {
+          return String(s).toLowerCase() === name;
+        });
+      };
+      $scope.saveRuleset = function () {
+        var name = ($scope.rulesetUi.name || '').trim();
+        if (!name) { return; }
+        bngApi.engineLua("raceManager.rulesetAction('save', " + luaStr(name) + ')');
+        $scope.rulesetUi.name = '';
+      };
+      $scope.loadRuleset = function () {
+        if ($scope.rulesetUi.defaults) {
+          bngApi.engineLua("raceManager.rulesetAction('defaults', '')");
+        } else if ($scope.rulesetUi.selected) {
+          bngApi.engineLua("raceManager.rulesetAction('load', "
+            + luaStr($scope.rulesetUi.selected) + ')');
+        }
+      };
+      $scope.deleteRuleset = function () {
+        var name = $scope.rulesetUi.selected;
+        if (!name) { return; }
+        bngApi.engineLua("raceManager.rulesetAction('delete', " + luaStr(name) + ')');
+        $scope.rulesetUi.selected = '';
       };
       // Tag an entry with the class its car runs in. Blank clears it.
       $scope.applyGarageClass = function (index) {

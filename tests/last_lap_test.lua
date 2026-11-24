@@ -49,6 +49,8 @@ Util = {
   end,
 }
 
+-- Rules outlive a boot (rules.lua): start from config.json's, not the last test's.
+os.remove('Resources/Server/PhoenixRM Server/Data/rules.json')
 dofile('server/RaceManager/main.lua')
 
 local function driver(pid)

@@ -14,8 +14,9 @@
 -- ---------------------------------------------------------------------------
 -- Every number an admin might change, seeded here and overridden from
 -- config.json beside layouts.json at boot (written out on first run). SEEDED,
--- NOT LIVE: the panel changes race.totalLaps, never this. saveConfigToDisk is
--- declared here because the password handlers sit far above the writer.
+-- NOT LIVE: the panel changes race.totalLaps, never this, and rules.lua keeps
+-- the live rules in Data/rules.json. saveConfigToDisk is declared here because
+-- the password handlers sit far above the writer.
 --
 -- Make this plugin's folder importable: BeamMP does it, the test harness (which
 -- dofile()s this from the repo root) does not. Derived from this file's path.
@@ -1361,6 +1362,9 @@ local function clearAllGhosts(reason)
 end
 
 local function broadcastState(targetPid)
+  -- Every rule setter ends here, so a changed rule is written to
+  -- Data/rules.json here (rules.lua).
+  if race.rulesSync then race.rulesSync() end
   -- The Garage List goes out on RM_Garage when it changes. KEPT, OFF:
   -- race.garageOnUpdate = true puts it on every push for a pre-RM_Garage client.
   local garageInfo = race.garageOnUpdate and garageSnapshot and garageSnapshot() or {}
@@ -1528,6 +1532,9 @@ local function broadcastState(targetPid)
     -- after a change, never the 3 Hz ticks. Admins also get every entry.
     teams        = race.teamsWire and race.teamsWire(targetPid) or nil,
     teamEntries  = selfAdmin and race.teamsEntries and race.teamsEntries() or nil,
+    -- Saved rulesets and the one in force: admins' targeted sends and the
+    -- broadcast after a change (rules.lua).
+    rulesets     = race.rulesWire and race.rulesWire(targetPid, selfAdmin) or nil,
     drivers      = buildDrivers(),
   })
   MP.TriggerClientEvent(targetPid or -1, 'RM_Update', payload)
@@ -8448,6 +8455,42 @@ end)()
 end)()
 
 -- ===========================================================================
+-- RACE RULES OVER A RESTART, and saved rulesets: its own module. broadcastState
+-- writes Data/rules.json through race.rulesSync when a rule has moved; onInit
+-- puts it back (rules.lua).
+-- ===========================================================================
+;(function ()
+  local ok, mod = pcall(require, 'rules')
+  if not (ok and type(mod) == 'table') then
+    print('[RaceManager] rules.lua did not load, so race rules reset on a restart '
+      .. 'and rulesets are off: ' .. tostring(mod))
+    return
+  end
+  mod.init({
+    race = race, CFG = CFG, DATA_DIR = DATA_DIR,
+    requireAuth = requireAuth, requireFull = auth.requireFull,
+    underWay = sessionUnderWay,
+    jsonParse = jsonParse, jsonStringify = jsonStringify, writeFile = writeLayoutFile,
+    ensureDir = ensureLayoutsDir,
+    broadcast = function () broadcastState() end,
+    pushAdmins = function ()
+      for pid in pairs(authenticatedPlayers) do broadcastState(pid) end
+    end,
+    -- A different heat count is a different program: RM_onSetHeats' off path.
+    dropHeatDraw = function ()
+      race.heatCurrent, race.heatsDrawn = 0, false
+      for _, rec in pairs(players) do
+        rec.heat, rec.heatPos, rec.transferred = nil, nil, nil
+        rememberIdentity(rec)
+      end
+    end,
+  })
+  race.rulesSync = mod.sync
+  race.rulesWire = mod.wire
+  race.rulesWarm = mod.warm
+end)()
+
+-- ===========================================================================
 -- DRIVER ROSTER (persistent display names)
 -- ===========================================================================
 -- A cup needs points to follow a driver across races and restarts. The anchor
@@ -10412,6 +10455,9 @@ function onInit()
   -- (applyConfigToRace).
   loadConfigFromDisk()
   applyConfigToRace()
+  -- And the rules the server was last running, over config.json's (rules.lua).
+  -- Before anything broadcasts, or the defaults would be written over them.
+  if race.rulesWarm then race.rulesWarm() end
   MP.RegisterEvent('RM_Login',            'RM_onLogin')
   MP.RegisterEvent('RM_Logout',           'RM_onLogout')
   MP.RegisterEvent('RM_ChangePassword',   'RM_onChangePassword')
@@ -10585,6 +10631,8 @@ function onInit()
   MP.RegisterEvent('RM_DiscordTick',      'RM_DiscordTick')
   -- Teams and car numbers (teams.lua).
   MP.RegisterEvent('RM_TeamsSet',         'RM_onTeamsSet')
+  -- Saved rulesets (rules.lua).
+  MP.RegisterEvent('RM_Rules',            'RM_onRules')
   -- Cup / series points (see the CUP section).
   MP.RegisterEvent('RM_CupSetEnabled',    'RM_onCupSetEnabled')
   MP.RegisterEvent('RM_CupStart',         'RM_onCupStart')
