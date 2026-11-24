@@ -9785,6 +9785,18 @@ function M.setPitStart(kind, enabled)
   end
 end
 
+-- Mandatory pit stops: how many a race requires (0 = off), and what a
+-- finisher short of them gets, 'dsq' or 'time' (`seconds` per missing stop).
+-- The server's rule: it counts the stops and rules at the flag.
+function M.setPitStopRule(required, missed, seconds)
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetPitStopRule', jsonEncode({
+      required = tonumber(required), seconds = tonumber(seconds),
+      missed = (missed == 'time' or missed == 'dsq') and missed or nil,
+    }))
+  end
+end
+
 function M.setGhostQuali(enabled)
   enabled = enabled and true or false
   if inMultiplayer() then

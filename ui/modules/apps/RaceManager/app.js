@@ -66,7 +66,10 @@ angular.module('beamng.apps')
         cpSkipPenaltySec: 5,
         cpSkipLiftSec: 3,
         cpSkipLiftWindow: 30,
-        cpSkipPitLaps: 3        // laps to serve penalty seconds in, when required
+        cpSkipPitLaps: 3,       // laps to serve penalty seconds in, when required
+        // Mandatory pit stops: how many, and the seconds per missing stop.
+        pitStopsRequired: 0,
+        pitStopSecs: 30
       };
 
       // ----------------------------------------------------------------
@@ -234,6 +237,9 @@ angular.module('beamng.apps')
       $scope.ghostQuali = false;
       $scope.qualiFromPits = false;
       $scope.raceFromPits = false;
+      // Mandatory pit stops as the server has them; `active` is the number in
+      // force (0 with no stalls, or outside a race).
+      $scope.pitStopRule = { required: 0, missed: 'dsq', seconds: 30, active: 0 };
       // Put display names on BeamMP's nametags as well as on the board.
       // Server-owned so every client agrees; each client applies it locally,
       // because a nametag is drawn from that machine's own player list.
@@ -2530,6 +2536,19 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.ghostQuali = !!data.ghostQuali;
           $scope.qualiFromPits = !!data.qualiFromPits;
           $scope.raceFromPits = !!data.raceFromPits;
+          if (data.pitStopRule && typeof data.pitStopRule.required === 'number') {
+            var psr = data.pitStopRule;
+            // The boxes follow the server only when its value moved, so typing
+            // is not overwritten by the next broadcast.
+            if ($scope.pitStopRule.required !== psr.required) { $scope.settingsUi.pitStopsRequired = psr.required; }
+            if ($scope.pitStopRule.seconds !== psr.seconds) { $scope.settingsUi.pitStopSecs = psr.seconds; }
+            $scope.pitStopRule = {
+              required: psr.required,
+              missed: psr.missed === 'time' ? 'time' : 'dsq',
+              seconds: typeof psr.seconds === 'number' ? psr.seconds : 30,
+              active: typeof psr.active === 'number' ? psr.active : 0
+            };
+          }
           $scope.nametags = !!data.nametags;
           $scope.qualiOutLap = !!data.qualiOutLap;
           // A limit becoming non-zero picks the Laps/Timed toggle, keyed on the
@@ -5444,6 +5463,35 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.toggleGhostQuali = function () {
         bngApi.engineLua('raceManager.setGhostQuali(' + (!$scope.ghostQuali) + ')');
+      };
+      // Mandatory pit stops. A blank box is mid-edit: nothing is sent.
+      function sendPitStopRule(missed) {
+        var n = parseInt($scope.settingsUi.pitStopsRequired, 10);
+        var s = parseFloat($scope.settingsUi.pitStopSecs);
+        if (isNaN(n)) { n = $scope.pitStopRule.required; }
+        if (isNaN(s)) { s = $scope.pitStopRule.seconds; }
+        bngApi.engineLua('raceManager.setPitStopRule(' + n + ', '
+          + luaStr(missed || $scope.pitStopRule.missed) + ', ' + s + ')');
+      }
+      $scope.applyPitStopRule = function () {
+        if (isNaN(parseInt($scope.settingsUi.pitStopsRequired, 10))) { return; }
+        if (isNaN(parseFloat($scope.settingsUi.pitStopSecs))) { return; }
+        sendPitStopRule();
+      };
+      $scope.setPitStopMissed = function (mode) {
+        if (mode !== 'dsq' && mode !== 'time') { return; }
+        sendPitStopRule(mode);
+      };
+      // The row badge: stops counted of those required, in a race with the
+      // rule in force.
+      $scope.pitStopsShown = function () {
+        return $scope.sessionKind === 'race' && $scope.pitStopRule.active > 0;
+      };
+      $scope.pitStopsLabel = function (row) {
+        return 'PIT ' + (row.pitCounted || 0) + '/' + $scope.pitStopRule.active;
+      };
+      $scope.pitStopsDone = function (row) {
+        return (row.pitCounted || 0) >= $scope.pitStopRule.active;
       };
       // Start from the pit stalls: 'quali' or 'race', each its own switch.
       $scope.togglePitStart = function (kind) {

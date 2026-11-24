@@ -98,6 +98,12 @@ local CFG = {
   -- laps, or disqualified at the flag).
   checkpointSkipPitServe        = 'off',
   checkpointSkipPitLaps         = 3,
+  -- MANDATORY PIT STOPS in a race: how many (0 = off), at most one per lap,
+  -- and what a finisher short of them gets: 'dsq' (disqualified at the flag)
+  -- or 'time' (pitStopPenaltySeconds per missing stop). Needs stalls.
+  pitStopsRequired      = 0,
+  pitStopMissed         = 'dsq',
+  pitStopPenaltySeconds = 30,
   -- Furthest ahead (gates) a crossing still counts as a skip; further is
   -- ignored, as it always was. config.json only, never the panel.
   checkpointSkipMaxGates        = 2,
@@ -241,6 +247,13 @@ local race = {
   checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow,
   checkpointSkipPitServe        = CFG.checkpointSkipPitServe,
   checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps,
+  pitStopsRequired      = CFG.pitStopsRequired,
+  pitStopMissed         = CFG.pitStopMissed,
+  pitStopPenaltySeconds = CFG.pitStopPenaltySeconds,
+  -- The mandatory pit stop rule as the race started under it (set at GO):
+  -- { required, missed, seconds }. required 0 is no rule. Counting, the
+  -- ruling at the flag and the results file read this, not the settings.
+  pitStopRun = { required = 0, missed = 'dsq', seconds = 30 },
   -- The rules this race's cautions ran under ({ line = true, call = true }),
   -- for the results file: the setting may have changed between them.
   cautionRulesUsed = {},
@@ -565,6 +578,13 @@ local function newRecord(pid)
     resetsBlocked = 0,       -- resets refused after the allowance ran out
     ghosts     = 0,          -- reset ghosts armed this session (audit trail)
     pitStops   = 0,          -- pit stalls used this session
+    -- Mandatory pit stops: stops counted (one per lap), the lap of the last
+    -- counted one, seconds added at the flag for missing ones (the 'time'
+    -- rule), and short of them at the flag (the 'dsq' rule).
+    pitCounted = 0,
+    pitLastLap = nil,
+    pitStopPenalty = 0,
+    pitStopsShort = nil,
     holdCorrections = 0,     -- times this car was pulled back onto its grid slot
     holdCorrectedAt = nil,   -- race.time of the last correction (rate limiting)
     jokerTaken = 0,          -- completed runs of the joker route this race
@@ -713,7 +733,7 @@ end
 -- penalty. Finishers only (raceOrderLess, the results file, Discord); never
 -- the on-road order, the gaps or the blue flag.
 function progress.flagTime(rec)
-  return rec.finishTime + (rec.penaltySeconds or 0)
+  return rec.finishTime + (rec.penaltySeconds or 0) + (rec.pitStopPenalty or 0)
 end
 
 -- A new session's checkpoint-skip tallies: Generate Grid (both kinds of
@@ -1199,6 +1219,8 @@ local DRIVER_WIRE_FIELDS = {
   -- The broadcast feed (client feed.lua): the last lap, the crossing it was
   -- completed on, and pit stops. Zero stops go out as nil (driverForWire).
   'lastLap', 'lastLapOn', 'pitStops',
+  -- Mandatory pit stops: counted so far, and seconds added at the flag.
+  'pitCounted', 'pitStopPenalty',
   -- Teams and car numbers (teams.lua): resolved per record in driverForWire,
   -- nil when unset, so a league without them sends nothing extra.
   'team', 'number',
@@ -1226,6 +1248,8 @@ local function driverForWire(rec)
   if wire.liftOwed == 0 then wire.liftOwed = nil end
   if wire.penaltyServed == 0 then wire.penaltyServed = nil end
   if wire.pitStops == 0 then wire.pitStops = nil end
+  if wire.pitCounted == 0 then wire.pitCounted = nil end
+  if wire.pitStopPenalty == 0 then wire.pitStopPenalty = nil end
   return wire
 end
 
@@ -1483,6 +1507,14 @@ local function broadcastState(targetPid)
     qualiFromPits  = race.qualiFromPits,
     raceFromPits   = race.raceFromPits,
     gridKind       = race.gridKind,
+    -- Mandatory pit stops: the settings, and `active`, the number in force
+    -- (the race's own once it is under way, 0 with no stalls or no race).
+    pitStopRule    = {
+      required = race.pitStopsRequired,
+      missed   = race.pitStopMissed,
+      seconds  = race.pitStopPenaltySeconds,
+      active   = race.pitStopsActive(),
+    },
     -- Does this session open with an out lap (outLapOwed, races included; the
     -- name is historical). Per-driver owing rides on the rows (`outLap`).
     qualiOutLap    = outLapOwed(),
@@ -2065,8 +2097,11 @@ local function buildResultsText(cupRound)
   -- the winner (a car home a lap down did not race the winner's distance).
   -- A checkpoint-skip penalty is IN the time shown, and said beside it.
   local function finishCell(rec)
-    local pen = rec.penaltySeconds or 0
-    local note = pen > 0 and string.format(' (+%.1fs pen)', pen) or ''
+    local pen, pit = rec.penaltySeconds or 0, rec.pitStopPenalty or 0
+    local notes = {}
+    if pen > 0 then notes[#notes + 1] = string.format('+%.1fs pen', pen) end
+    if pit > 0 then notes[#notes + 1] = string.format('+%.1fs pit', pit) end
+    local note = #notes > 0 and (' (' .. table.concat(notes, ', ') .. ')') or ''
     local down = leaderLaps - lapsRun(rec)
     if down > 0 then return '+' .. down .. (down == 1 and ' lap' or ' laps') .. note end
     return fmtLap(progress.flagTime(rec)) .. note
@@ -2077,7 +2112,10 @@ local function buildResultsText(cupRound)
   local skipsOn = race.enableCheckpointSkipPenalty == true
   local timeW = 10
   for _, rec in ipairs(final) do
-    if (rec.penaltySeconds or 0) > 0 then timeW = 24 break end
+    if (rec.penaltySeconds or 0) > 0 or (rec.pitStopPenalty or 0) > 0 then timeW = 24 break end
+  end
+  for _, rec in ipairs(final) do
+    if (rec.penaltySeconds or 0) > 0 and (rec.pitStopPenalty or 0) > 0 then timeW = 36 break end
   end
   local function skipCell(rec)
     local parts = {}
@@ -2147,6 +2185,13 @@ local function buildResultsText(cupRound)
     race.maxResets < 0 and 'unlimited'
       or (race.maxResets == 0 and 'not allowed' or tostring(race.maxResets) .. ' per driver'),
     race.jokerEnabled and 'required exactly once' or 'disabled'))
+  -- Mandatory pit stops, as the race ran them (race.pitStopRun, set at GO).
+  local pitRule = race.pitStopRun
+  if (pitRule.required or 0) > 0 then
+    add(string.format(' Mandatory pit stops: %d, one per lap; missed: %s', pitRule.required,
+      pitRule.missed == 'time' and string.format('+%.1fs per stop', pitRule.seconds)
+        or 'disqualified'))
+  end
   -- The checkpoint skip rule, when it was on (a plain race exports as always).
   if skipsOn then
     local w = race.checkpointSkipWarningsAllowed
@@ -2198,8 +2243,11 @@ local function buildResultsText(cupRound)
   local classCol = classed and string.format(' %-12s', 'Class') or ''
   -- Last: its cells are as long as there is to say.
   local skipCol = skipsOn and ' Track cuts' or ''
+  -- Counted mandatory stops, while the rule ran: "1/2".
+  local pitsOn  = (pitRule.required or 0) > 0
+  local pitsCol = pitsOn and string.format(' %-6s', 'Pits') or ''
   -- 'Race Time' is padded only when a column follows it.
-  local tail = classCol .. jokerCol .. resetCol .. skipCol
+  local tail = classCol .. jokerCol .. resetCol .. pitsCol .. skipCol
   add(string.format('%-5s %-6s %-22s %-10s %-9s %-5s %s%s',
     'Pos', 'Start', 'Driver', 'Best Lap', 'Laps Led', 'Laps',
     tail ~= '' and string.format('%-' .. timeW .. 's', 'Race Time') or 'Race Time', tail))
@@ -2232,10 +2280,12 @@ local function buildResultsText(cupRound)
       rec.class and (rec.class .. (rec.classPos and (' P' .. rec.classPos) or ''))
         or '-') or ''
     local skipVal = skipsOn and (' ' .. skipCell(rec)) or ''
-    add(string.format('%-5s %-6s %-22s %-10s %-9d %-5d %-' .. timeW .. 's%s%s%s%s%s%s',
+    local pitsVal = pitsOn and string.format(' %-6s',
+      string.format('%d/%d', rec.pitCounted or 0, pitRule.required)) or ''
+    add(string.format('%-5s %-6s %-22s %-10s %-9d %-5d %-' .. timeW .. 's%s%s%s%s%s%s%s',
       pos, rec.gridPos and ('P' .. rec.gridPos) or '-',
       displayName(rec), fmtLap(rec.raceBest), rec.lapsLed or 0, lapsRun(rec), finish,
-      classVal, jokerVal, resetVal, skipVal, aliasNote(rec), tag))
+      classVal, jokerVal, resetVal, pitsVal, skipVal, aliasNote(rec), tag))
   end
   if #final == 0 then add('(no drivers)') end
   -- PER-CLASS RESULTS: a league running two classes publishes two results. The
@@ -2513,6 +2563,9 @@ local function retireDriver(rec, reason, atLine)
   -- A lift still owed at the flag can no longer be served: it becomes time
   -- NOW, before the place below is worked out, so it counts.
   if race.sessionKind == 'race' then race.convertLift(rec, 'at the flag') end
+  -- Mandatory pit stops short: time on now, for the same reason; or marked
+  -- for the disqualification finishSession rules.
+  if race.sessionKind == 'race' then race.pitStopsAtFlag(rec) end
   -- Their place: in a race, where the classification puts them (laps first,
   -- so not simply how many are home); in qualifying, the count home.
   local place = 0
@@ -2527,7 +2580,8 @@ local function retireDriver(rec, reason, atLine)
   end
   -- With a penalty on this car's time, a car still out can finish inside it.
   forceSpectate(rec.id, reason, 'race', place,
-    race.sessionKind == 'race' and (rec.penaltySeconds or 0) > 0)
+    race.sessionKind == 'race'
+      and ((rec.penaltySeconds or 0) > 0 or (rec.pitStopPenalty or 0) > 0))
   return true
 end
 
@@ -2669,6 +2723,8 @@ local function finishSession(reason)
   local excluded = applyJokerRuling()
   -- And a required pit stop not served in its window, ruled the same way.
   local unserved = race.pitRuling()
+  -- And mandatory pit stops not made, under the disqualify rule.
+  race.pitStopRuling()
   race.phase = 'finished'
   -- THE HEAT RESULT, recorded once final (after the joker ruling, so an excluded
   -- driver never transfers), onto the record and the identity registry.
@@ -2916,6 +2972,30 @@ function RM_onSetPitStart(pid, rawData)
     on and 'ENABLED' or 'disabled', MP.GetPlayerName(pid) or pid))
 end
 
+-- Mandatory pit stops: { required, missed = 'dsq'|'time', seconds }. Locked
+-- while a session is under way, like the checkpoint skip rules.
+function RM_onSetPitStopRule(pid, rawData)
+  if not requireAuth(pid) then return end
+  if sessionUnderWay() then
+    MP.SendChatMessage(pid, '[RaceManager] Mandatory pit stops are locked while a session '
+      .. 'is running. Change them before the next one.')
+    broadcastState(pid)
+    return
+  end
+  local data = adminPayload(pid, rawData, true)
+  if not data then return end
+  local n = tonumber(data.required)
+  if n and n == n then race.pitStopsRequired = math.min(math.max(math.floor(n), 0), 10) end
+  if data.missed == 'dsq' or data.missed == 'time' then race.pitStopMissed = data.missed end
+  n = tonumber(data.seconds)
+  if n and n == n then race.pitStopPenaltySeconds = race.halfStep(n, 1, 600) end
+  broadcastState()
+  print(string.format('[RaceManager] Mandatory pit stops set by %s: %d, missed: %s',
+    MP.GetPlayerName(pid) or pid, race.pitStopsRequired,
+    race.pitStopMissed == 'time' and string.format('+%.1fs per stop', race.pitStopPenaltySeconds)
+      or 'disqualified'))
+end
+
 -- Ghost qualifying: enforced client-side; the server holds the switch.
 function RM_onSetGhostQuali(pid, rawData)
   local data = adminPayload(pid, rawData)
@@ -3137,6 +3217,7 @@ formGrid = function (kind, byName)
       rec.currentLap, rec.lapsLed = 0, 0
       rec.dnfPos, rec.heldPos, rec.outReason = nil, nil, nil
       rec.lastLap, rec.lastLapOn, rec.pitStops = nil, nil, 0
+      rec.pitCounted, rec.pitLastLap, rec.pitStopPenalty, rec.pitStopsShort = 0, nil, 0, nil
       rec.splits, rec.splitLap, rec.splitCp = nil, nil, nil
       -- ...and no penalty or lift from it on the board. (Qualifying's cut
       -- laps stay, with the qualiBest they belong to.)
@@ -3231,6 +3312,7 @@ formGrid = function (kind, byName)
     rec.gap, rec.intv = nil, nil
     -- "This session" counters.
     rec.pitStops   = 0
+    rec.pitCounted, rec.pitLastLap, rec.pitStopPenalty, rec.pitStopsShort = 0, nil, 0, nil
     rec.ghosts     = 0
     -- Checkpoint skips start over: warnings, penalties, lifts, cut laps.
     race.resetSkips(rec, isQualiSession())
@@ -3465,6 +3547,7 @@ function RM_onPitStop(pid, rawData)
   end
   rec.pitStops = (rec.pitStops or 0) + 1
   race.pitStopBegan(rec)
+  race.countRequiredStop(rec)
   print(string.format('[RaceManager] %s pitted (stall %s) on lap %s at race time %.1fs: stop #%d%s',
     rec.name, tostring(stall), tostring(rec.currentLap or '?'), race.time, rec.pitStops,
     rec.pitServing and string.format(', serving %.1fs', rec.pitServing) or ''))
@@ -4012,6 +4095,7 @@ local function releaseField(pacing)
       rec.raceBest   = nil
       rec.lastLap, rec.lastLapOn = nil, nil
       rec.pitStops   = 0
+      rec.pitCounted, rec.pitLastLap, rec.pitStopPenalty, rec.pitStopsShort = 0, nil, 0, nil
       rec.lapsLed    = 0
       rec.finishTime = nil
       rec.lapsDone, rec.atLine = nil, nil
@@ -4040,7 +4124,16 @@ local function releaseField(pacing)
     race.raceOutLapRun  = outLapOwed()
     race.racePaceLapRun = race.pacing
   end
+  -- The mandatory pit stop rule this race runs under, fixed from here.
+  race.pitStopRun = {
+    required = isQualiSession() and 0 or race.pitStopsRequiredNow(),
+    missed   = race.pitStopMissed,
+    seconds  = race.pitStopPenaltySeconds,
+  }
   broadcastState()
+  if race.pitStopRun.required > 0 then
+    MP.SendChatMessage(-1, '[RaceManager] ' .. race.pitStopRuleText() .. '.')
+  end
   -- The pace lap gets the first word: it is an instruction (both speed units:
   -- drivers on both sides of the Atlantic).
   if race.pacing then
@@ -5432,6 +5525,95 @@ function race.missPit(rec)
     .. 'the pits in time: disqualified at the flag', displayName(rec), rec.penaltySeconds or 0))
 end
 
+-- ---------------------------------------------------------------------------
+-- MANDATORY PIT STOPS (race.pitStopsRequired)
+-- ---------------------------------------------------------------------------
+-- A race may require N stops, at most one counted per lap: two stalls on one
+-- visit is one stop. A finisher short of N is disqualified at the flag, or
+-- given pitStopPenaltySeconds per missing stop, as the admin chose. Like
+-- Required serving, it needs stalls: with none it does not run, so nobody is
+-- ruled out for having nowhere to stop.
+
+-- The number a race starting now would require: 0 for qualifying, a drag
+-- strip, or a layout with no stalls.
+function race.pitStopsRequiredNow()
+  if race.sessionKind ~= 'race' or race.dragStrip then return 0 end
+  if race.pitStalls() == 0 then return 0 end
+  return race.pitStopsRequired or 0
+end
+
+-- The number in force: the race's own once it has started, else the preview.
+function race.pitStopsActive()
+  if sessionUnderWay() or race.phase == 'finished' then
+    return race.pitStopRun.required or 0
+  end
+  return race.pitStopsRequiredNow()
+end
+
+-- "2 pit stops required, one per lap: missing one disqualifies at the flag"
+function race.pitStopRuleText()
+  local r = race.pitStopRun
+  return string.format('%d pit stop%s required, one per lap: %s', r.required,
+    r.required == 1 and '' or 's',
+    r.missed == 'time' and string.format('each one missed adds %.1fs', r.seconds)
+      or 'missing one disqualifies at the flag')
+end
+
+-- A stop began (RM_onPitStop). It counts if the rule is running and this car
+-- has not already had one counted on this lap.
+function race.countRequiredStop(rec)
+  local need = race.pitStopRun.required or 0
+  if race.sessionKind ~= 'race' or need <= 0 then return end
+  local lap = rec.currentLap or 0
+  if rec.pitLastLap == lap then
+    MP.SendChatMessage(rec.id, string.format('[RaceManager] Same lap as your last stop: '
+      .. 'not counted (%d of %d required stops made)', rec.pitCounted or 0, need))
+    return
+  end
+  rec.pitLastLap = lap
+  rec.pitCounted = (rec.pitCounted or 0) + 1
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Pit stop %d of %d done%s',
+    rec.pitCounted, need, rec.pitCounted >= need and ': all required stops made' or ''))
+end
+
+-- A car took the flag (retireDriver). Short of the stops: time on now, before
+-- its place is worked out, or marked for race.pitStopRuling.
+function race.pitStopsAtFlag(rec)
+  local r = race.pitStopRun
+  local need = r.required or 0
+  if need <= 0 then return end
+  local missing = need - (rec.pitCounted or 0)
+  if missing <= 0 then return end
+  local what = string.format('%d required pit stop%s not made', missing, missing == 1 and '' or 's')
+  if r.missed == 'time' then
+    rec.pitStopPenalty = missing * r.seconds
+    MP.SendChatMessage(rec.id, string.format('[RaceManager] %s: +%.1fs on your race time',
+      what, rec.pitStopPenalty))
+    race.tellRaceControl(string.format('[RaceManager] Race control: %s finished with %s: +%.1fs',
+      displayName(rec), what, rec.pitStopPenalty))
+  else
+    rec.pitStopsShort = true
+    MP.SendChatMessage(rec.id, '[RaceManager] ' .. what .. ': disqualified at the flag')
+    race.tellRaceControl(string.format('[RaceManager] Race control: %s finished with %s: '
+      .. 'disqualified', displayName(rec), what))
+  end
+end
+
+-- finishSession, beside race.pitRuling. Returns how many were ruled out.
+function race.pitStopRuling()
+  local n = 0
+  for _, rec in pairs(players) do
+    if rec.status == 'finished' and rec.pitStopsShort then
+      rec.status = 'dsq'
+      rec.outReason = 'Disqualified - Pit Stop Not Made'
+      n = n + 1
+      print(string.format('[RaceManager] Pit stop ruling: %s %s (%d of %d)', rec.name,
+        rec.outReason, rec.pitCounted or 0, race.pitStopRun.required or 0))
+    end
+  end
+  return n
+end
+
 -- finishSession, after the joker ruling. Returns how many were ruled out.
 function race.pitRuling()
   local n = 0
@@ -6223,6 +6405,11 @@ local function applyConfigTable(data)
   num('checkpointSkipMaxGates', 1, 5)
   str('checkpointSkipPitServe', { off = true, optional = true, required = true })
   num('checkpointSkipPitLaps', 1, 20)
+  num('pitStopsRequired', 0, 10)
+  str('pitStopMissed', { dsq = true, time = true })
+  num('pitStopPenaltySeconds', 1, 600)
+  CFG.pitStopsRequired      = math.floor(CFG.pitStopsRequired)
+  CFG.pitStopPenaltySeconds = race.halfStep(CFG.pitStopPenaltySeconds, 1, 600)
   -- Whole numbers where a count is meant, and half seconds where a time is.
   CFG.checkpointSkipPitLaps         = math.floor(CFG.checkpointSkipPitLaps)
   CFG.checkpointSkipWarningsAllowed = math.floor(CFG.checkpointSkipWarningsAllowed)
@@ -6333,6 +6520,9 @@ local function configFileText()
     checkpointSkipPitServe        = CFG.checkpointSkipPitServe,
     checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps,
     checkpointSkipMaxGates        = CFG.checkpointSkipMaxGates,
+    pitStopsRequired      = CFG.pitStopsRequired,
+    pitStopMissed         = CFG.pitStopMissed,
+    pitStopPenaltySeconds = CFG.pitStopPenaltySeconds,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
     qualiLapLimit  = CFG.qualiLapLimit,
@@ -6391,6 +6581,9 @@ local function applyConfigToRace()
   race.checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow
   race.checkpointSkipPitServe        = CFG.checkpointSkipPitServe
   race.checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps
+  race.pitStopsRequired      = CFG.pitStopsRequired
+  race.pitStopMissed         = CFG.pitStopMissed
+  race.pitStopPenaltySeconds = CFG.pitStopPenaltySeconds
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
   race.readyCheck     = CFG.readyCheck
@@ -10597,6 +10790,7 @@ function onInit()
   -- Qualifying session rules
   MP.RegisterEvent('RM_SetGhostQuali',    'RM_onSetGhostQuali')
   MP.RegisterEvent('RM_SetPitStart',      'RM_onSetPitStart')
+  MP.RegisterEvent('RM_SetPitStopRule',   'RM_onSetPitStopRule')
   MP.RegisterEvent('RM_SetQualiLimits',   'RM_onSetQualiLimits')
   -- Module 1: vehicle reset ruleset + forced spectator reports
   MP.RegisterEvent('RM_SetMaxResets',     'RM_onSetMaxResets')

@@ -10,6 +10,16 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 #### Added
 
+- **Mandatory pit stops.** **Pit stops** in the Race settings requires every
+  driver to make that many stops, and only one counts per lap. A driver who
+  takes the flag short is disqualified, or, with **If missed: Time**, gets the
+  seconds you set (30 by default) per missing stop on their race time. Drivers
+  are told the rule at GO and after every stop, the timing table shows
+  `PIT 1/2`, and the results file has a Pits column. It needs pit stalls on the
+  layout, as Required serving does. The defaults are `pitStopsRequired`,
+  `pitStopMissed` and `pitStopPenaltySeconds` in `config.json`. See
+  [Mandatory pit stops](docs/REFERENCE.md#mandatory-pit-stops).
+
 - **Qualifying and the race can start from the pit stalls.** **Start in pits**
   in the Qualifying settings and again in the Race settings, each its own
   switch, so qualifying can line up in the pits and the race on the grid.

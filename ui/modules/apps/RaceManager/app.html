@@ -1320,6 +1320,36 @@
       <span class="rm-setting-val" ng-if="raceFromPits">Stall 1 is pole &middot; lap 1 is an untimed out lap</span>
       <span class="rm-setting-warn" ng-if="!pitRoute.length">No pit stalls on this layout.</span>
     </span>
+    <!-- MANDATORY PIT STOPS. One per lap counts; a finisher short of them is
+         disqualified or given seconds per missing stop. Needs stalls, like
+         Required serving: with none it does not run. -->
+    <span class="rm-setting" title="Every driver must make this many pit stops in the race, at most one counted per lap. 0 turns it off.">
+      <label>Pit stops</label>
+      <input type="number" class="rm-width-num" min="0" max="10" step="1" ng-model="settingsUi.pitStopsRequired"
+             ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+             ng-change="applyPitStopRule()"
+             ng-disabled="!canSetRules()">
+      <span ng-if="pitStopRule.required > 0">
+        <label>If missed</label>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStopRule.missed === 'dsq'}"
+                ng-click="setPitStopMissed('dsq')" ng-disabled="!canSetRules()"
+                title="A driver who finishes short of the required stops is disqualified at the flag.">Disqualify</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStopRule.missed === 'time'}"
+                ng-click="setPitStopMissed('time')" ng-disabled="!canSetRules()"
+                title="A driver who finishes short gets the seconds below added to their race time for each stop missed.">Time</button>
+        <span ng-if="pitStopRule.missed === 'time'">
+          <label>+ s per stop</label>
+          <input type="number" class="rm-width-num" min="1" max="600" step="0.5" ng-model="settingsUi.pitStopSecs"
+                 ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+                 ng-change="applyPitStopRule()"
+                 ng-disabled="!canSetRules()">
+        </span>
+      </span>
+      <span class="rm-setting-val" ng-if="pitStopRule.required > 0">One stop counted per lap</span>
+      <span class="rm-setting-warn" ng-if="pitStopRule.required > 0 &amp;&amp; !pitRoute.length">
+        No pit stalls on this layout: the rule does not run.
+      </span>
+    </span>
     <!-- THE FREE PASS. Not idle-locked, unlike the pace lap above it: this one
          changes nothing until a yellow is actually called, and a marshal
          deciding mid-race that an incident does or does not deserve one is
@@ -5477,6 +5507,11 @@
               title="Owes a lift-off for a skipped checkpoint. Not served in time, or still owed at the flag, it becomes a time penalty.">LIFT</span><span
               class="rm-ucpass rm-cp-pen" ng-if="row.pitMissed"
               title="Did not serve the penalty in the pits in time: disqualified at the flag.">PIT &#10005;</span><span
+              class="rm-ucpass" ng-if="pitStopsShown()"
+              ng-class="pitStopsDone(row) ? 'rm-pit-done' : 'rm-cp-lift'"
+              title="Mandatory pit stops made of those required. One counts per lap.">{{ pitStopsLabel(row) }}</span><span
+              class="rm-ucpass rm-cp-pen" ng-if="row.pitStopPenalty"
+              title="Mandatory pit stops not made: added to the race time in the final classification.">+{{ row.pitStopPenalty | number:1 }}s PIT</span><span
               class="rm-cp-warn" ng-if="cpWarnShown(row)"
               title="Checkpoint-skip warnings used">{{ cpWarnLabel(row) }}</span></td>
           <td class="rm-col-lap" ng-if="!pointToPoint" title="{{ (row.outLap && sessionKind === 'quali') ? 'Out lap: not timed, not counted' : (row.cpCleared ? row.cpCleared + ' checkpoint(s) cleared this lap' : '') }}">{{ lapLabel(row) }}</td>
@@ -6976,6 +7011,8 @@
      penalty in red, a lift owed in amber, warnings used as a quiet tag. */
   .rm-cp-pen { color: #fff; background: #d93025; }
   .rm-cp-lift { color: #1a1a1a; background: #fbbc05; }
+  /* Mandatory pit stops all made. */
+  .rm-pit-done { color: #1a1a1a; background: #81c995; }
   .rm-cp-warn {
     margin-left: 6px;
     font-size: 10px;

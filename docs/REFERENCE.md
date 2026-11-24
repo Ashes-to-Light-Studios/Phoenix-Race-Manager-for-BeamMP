@@ -389,6 +389,34 @@ With **Serve in pits** on, a stop also serves any checkpoint-skip penalty
 seconds the driver owes, holding the car that much longer (see
 [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)).
 
+#### Mandatory pit stops
+
+**Pit stops** in the Race settings makes every driver stop a set number of
+times in the race (0, the default, turns it off). **If missed** decides what
+happens to a driver who takes the flag short of the number:
+
+| If missed | What happens |
+|-----------|--------------|
+| **Disqualify** (default) | `Disqualified - Pit Stop Not Made` at the flag, ruled like a missed joker lap |
+| **Time** | The seconds you set (30 by default) go on the race time for **each** stop missed, in the final classification |
+
+- **One stop counts per lap.** Driving out of one stall and straight into
+  another is one stop. The driver is told after each one: `Pit stop 1 of 2
+  done`, or `Same lap as your last stop: not counted`.
+- Any stop in a stall counts, including one that serves penalty seconds.
+  Standing in your stall at the green after a
+  [start from the pits](#starting-from-the-pit-stalls) is not a stop.
+- **Races only.** Qualifying and practice ignore it.
+- **It needs stalls.** On a layout with no pit stalls the rule does not run,
+  and the panel says so, so nobody is ruled out for having nowhere to stop.
+- The rule is announced in chat at GO, every row of the timing table shows
+  `PIT 1/2` (green once done), and it is locked once the race starts.
+- A driver classified where they stood when the race closed is ruled the same
+  way as one who took the flag. A retirement is already out.
+
+The results file states the rule under the header, adds a **Pits** column
+(`1/2`), and shows a time penalty beside the race time as `(+30.0s pit)`.
+
 Every stall within **200 m** of your car is drawn as a box; only the nearest
 gets the stop bar, the chevron and the two-band walls. That depends only on
 where your car is, not on which gates you have crossed, so nothing hides a stall
@@ -1242,6 +1270,9 @@ crossed, so it is not left stuck, and the skip costs a **warning**, then the
 | Serve in pits | `checkpointSkipPitServe` | `"off"` | `"off"`, `"optional"`, `"required"` (see [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)) |
 | within (laps) | `checkpointSkipPitLaps` | `3` | 1-20: laps to serve them in, when required |
 | (not in the panel) | `checkpointSkipMaxGates` | `2` | 1-5: how far ahead, in gates, a crossing still counts as a skip |
+| Pit stops | `pitStopsRequired` | `0` | 0-10 mandatory stops in a race, 0 off (see [Mandatory pit stops](#mandatory-pit-stops)) |
+| If missed | `pitStopMissed` | `"dsq"` | `"dsq"` (disqualified at the flag) or `"time"` |
+| + s per stop | `pitStopPenaltySeconds` | `30` | 1-600, in steps of 0.5, per missing stop under `"time"` |
 
 The `config.json` values are what the server starts with; the panel changes
 them for the night. Like every regulation they are locked once a countdown or
