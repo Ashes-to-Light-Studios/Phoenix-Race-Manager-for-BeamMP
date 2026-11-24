@@ -208,6 +208,11 @@ local TUNE = {
   PIT_PROMPT_EVERY = 1.5, -- seconds between "stop in the box" reminders
   -- Drawn height of a stall's walls. Not a rule: pit.inside ignores height.
   PIT_WALL_H     = 1.5,
+  -- Meters (across the ground) within which a driver sees the stalls and the
+  -- PIT OUT gate. Drawing only: pit.inside never reads it. Measured from the
+  -- car, not from any gate it crossed, so no pit lane shape can hide a stall
+  -- from a driver near it, and a lane far away costs nothing to draw.
+  PIT_DRAW_DIST  = 200,
   START_SLOT_LEN  = 4.6,  -- meters; roughly one car long
   START_SLOT_WIDE = 2.2,
   -- Pole colors set outright: the stock value is black and cannot be lifted.
@@ -664,11 +669,10 @@ local pit = {
   -- alone re-caught a car still parked in it (a reset in place leaves it there),
   -- freezing and ghosting it for the rest of the race.
   mustLeave = false,
-  -- In the pit lane: the stalls are drawn only then. Set by an entry gate,
-  -- cleared by an exit gate or by clearing any route checkpoint.
-  inLane = false,
-  -- Previous sampled position; see pit.update for why not session.prevPos.
-  prevPos = nil,
+  -- No "in the lane" state: the stalls are drawn whenever the car is near them
+  -- (TUNE.PIT_DRAW_DIST). Hiding them behind the entry gate and showing them
+  -- again at the next checkpoint hid them from a driver who crossed a
+  -- checkpoint IN the lane (a branch gate, a line spanning the pits).
   stops    = 0,      -- how many this session, for the log
   -- Throttles the "stop in the box" prompt while a car creeps through.
   promptLeft = 0,
@@ -1275,7 +1279,6 @@ local function pushRouteState()
     pitRoute     = track.pitRoute,
     pitEntry     = track.pitEntry,
     pitExit      = track.pitExit,
-    pitInLane    = pit.inLane,
     pitActive    = pit.active,
     pitLeft      = pit.left,
     jokerRoute   = track.jokerRoute,
@@ -1946,8 +1949,6 @@ local function checkGates()
         local c = snapshot.crossed
         c.wp, c.x, c.y, c.z = wp, pos.x, pos.y, pos.z
       end
-      -- Back on the racing line: the pit lane is behind us however we left it.
-      if pit.inLane then pit.leaveLane('cleared a checkpoint') end
       session.gateCleared = true
       -- A skip moves the armed gate to the one crossed, and marks the lap.
       local skipFrom = session.armedWp
@@ -4169,15 +4170,6 @@ function pit.setGhost(on)
   end
 end
 
--- OUT OF THE LANE, by the exit gate or by clearing any route checkpoint (a
--- driver who missed the exit must not carry the stalls to the flag).
-function pit.leaveLane(reason)
-  if not pit.inLane then return end
-  pit.inLane = false
-  log('I', 'raceManager', 'Left the pit lane (' .. tostring(reason or 'exit') .. ')')
-  pushRouteState()
-end
-
 function pit.release(reason)
   if not pit.active then return end
   pit.active   = false
@@ -4257,35 +4249,6 @@ function pit.update(dt)
   if not pit.live() or session.gridFrozen then return end
   local veh, pos = sampledVehicle()
   if not veh or not pos then return end
-
-  -- The lane's mouth and exit: crossing an entry gate puts the stalls on
-  -- screen. ITS OWN previous position: checkGates has already set
-  -- session.prevPos to this frame's sample, so that segment has zero length.
-  local prev = pit.prevPos
-  if prev then
-    for _, wp in ipairs(track.pitEntry) do
-      if segmentCrossesGate(wp, prev, pos) then
-        if not pit.inLane then
-          pit.inLane = true
-          log('I', 'raceManager', 'Entered the pit lane')
-          pushRouteState()
-        end
-        break
-      end
-    end
-    if pit.inLane then
-      for _, wp in ipairs(track.pitExit) do
-        if segmentCrossesGate(wp, prev, pos) then
-          pit.leaveLane('exit gate')
-          break
-        end
-      end
-    end
-    -- In place, after the tests: a steady frame allocates nothing.
-    prev.x, prev.y, prev.z = pos.x, pos.y, pos.z
-  else
-    pit.prevPos = { x = pos.x, y = pos.y, z = pos.z }
-  end
 
   -- Which stall, worked out before the cooldown so driving out re-arms it.
   local inStall = nil
@@ -9298,8 +9261,6 @@ local function onApplyLayout(rawData)
   track.pitRoute   = pits
   track.pitEntry   = pitIn
   track.pitExit    = pitOut
-  -- A new track: not in its pit lane until we drive into it.
-  pit.inLane = false
   marker.list = marks
   props.list  = props.unbundle(data.props)
   track.startPositions = starts

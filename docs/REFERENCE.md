@@ -386,11 +386,17 @@ With **Serve in pits** on, a stop also serves any checkpoint-skip penalty
 seconds the driver owes, holding the car that much longer (see
 [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)).
 
-Every stall in the lane is drawn as a box; only the nearest gets the stop bar,
-the chevron and the two-band walls. With a **Pit In** gate placed, the stalls
-appear only once a driver has crossed it. That gate carries a large white **P**
-across its face and no text; the exit gate is labeled **PIT OUT**. The editor
-still labels both, numbered.
+Every stall within **200 m** of your car is drawn as a box; only the nearest
+gets the stop bar, the chevron and the two-band walls. That depends only on
+where your car is, not on which gates you have crossed, so nothing hides a stall
+from a driver on the way to one, whatever shape the pit lane is. On the far side
+of the track the lane is not drawn at all.
+
+**In** and **Out** are optional signs. They do not show or hide anything. The
+**Pit In** gate carries a large white **P** across its face and no text, and is
+drawn all race so drivers can see where the pits are. The exit gate is labeled
+**PIT OUT** and is drawn within 200 m, like the stalls. The editor still labels
+both, numbered.
 
 #### Placing the starting grid
 

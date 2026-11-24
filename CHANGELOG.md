@@ -6,6 +6,26 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Fixed
+
+- **Pit stalls vanished at a checkpoint in the pits.** With a Pit In gate
+  placed, the stalls showed once you crossed it and went again at Pit Out or at
+  the next checkpoint you cleared, so a driver who missed Pit Out did not keep
+  them all race. A checkpoint inside the pit lane (a branch gate through the
+  pits, or a start/finish line that spans them) counted as leaving, and the
+  stalls disappeared on the way to one. Stalls are now drawn whenever you are
+  within 200 m of them, whatever you have crossed, and not drawn at all from
+  farther away. See [Pit stalls](docs/REFERENCE.md#pit-stalls).
+
+#### Changed
+
+- **Pit In and Pit Out are signs only.** They no longer show or hide the
+  stalls. Pit In keeps its big P and is drawn all race; PIT OUT is drawn within
+  200 m, like the stalls. Layouts that have them keep them, and layouts without
+  them lose nothing.
+
 ## 0.29.1 - Layouts folder path
 
 #### Fixed

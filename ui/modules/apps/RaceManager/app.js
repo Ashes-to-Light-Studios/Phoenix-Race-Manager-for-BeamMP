@@ -143,8 +143,8 @@ angular.module('beamng.apps')
       $scope.jokerGates = 0;      // joker gates the LOADED TRACK has (server's count)
       $scope.jokerRoute = [];     // joker gates placed/loaded on this client
       // The pit lane, as this client has it. Declared rather than left to the
-      // first route state: the editor tabs read .length, and an ng-if on an
-      // undefined shows the "no entry gate" warning before a track has loaded.
+      // first route state: the editor tabs read .length before a track has
+      // loaded.
       $scope.pitRoute = [];
       $scope.pitEntry = [];
       $scope.pitExit  = [];
@@ -2663,8 +2663,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.routeWaypoints = data.waypoints || [];
           // Through toArray, not `|| []`: an empty Lua table arrives as {}.
           $scope.pitRoute = toArray(data.pitRoute);
-          // The lane's mouth and its exit. Both optional: with no entry gate
-          // every stall is drawn all race, which is what tracks did before this.
+          // The lane's mouth and its exit. Both optional signs: the stalls are
+          // drawn by distance from the car, not by which gate it crossed.
           $scope.pitEntry = toArray(data.pitEntry);
           $scope.pitExit  = toArray(data.pitExit);
           $scope.pitActive = !!data.pitActive;

@@ -284,6 +284,11 @@ local heldPushes, heldMessages = pushTotal, pushes['Message'] or 0
 -- ---------------------------------------------------------------------------
 serverState({ phase = 'racing', sessionKind = 'race', totalLaps = 5,
   maxResets = -1, flag = 'green', drivers = {} })
+-- Beside the pit lane, the worst case: every stall is within
+-- TUNE.PIT_DRAW_DIST, so every one is drawn. The held grid above shoved the
+-- car 120 m off to the side, where part of the lane is out of range and this
+-- frame would measure less than a driver passing the pits costs.
+veh.x, veh.y = -20, 170
 RM.onUpdate(1 / 60)          -- prime the caches
 resetCounters()
 RM.onUpdate(1 / 60)
@@ -296,7 +301,9 @@ local steadyAllocs, steadyDraws, steadyTris = allocs, draws, tris
 -- THE BUDGET SCALES WITH THE PIT LANE, and only with the pit lane. A stall is a
 -- box with see-through walls: eight draws, and fourteen for the nearest, which
 -- also gets its stop bar, two-band walls and chevron. Drawing every stall in
--- full, or anything per checkpoint, fails here.
+-- full, or anything per checkpoint, fails here. Stalls farther than
+-- TUNE.PIT_DRAW_DIST from the car are not drawn at all, so away from the pits
+-- the lane costs nothing; this frame is the car beside it.
 local drawBudget = 24 + 8 * #pits + 6
 check(steadyDraws <= drawBudget, string.format(
   'a steady frame draws %d shapes on a twelve-gate circuit with %d pit stalls, '
