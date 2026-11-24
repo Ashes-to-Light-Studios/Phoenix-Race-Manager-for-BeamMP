@@ -551,5 +551,49 @@ handlers['RM_Practice']({ on = false })
 frames(0.3)
 check(frozen == false, 'ending practice releases a car held in a stall')
 
+-- ===========================================================================
+-- A FIELD GRIDDED IN THE PIT STALLS
+-- ===========================================================================
+-- The server can grid a session in the stalls (RM_GridAssign's grid = 'pits'):
+-- stall n is Pn. A car stood in a stall at the green is standing still in it,
+-- which is a pit stop by every rule the stall has. It must not be: the stall is
+-- only live again once the car has driven out of it.
+handlers['RM_ApplyLayout']({
+  name = 'pit grid', width = 20, height = 10,
+  checkpoints = { {x=0,y=100,z=0,hx=0,hy=1}, {x=0,y=200,z=0,hx=0,hy=1}, {x=0,y=300,z=0,hx=0,hy=1} },
+  startPositions = { {x=0,y=0,z=0,hx=0,hy=1} },
+  pits = { {x=-50,y=60,z=0,hx=0,hy=1}, {x=-50,y=50,z=0,hx=0,hy=1} },
+})
+veh.speed = 0
+veh.x, veh.y = 0, -100
+-- Out of every stall while live, long enough for the cooldown and the
+-- must-leave the practice stop above left behind to clear: otherwise either
+-- would hide a stop at the green.
+racing()
+frames(9.0)
+serverState({ phase = 'waiting', maxResets = -1, totalLaps = 3, drivers = {} })
+serverState({ phase = 'grid', qualiOutLap = true, maxResets = -1, totalLaps = 3, drivers = {} })
+handlers['RM_GridAssign']({ slot = 2, order = 1, count = 1, grid = 'pits' })
+frames(1.0)
+check(veh.x == -50 and veh.y == 50,
+  'a car gridded in the pits is placed on its stall, not on a start position (at '
+    .. tostring(veh.x) .. ', ' .. tostring(veh.y) .. ')')
+local gridRepairs = repairs
+clearLog()
+racing({ qualiOutLap = true })
+frames(1.0)
+check(repairs == gridRepairs and frozen ~= true and countSent('RM_PitStop') == 0,
+  'at the green, still standing in the stall, no pit stop starts')
+
+-- Out of the box and back in: the stall works as any other.
+veh.x, veh.y = -50, 20
+frames(0.3)
+veh.x, veh.y = -50, 50
+frames(0.3)
+check(repairs == gridRepairs + 1 and frozen == true,
+  'once the car has driven out, stopping in the stall is a pit stop again')
+frames(TUNE_PIT_HOLD + 0.5)
+serverState({ phase = 'waiting', maxResets = -1, totalLaps = 3, drivers = {} })
+
 print(string.format('pit_test: %d checks, %d failures', checks, fails))
 if fails > 0 then os.exit(1) end

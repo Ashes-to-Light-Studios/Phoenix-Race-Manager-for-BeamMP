@@ -342,6 +342,16 @@ local race = {
   -- Where the start positions are, { x, y, z, hx, hy } per slot: reported by a
   -- client or set from a loaded layout. Policing the hold needs coordinates.
   startPositions = {},
+  -- START FROM THE PIT STALLS, per session kind: stall n is Pn. Only when the
+  -- loaded layout has a stall for every driver and the pit start's first
+  -- checkpoint runs between none of them (race.pitGridProblem); otherwise
+  -- the track grid, and chat says why. Not saved: off after a restart, as the
+  -- other session switches are.
+  qualiFromPits  = false,
+  raceFromPits   = false,
+  -- Which grid the field was formed on: 'grid' (the start positions) or
+  -- 'pits' (the stalls). Decided by formGrid, read by the hold and late calls.
+  gridKind       = 'grid',
   -- Qualifying session rules.
   ghostQuali     = false,    -- rivals are ghosts during qualifying
   -- qualiLapLimit counts TIMED laps: the out lap is extra.
@@ -441,11 +451,14 @@ end
 
 -- Does this session open with an OUT LAP (untimed, unscored, outside the
 -- allowance)? Qualifying from a standing grid, a race gridded away from the
--- line (race.gridOffLine, from the layout), and a pace lap. Never a sprint.
+-- line (race.gridOffLine, from the layout), a field started in the pit
+-- stalls (a grid away from the line by definition), and a pace lap. Never a
+-- sprint.
 local function outLapOwed()
   if race.pointToPoint then return false end
   -- A pace lap IS an out lap: driven, not scored, ending at the line per driver.
-  return race.sessionKind == 'quali' or race.gridOffLine == true or paceLapArmed()
+  return race.sessionKind == 'quali' or race.gridOffLine == true
+    or race.gridKind == 'pits' or paceLapArmed()
 end
 
 
@@ -1466,6 +1479,10 @@ local function broadcastState(targetPid)
     ghostPractice = race.practiceRoster(),
     -- Qualifying rules and clock.
     ghostQuali     = race.ghostQuali,
+    -- Start from the pit stalls: the two switches, and the grid in force.
+    qualiFromPits  = race.qualiFromPits,
+    raceFromPits   = race.raceFromPits,
+    gridKind       = race.gridKind,
     -- Does this session open with an out lap (outLapOwed, races included; the
     -- name is historical). Per-driver owing rides on the rows (`outLap`).
     qualiOutLap    = outLapOwed(),
@@ -1556,9 +1573,12 @@ end
 
 -- The server picks the slot; the client places the car (nil clears).
 -- `order`/`count` stagger the field's placement.
+-- `grid = 'pits'` says the slot is a pit stall (race.gridKind), not a start
+-- position; absent, it is the track grid as it always was.
 local function assignGridSlot(pid, slot, order, count)
   MP.TriggerClientEvent(pid, 'RM_GridAssign', Util.JsonEncode({
     slot = slot, order = order, count = count,
+    grid = (slot ~= nil and race.gridKind == 'pits') and 'pits' or nil,
   }))
 end
 
@@ -1588,7 +1608,9 @@ race.callLate = function (rec)
   if race.phase ~= 'grid' or not race.readyCheck or not isEntrant(rec) then return false end
   if rec.status == 'called' or rec.status == 'gridded' then return false end
   local nextPos = (race.gridSize or 0) + 1
-  if race.startSlots > 0 and nextPos > race.startSlots then
+  -- A field in the pits is limited by its stalls, not the start positions.
+  local slots = race.gridKind == 'pits' and race.pitStalls() or race.startSlots
+  if slots > 0 and nextPos > slots then
     MP.SendChatMessage(rec.id, '[RaceManager] The grid is full: every start position '
       .. 'is taken. You are in the next one.')
     return false
@@ -2874,6 +2896,26 @@ function RM_onSetNametags(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
+-- Start from the pit stalls, for qualifying or the race (`session`). Takes
+-- effect at the next grid; locked while a session is under way. Whether the
+-- stalls are actually used is decided as the grid forms (race.pitGridProblem).
+function RM_onSetPitStart(pid, rawData)
+  local data = adminPayload(pid, rawData, true)
+  if not data then return end
+  local on = data.enabled == true or data.enabled == 1
+  if data.session == 'quali' then
+    race.qualiFromPits = on
+  elseif data.session == 'race' then
+    race.raceFromPits = on
+  else
+    return
+  end
+  broadcastState()
+  print(string.format('[RaceManager] %s from the pit stalls %s by %s',
+    data.session == 'quali' and 'Qualifying' or 'Race',
+    on and 'ENABLED' or 'disabled', MP.GetPlayerName(pid) or pid))
+end
+
 -- Ghost qualifying: enforced client-side; the server holds the switch.
 function RM_onSetGhostQuali(pid, rawData)
   local data = adminPayload(pid, rawData)
@@ -3135,6 +3177,25 @@ formGrid = function (kind, byName)
     -- Any other grid is a new race, not the rerun.
     race.appendTo = nil
   end
+  -- THE PIT STALLS OR THE TRACK GRID. Decided before the slots go out and
+  -- before outLapOwed is read for each driver below: a start from the pits
+  -- owes an out lap.
+  race.gridKind = 'grid'
+  -- An if, not `a and b or c`: a quali switch that is OFF must not fall
+  -- through to the race's.
+  local wantPits
+  if race.sessionKind == 'quali' then wantPits = race.qualiFromPits
+  else wantPits = race.raceFromPits end
+  if wantPits then
+    local problem = race.pitGridProblem(#ordered)
+    if problem then
+      MP.SendChatMessage(-1, string.format('[RaceManager] %s from the track grid: %s.',
+        race.sessionKind == 'quali' and 'Qualifying' or 'Race', problem))
+      print('[RaceManager] Pit start not used: ' .. problem)
+    else
+      race.gridKind = 'pits'
+    end
+  end
   -- Locks come off BEFORE the slots go out (a client with no car would drop
   -- the slot); the client coalesces the two into one ghosted operation. The
   -- count is for spectators: the field is solid on their screens now, so the
@@ -3200,14 +3261,15 @@ formGrid = function (kind, byName)
   -- Practice ends here too (each client stops its own off the phase change).
   for _, rec in pairs(players) do rec.practicing, rec.practiceGhost = nil, nil end
   broadcastState()
-  if race.startSlots > 0 and #ordered > race.startSlots then
+  if race.gridKind ~= 'pits' and race.startSlots > 0 and #ordered > race.startSlots then
     MP.SendChatMessage(-1, string.format(
       '[RaceManager] Warning: %d drivers but only %d start positions placed: '
         .. 'the back of the grid has nowhere to line up.', #ordered, race.startSlots))
   end
-  print(string.format('[RaceManager] %s grid formed by %s (%d drivers, %s order, pole: %s)',
+  print(string.format('[RaceManager] %s grid formed by %s (%d drivers, %s order, pole: %s)%s',
     isQualiSession() and 'Qualifying' or 'Race', tostring(byName), #ordered, race.gridMode,
-    ordered[1] and ordered[1].name or 'n/a'))
+    ordered[1] and ordered[1].name or 'n/a',
+    race.gridKind == 'pits' and ', from the pit stalls' or ''))
   if race.readyCheck then
     local ready, total = race.readyCounts()
     MP.SendChatMessage(-1, string.format('[RaceManager] Grid called: press Ready in '
@@ -3439,6 +3501,11 @@ end
 -- client guard then enforces alone: police nothing rather than the wrong grid).
 local function slotPosition(rec)
   if not rec or not rec.gridPos then return nil end
+  -- In the pits: the loaded layout's own stall, which is the authority.
+  if race.gridKind == 'pits' then
+    local pits = race.layout and race.layout.pits
+    return type(pits) == 'table' and pits[rec.gridPos] or nil
+  end
   local list = race.startPositions
   if type(list) ~= 'table' then return nil end
   -- Only against the grid the field was gridded on (counts must match).
@@ -4779,6 +4846,7 @@ function RM_onEndRace(pid)
     -- Before the lights: no result, just stand the field down.
     broadcastCountdown(-1)
     race.phase = 'waiting'
+    race.gridKind = 'grid'
     for _, rec in pairs(players) do
       if rec.status == 'gridded' then rec.status = 'waiting' end
       -- Called and never placed: the ghost was only for the call.
@@ -4853,6 +4921,7 @@ function RM_onResetLeaderboard(pid)
   race.bestLapTime, race.bestLapPid = nil, nil
   race.phase = 'waiting'
   race.sessionKind = 'race'
+  race.gridKind = 'grid'
   race.time = 0.0
   race.endsAt, race.endReason = nil, nil
   race.qualiTime = 0.0
@@ -5236,6 +5305,93 @@ end
 function race.pitStalls()
   local l = race.layout
   return (l and type(l.pits) == 'table') and #l.pits or 0
+end
+
+-- ---------------------------------------------------------------------------
+-- STARTING FROM THE PIT STALLS (race.qualiFromPits / race.raceFromPits)
+-- ---------------------------------------------------------------------------
+-- Stall n is Pn. The field opens with an out lap (outLapOwed) that arms the
+-- pit start's first checkpoint for EVERY car, so no car may stand past that
+-- checkpoint: it would never cross it on the way out, and its out lap would be
+-- a lap longer than the rest of the field's.
+
+-- The checkpoint a pit start arms first: the layout's pitFirstCheckpoint, or
+-- CP 1. A sprint has no out lap and always arms CP 1.
+function race.pitFirstGate()
+  local l = race.layout
+  local n = (l and type(l.checkpoints) == 'table') and #l.checkpoints or 0
+  local k = math.floor(tonumber(l and l.pitFirstCheckpoint) or 1)
+  if race.pointToPoint or k < 1 or k > n then return 1 end
+  return k
+end
+
+-- Does the straight line from stall a to stall b pass through gate g? The
+-- client's rectCrossesGate on the server's copy of the layout: the gate's
+-- plane, its width across, its height above and depth below. Either direction.
+local function lineCrossesGate(g, a, b, l)
+  local fx, fy = tonumber(g.hx) or 0, tonumber(g.hy) or 1
+  local da = (a.x - g.x) * fx + (a.y - g.y) * fy
+  local db = (b.x - g.x) * fx + (b.y - g.y) * fy
+  if not ((da < 0 and db >= 0) or (da > 0 and db <= 0)) then return false end
+  local t  = da / (da - db)
+  local ix = a.x + (b.x - a.x) * t
+  local iy = a.y + (b.y - a.y) * t
+  local iz = (a.z or 0) + ((b.z or 0) - (a.z or 0)) * t
+  local w = tonumber(g.width) or tonumber(l.width) or 20
+  if math.abs((ix - g.x) * fy - (iy - g.y) * fx) > w * 0.5 then return false end
+  -- A legacy gate with a height and no depth meant the full span, centered.
+  local h, d
+  if g.depth == nil and g.height ~= nil then
+    h = (tonumber(g.height) or 0) * 0.5
+    d = h
+  else
+    h = tonumber(g.height) or tonumber(l.height) or 8
+    d = tonumber(g.depth) or tonumber(l.depth) or 2
+  end
+  local dz = iz - (g.z or 0)
+  return dz <= h and dz >= -d
+end
+
+-- The first pair of neighbouring stalls in use (1-2, 2-3, ... up to `count`)
+-- that a gate of the pit start's first checkpoint runs between, as
+-- (checkpoint, stall), or nil. Main gate and branch gates alike.
+function race.pitStartSplit(count)
+  local l = race.layout
+  if not l or type(l.pits) ~= 'table' or type(l.checkpoints) ~= 'table' then return nil end
+  local k = race.pitFirstGate()
+  local gates = { l.checkpoints[k] }
+  for _, g in ipairs(race.branches or {}) do
+    if g.slot == k then gates[#gates + 1] = g end
+  end
+  local n = math.min(count, #l.pits)
+  for i = 1, n - 1 do
+    local a, b = l.pits[i], l.pits[i + 1]
+    if a and b and a.x and b.x then
+      for _, g in ipairs(gates) do
+        if g.x and lineCrossesGate(g, a, b, l) then return k, i end
+      end
+    end
+  end
+  return nil
+end
+
+-- Can a field of `count` start from the stalls? nil if so, else the reason,
+-- worded for chat.
+function race.pitGridProblem(count)
+  if race.dragStrip then return 'a drag strip starts from its lanes' end
+  if not race.layout then return 'no layout is loaded from this server' end
+  local stalls = race.pitStalls()
+  if stalls == 0 then return 'this layout has no pit stalls' end
+  if stalls < count then
+    return string.format('%d drivers, %d pit stalls', count, stalls)
+  end
+  local k, i = race.pitStartSplit(count)
+  if k then
+    return string.format('CP %d runs between pit stalls %d and %d, so cars '
+      .. 'would start on both sides of it. Move that gate or set the pit '
+      .. "start's first checkpoint", k, i, i + 1)
+  end
+  return nil
 end
 
 -- The rule in force. 'required' needs stalls on a loaded layout: without them
@@ -6783,6 +6939,9 @@ function race.layoutEntry(data, name, map, checkpoints, existing)
   -- The gate the out lap arms first; nil is CP 1. A sprint has no out lap.
   local first = math.floor(tonumber(data.firstCheckpoint) or 1)
   if first <= 1 or first > #checkpoints or data.pointToPoint == true then first = nil end
+  -- The same for a field started in the pit stalls (race.pitFirstGate).
+  local pitFirst = math.floor(tonumber(data.pitFirstCheckpoint) or 1)
+  if pitFirst <= 1 or pitFirst > #checkpoints or data.pointToPoint == true then pitFirst = nil end
   return {
     name        = name,
     map         = map,
@@ -6796,7 +6955,7 @@ function race.layoutEntry(data, name, map, checkpoints, existing)
     -- Optional pit stalls: an area, never in lap validation.
     pits         = sanitizeCheckpoints(data.pits),
     -- The pit lane's entry and exit gates (arrays: a lane may have several ways
-    -- in). Optional: without an entry gate the client shows every stall.
+    -- in). Optional signs: the client draws stalls by distance from the car.
     pitEntry     = sanitizeCheckpoints(data.pitEntry),
     pitExit      = sanitizeCheckpoints(data.pitExit),
     markers      = sanitizeCheckpoints(data.markers),
@@ -6813,6 +6972,7 @@ function race.layoutEntry(data, name, map, checkpoints, existing)
     -- or it would be saved on a track that never runs an out lap.
     gridOffLine  = data.gridOffLine == true or (first ~= nil and starts ~= nil and #starts > 0),
     firstCheckpoint = first,
+    pitFirstCheckpoint = pitFirst,
     -- Optional sectors; false (malformed) is turned away just below.
     sectors      = race.sanitizeSectors(data.sectors, #checkpoints),
   }
@@ -10436,6 +10596,7 @@ function onInit()
   MP.RegisterEvent('RM_HoldPos',            'RM_onHoldPos')
   -- Qualifying session rules
   MP.RegisterEvent('RM_SetGhostQuali',    'RM_onSetGhostQuali')
+  MP.RegisterEvent('RM_SetPitStart',      'RM_onSetPitStart')
   MP.RegisterEvent('RM_SetQualiLimits',   'RM_onSetQualiLimits')
   -- Module 1: vehicle reset ruleset + forced spectator reports
   MP.RegisterEvent('RM_SetMaxResets',     'RM_onSetMaxResets')

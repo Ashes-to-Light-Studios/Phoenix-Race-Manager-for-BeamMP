@@ -8,6 +8,21 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 ## Unreleased
 
+#### Added
+
+- **Qualifying and the race can start from the pit stalls.** **Start in pits**
+  in the Qualifying settings and again in the Race settings, each its own
+  switch, so qualifying can line up in the pits and the race on the grid.
+  Stall 1 is pole. The first lap is an untimed out lap: extra in qualifying,
+  lap 1 in a race. A car standing in its stall at the green is not making a pit
+  stop. Every car is sent to the same first checkpoint (CP 1, or **Pit start**
+  in the editor's Stalls tab), and the field only lines up in the stalls when
+  no gate of that checkpoint runs between two stalls in use, so nobody starts
+  past it and drives an extra lap. Otherwise, or with fewer stalls than
+  drivers, the session uses the grid and chat says why. The Stalls tab warns
+  about such a gate while you build the layout. See
+  [Starting from the pit stalls](docs/REFERENCE.md#starting-from-the-pit-stalls).
+
 #### Fixed
 
 - **Pit stalls vanished at a checkpoint in the pits.** With a Pit In gate

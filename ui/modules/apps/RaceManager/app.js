@@ -183,6 +183,8 @@ angular.module('beamng.apps')
       $scope.branchSlot = 1;       // checkpoint the next placed branch gate belongs to
       $scope.gridOffLine = false;  // grid is away from the line, so an out lap is owed
       $scope.firstCheckpoint = 1;  // the gate an out lap arms first
+      $scope.pitFirstCheckpoint = 1;  // ...and one from the pit stalls
+      $scope.pitStartSplit = null;    // [i, i+1]: that gate runs between two stalls
       // The layout's sectors: [{ from, to }], each a checkpoint number or 0 for
       // the start/finish line. Empty: every checkpoint is a sector of its own.
       $scope.sectors = [];
@@ -230,6 +232,8 @@ angular.module('beamng.apps')
       $scope.gridUi = { slot: {} };
       // Qualifying rules.
       $scope.ghostQuali = false;
+      $scope.qualiFromPits = false;
+      $scope.raceFromPits = false;
       // Put display names on BeamMP's nametags as well as on the board.
       // Server-owned so every client agrees; each client applies it locally,
       // because a nametag is drawn from that machine's own player list.
@@ -2524,6 +2528,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           // and resets fields are: only when the server's value actually moved,
           // so an edit in progress is never yanked out from under the admin.
           $scope.ghostQuali = !!data.ghostQuali;
+          $scope.qualiFromPits = !!data.qualiFromPits;
+          $scope.raceFromPits = !!data.raceFromPits;
           $scope.nametags = !!data.nametags;
           $scope.qualiOutLap = !!data.qualiOutLap;
           // A limit becoming non-zero picks the Laps/Timed toggle, keyed on the
@@ -2751,6 +2757,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (typeof data.branchSlot === 'number') { $scope.branchSlot = data.branchSlot; }
           $scope.gridOffLine = !!data.gridOffLine;
           $scope.firstCheckpoint = data.firstCheckpoint || 1;
+          $scope.pitFirstCheckpoint = data.pitFirstCheckpoint || 1;
+          // An empty Lua table arrives as {}: only a real pair is a warning.
+          $scope.pitStartSplit = (data.pitStartSplit && data.pitStartSplit[0]) ? toArray(data.pitStartSplit) : null;
           // THROUGH toArray: an empty list arrives from Lua as {}.
           $scope.sectors = toArray(data.sectors);
           if (typeof data.maxSectors === 'number') { $scope.maxSectors = data.maxSectors; }
@@ -2893,6 +2902,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.pickFirstCheckpoint = function (s) {
         $scope.laneUi.menu = null;
         bngApi.engineLua('raceManager.setFirstCheckpoint(' + (parseInt(s, 10) || 1) + ')');
+      };
+      $scope.pickPitFirstCheckpoint = function (s) {
+        $scope.laneUi.menu = null;
+        bngApi.engineLua('raceManager.setPitFirstCheckpoint(' + (parseInt(s, 10) || 1) + ')');
       };
       // ------------------------------------------------------------------
       // Sectors (editor)
@@ -5431,6 +5444,11 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.toggleGhostQuali = function () {
         bngApi.engineLua('raceManager.setGhostQuali(' + (!$scope.ghostQuali) + ')');
+      };
+      // Start from the pit stalls: 'quali' or 'race', each its own switch.
+      $scope.togglePitStart = function (kind) {
+        var on = kind === 'quali' ? !$scope.qualiFromPits : !$scope.raceFromPits;
+        bngApi.engineLua('raceManager.setPitStart(' + JSON.stringify(kind) + ', ' + on + ')');
       };
       // Qualifying is LAPS or TIMED, never both: the box not shown sends 0. The
       // mode is a display choice, seeded from the server.

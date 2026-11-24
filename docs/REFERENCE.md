@@ -382,6 +382,9 @@ as one. Every stop is logged server-side with the driver, the stall and the lap.
 They are **not** respawn points. A stall repairs a car where it stands and does
 nothing else - a later reset still goes wherever the reset ruleset says.
 
+Qualifying and the race can each start **from** the stalls, with stall 1 as
+pole: see [Starting from the pit stalls](#starting-from-the-pit-stalls).
+
 With **Serve in pits** on, a stop also serves any checkpoint-skip penalty
 seconds the driver owes, holding the car that much longer (see
 [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)).
@@ -467,6 +470,9 @@ qualifying grid exactly the way Generate Grid forms a race one - every
 entrant is called to the grid, and stood on a start position and held once
 they press Ready (see [The ready check](#the-ready-check)) - and the countdown
 releases the field.
+
+Qualifying can also line up in the pit stalls: see
+[Starting from the pit stalls](#starting-from-the-pit-stalls).
 
 **The out lap.** The field starts from a standing grid, so the first lap is
 the lap you spent getting off the line. It is given away: **not timed, not
@@ -702,6 +708,40 @@ the stragglers are taken where they stand and the session closes normally.
    staggered, the same as a grid forming - and each driver's camera is put
    explicitly back on their *own* car rather than on whichever vehicle the
    game happens to pick.
+
+#### Starting from the pit stalls
+
+Qualifying and the race can each line up in the [pit stalls](#pit-stalls)
+instead of on the grid: **Start in pits** in the Qualifying settings, and again
+in the Race settings. Both are off by default, and like Ghost quali they are off
+again after a server restart. A common setup is qualifying from the pits and the
+race from the grid.
+
+- **Stall 1 is pole**, stall 2 is P2, and so on, in the usual grid order. So
+  number the stalls from the pit exit back. Cars are placed and held exactly as
+  on the grid, facing the way each stall was placed.
+- **The first lap is an out lap.** Every car is sent to the same checkpoint
+  first (CP 1, unless you set **Pit start** in the editor's Stalls tab), round
+  the lap and over the line. It is not timed. In qualifying it is extra, as
+  qualifying's out lap always is; in a race it counts as lap 1, as it does for
+  any [grid away from the line](#the-out-lap).
+- **Standing in your stall at the green is not a pit stop.** The stall only
+  works again once you have driven out of it.
+
+**The whole field starts behind the same checkpoint.** A car standing past the
+checkpoint the field is sent to would never cross it on the way out, and its
+out lap would be a lap longer than everyone else's. So before the field is
+placed in the stalls, the server checks that no gate of that checkpoint (main
+or branch) runs between two of the stalls in use. If one does, that session
+lines up on the grid instead and chat says why, for example: *Race from the
+track grid: CP 1 runs between pit stalls 3 and 4*. Move that gate, or set **Pit
+start** to a checkpoint ahead of every stall. The Stalls tab shows the same
+warning while you build the layout. The check follows the lane from stall to
+stall by number, which is one more reason to number them in order.
+
+The grid is also used when the layout has **fewer stalls than drivers** (per
+heat, with heats) or no stalls at all, again with a chat line saying so. The
+**Pit start** checkpoint is saved with the layout.
 
 ### Step 7 - Results
 

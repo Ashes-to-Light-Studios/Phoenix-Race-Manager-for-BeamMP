@@ -1309,6 +1309,17 @@
         A sprint stage is driven once: there is no lap to form up on.
       </span>
     </span>
+    <!-- Start from the pit stalls: the race's own switch (qualifying has one). -->
+    <span class="rm-setting" title="Line the race up in the pit stalls instead of on the grid: stall 1 is pole. The first lap is an untimed out lap that counts as lap 1. Uses the track grid if there are fewer stalls than drivers.">
+      <label>Start in pits</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': raceFromPits}"
+              ng-click="togglePitStart('race')"
+              ng-disabled="!canSetRules() || (!raceFromPits &amp;&amp; !pitRoute.length)">
+        {{ raceFromPits ? '✓ Enabled' : 'Disabled' }}
+      </button>
+      <span class="rm-setting-val" ng-if="raceFromPits">Stall 1 is pole &middot; lap 1 is an untimed out lap</span>
+      <span class="rm-setting-warn" ng-if="!pitRoute.length">No pit stalls on this layout.</span>
+    </span>
     <!-- THE FREE PASS. Not idle-locked, unlike the pace lap above it: this one
          changes nothing until a yellow is actually called, and a marshal
          deciding mid-race that an incident does or does not deserve one is
@@ -1393,6 +1404,19 @@
               ng-click="toggleGhostQuali()">
         {{ ghostQuali ? '✓ Enabled' : 'Disabled' }}
       </button>
+    </span>
+    <!-- START FROM THE PIT STALLS. The server decides at the grid whether the
+         stalls can take the field (a stall each, and the pit start's first
+         checkpoint running between none of them) and says so in chat if not. -->
+    <span class="rm-setting" title="Line qualifying up in the pit stalls instead of on the grid: stall 1 is P1. Uses the track grid if there are fewer stalls than drivers.">
+      <label>Start in pits</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': qualiFromPits}"
+              ng-click="togglePitStart('quali')"
+              ng-disabled="!canSetRules() || (!qualiFromPits &amp;&amp; !pitRoute.length)">
+        {{ qualiFromPits ? '✓ Enabled' : 'Disabled' }}
+      </button>
+      <span class="rm-setting-val" ng-if="qualiFromPits">Stall 1 is P1</span>
+      <span class="rm-setting-warn" ng-if="!pitRoute.length">No pit stalls on this layout.</span>
     </span>
     <!-- A qualifying session is run to a LAP ALLOWANCE or to a CLOCK, not both.
          The server takes both numbers and treats 0 as unlimited, so both at
@@ -2576,6 +2600,12 @@
         Stalls are amber boxes on the ground. A driver stops inside, nose to the white line, and
         the box turns green while they are in it. Click a stall to set its width and length.
         Stalls are drawn for any driver within 200 m of them.
+        For a start from the pits, stall 1 is pole: number them from the pit exit back.
+        <b ng-if="pitStartSplit">{{ checkpointName(pitFirstCheckpoint) }} runs between stalls
+          {{ pitStartSplit[0] }} and {{ pitStartSplit[1] }}: with more than {{ pitStartSplit[0] }}
+          cars, a start from the pits would put them on both sides of it, so the server uses the
+          track grid instead. Move that gate, or set <b>Pit start</b> below to a checkpoint ahead
+          of every stall.</b>
       </span>
       <span class="rm-route-tab-note" ng-if="editorTarget === 'pitEntry'">
         Place this where the lane leaves the track. A sign with a big P, drawn all race so
@@ -2888,6 +2918,33 @@
         <span class="rm-route-tab-note" ng-if="firstCheckpoint > 1">
           The out lap runs from the grid through <b>{{ checkpointName(firstCheckpoint) }}</b> to the line.
           It is not timed; in a race it counts as lap 1.
+        </span>
+      </div>
+    </div>
+
+    <!-- WHERE AN OUT LAP FROM THE PITS STARTS: the Grid tab's First checkpoint,
+         for a field started in the stalls. Every car is sent to it, so the
+         server only grids a field there when it runs between none of them. -->
+    <div class="rm-lanes" ng-if="editorTarget === 'pit' && pitRoute.length && routeWaypoints.length > 1 && !pointToPoint">
+      <div class="rm-lanes-row">
+        <label class="rm-lane-label">Pit start</label>
+        <div class="rm-layout-dropdown rm-lane-picker"
+             ng-class="{'rm-layout-dropdown-open': laneMenuOpen('pitFirstCp')}">
+          <button type="button" class="rm-layout-trigger" ng-click="laneToggleMenu('pitFirstCp')"
+                  ng-disabled="!canEdit()"
+                  title="The first gate drivers are sent to when a session starts from the pit stalls. It must be ahead of every stall.">
+            <span class="rm-layout-trigger-label">{{ checkpointName(pitFirstCheckpoint) }}</span>
+            <span class="rm-layout-caret">▾</span>
+          </button>
+          <div class="rm-layout-menu" ng-if="laneMenuOpen('pitFirstCp')">
+            <div class="rm-layout-option" ng-repeat="s in routeSlots() track by s"
+                 ng-class="{'rm-layout-option-active': s === pitFirstCheckpoint}"
+                 ng-click="pickPitFirstCheckpoint(s)">{{ checkpointName(s) }}</div>
+          </div>
+        </div>
+        <span class="rm-route-tab-note">
+          A start from the pits sends every car to <b>{{ checkpointName(pitFirstCheckpoint) }}</b> first,
+          then round to the line: an untimed out lap.
         </span>
       </div>
     </div>

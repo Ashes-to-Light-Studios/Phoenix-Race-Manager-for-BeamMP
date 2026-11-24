@@ -359,7 +359,8 @@ local function drawStartPositions()
   local sel = nudge.on and nudge.list == track.startPositions and nudge.sel or nil
   for i, sp in ipairs(track.startPositions) do
     local held = picked and (picked[sp] or sel == i) or false
-    drawStartPosition(sp, i, session.gridSlot == i, held)
+    -- Our slot, unless the field was gridded in the pit stalls (session.gridFromPits).
+    drawStartPosition(sp, i, session.gridSlot == i and not session.gridFromPits, held)
   end
 end
 
