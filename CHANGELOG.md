@@ -6,6 +6,18 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Changed
+
+- **Hide the pit lane and the joker gate too.** The pillar button beside 🔊
+  now opens a small menu with three ticks: **Checkpoints**, **Pit lane**
+  (the Pit In gate, and the stalls until you cross it) and **Joker gate**.
+  Each is on your screen only and remembered; a choice to hide pillars from
+  before carries over.
+  Hidden gates still count: laps, pit stops and the joker work as before. See
+  [Seeing the checkpoints](docs/REFERENCE.md#seeing-the-checkpoints).
+
 ## 0.29.1 - Layouts folder path
 
 #### Fixed

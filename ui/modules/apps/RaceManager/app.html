@@ -1094,8 +1094,18 @@
             ng-click="menuTab('admin')"
             title="Master password, results housekeeping and the session">Admin</button>
     <span class="rm-menu-right">
-      <button class="rm-btn rm-btn-mini" ng-click="togglePoles()"
-              title="{{ polesOn ? 'Checkpoint pillars on. Click to hide them for you.' : 'Checkpoint pillars hidden. Click to show them.' }}"><span class="rm-poles-icon" ng-class="{'rm-poles-off': !polesOn}"></span></button>
+      <!-- GATES YOU SEE: three switches behind one button. Drawing only. -->
+      <span class="rm-menu-group">
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-admin-tab-active': menu.group === 'gates'}"
+                ng-click="menuToggleGroup('gates')"
+                title="{{ gatesTitle() }}"><span class="rm-poles-icon" ng-class="{'rm-poles-off': !gatesAllShown()}"></span> &#9662;</button>
+        <span class="rm-menu-drop rm-gates-drop" ng-if="menu.group === 'gates'">
+          <label class="rm-menu-option rm-gate-row" ng-repeat="k in gateKinds track by k.key" title="{{ k.tip }}">
+            <input type="checkbox" ng-checked="gatesShown[k.key]" ng-click="toggleGate(k)"> {{ k.label }}
+          </label>
+          <span class="rm-gates-note">For you only. Hidden gates still count.</span>
+        </span>
+      </span>
       <button class="rm-btn rm-btn-mini" ng-click="toggleSound()"
               title="{{ soundOn ? 'Start sounds on: beeps for the countdown, GET READY and the drag tree, a tone for GO and the green. Click to mute.' : 'Start sounds muted. Click to turn them on.' }}">{{ soundOn ? '&#x1F50A;' : '&#x1F507;' }}</button>
     </span>
@@ -4855,8 +4865,18 @@
     <button class="rm-driverbar-btn" ng-if="spectatorView() && !hudCollapsed"
             ng-click="toggleBroadcast()"
             title="Switch to the broadcast board: the whole field, the drivers who are out, and click a name to put the camera on them">&#x1F4FA;</button>
-    <button class="rm-driverbar-btn" ng-click="togglePoles()" ng-if="!hudCollapsed"
-            title="{{ polesOn ? 'Checkpoint pillars on. Click to hide them for you.' : 'Checkpoint pillars hidden. Click to show them.' }}"><span class="rm-poles-icon" ng-class="{'rm-poles-off': !polesOn}"></span></button>
+    <span class="rm-menu-group" ng-if="!hudCollapsed">
+      <button class="rm-driverbar-btn" ng-click="menuToggleGroup('gatesBar')"
+              title="{{ gatesTitle() }}"><span class="rm-poles-icon" ng-class="{'rm-poles-off': !gatesAllShown()}"></span></button>
+      <!-- Opens rightward: this button can start a wrapped row. Spans, not
+           divs: tests read this bar up to its first closing div. -->
+      <span class="rm-menu-drop rm-gates-drop rm-gates-drop-bar" ng-if="menu.group === 'gatesBar'">
+        <label class="rm-menu-option rm-gate-row" ng-repeat="k in gateKinds track by k.key" title="{{ k.tip }}">
+          <input type="checkbox" ng-checked="gatesShown[k.key]" ng-click="toggleGate(k)"> {{ k.label }}
+        </label>
+        <span class="rm-gates-note">For you only. Hidden gates still count.</span>
+      </span>
+    </span>
     <button class="rm-driverbar-btn" ng-click="toggleSound()" ng-if="!hudCollapsed"
             title="{{ soundOn ? 'Start sounds on. Click to mute.' : 'Start sounds muted. Click to turn them on.' }}">{{ soundOn ? '&#x1F50A;' : '&#x1F507;' }}</button>
     <button class="rm-driverbar-btn" ng-click="openLogin()" ng-if="!hudCollapsed"
@@ -5773,6 +5793,20 @@
   }
   .rm-menu-option { padding: 5px 10px; cursor: pointer; white-space: nowrap; }
   .rm-menu-option:hover { background: rgba(255, 102, 0, 0.18); }
+  /* The gate switches. Right-aligned under the menu bar's far-right button,
+     or it runs off the app's edge; the driver bar's opens rightward. */
+  .rm-gates-drop { left: auto; right: 0; min-width: 0; }
+  .rm-gates-drop-bar { left: 0; right: auto; }
+  .rm-gate-row { display: flex; align-items: center; gap: 6px; }
+  .rm-gate-row input { margin: 0; }
+  .rm-gates-note {
+    display: block;
+    padding: 4px 10px 3px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 10px;
+    white-space: nowrap;
+    color: var(--rm-muted, #9aa0a6);
+  }
   /* The Layouts menu. Capped and scrolling: a map can hold dozens, and the app
      has a hard bottom edge. */
   .rm-lm { min-width: 260px; max-width: 380px; max-height: 300px; overflow-y: auto; }
@@ -7954,6 +7988,7 @@
     bottom: -0.1em;
     border-top: 0.1em solid currentColor;
   }
+  /* Hidden is ANY of the three gate kinds off: the tooltip names which. */
   .rm-poles-icon.rm-poles-off { border-color: currentColor; opacity: 0.6; }
   .rm-poles-icon.rm-poles-off::after {
     content: '';

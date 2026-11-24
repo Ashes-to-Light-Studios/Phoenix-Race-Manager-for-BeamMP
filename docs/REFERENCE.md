@@ -2481,14 +2481,26 @@ had already said, in the form nobody can read at speed. **The editor still
 numbers and labels everything, joker included**: that is where the words are
 worth reading, and where there is time to read them.
 
-**Hiding the pillars is each player's own choice.** The pillar button (two
-posts, beside 🔊 on the menu bar and on the driver bar) hides the checkpoint
-poles on your screen only, and is remembered like the sound setting. It changes
-nothing else: a hidden gate still has to be driven through, still counts the
-lap, and still catches a track cut. The joker gate, the pit lane and direction
-markers stay, because each one tells you what to do. It is separate from the
-editor's **Hide/Show Gates**, so hiding pillars to race never hides a track you
-are building.
+**Hiding gates is each player's own choice.** The gate button (two posts,
+beside 🔊 on the menu bar and on the driver bar) opens a small menu with three
+ticks, each on its own:
+
+| Tick | Hides |
+|---|---|
+| **Checkpoints** | the armed and next checkpoint poles |
+| **Pit lane** | the Pit In gate, and the stalls until you cross it |
+| **Joker gate** | the joker gate, its fill and its symbol |
+
+Each one changes your screen only, never the server or anyone else's, and is
+remembered like the sound setting. The button's posts turn grey with a slash
+while anything is hidden, and its tooltip names what. Hiding changes nothing
+else: a hidden checkpoint still has to be driven through, still counts the lap
+and still catches a track cut; a hidden Pit In gate still puts you in the pit
+lane, and once you are in it the stalls and the exit show again so you can find
+your stop; a hidden joker gate still counts the joker, or refuses it on lap 1.
+A lane with no Pit In gate has nothing to cross, so its stalls stay hidden. Direction markers have no tick and always
+stay. The ticks are separate from the editor's **Hide/Show Gates**, so hiding
+gates to race never hides a track you are building.
 
 Two gates ahead and nothing else - a whole lap's worth of numbered rectangles
 across the racing line is clutter, but a checkpoint nobody can see is worse.
@@ -3823,7 +3835,7 @@ these were collapsed sections.
 | **Feed** | everyone | The broadcast feed: race data for your stream's overlay, served on this PC (see [Broadcast feed](#broadcast-feed)) |
 | **Map** | drivers | Call a vote to switch maps, while voting is open |
 | **Admin** | admins | Master passwords, results housekeeping, the map switch, display names |
-| Pillars (two posts) | everyone | Checkpoint pillars on or off, on your screen only (see [Seeing the checkpoints](#seeing-the-checkpoints)) |
+| Gates (two posts) ▾ | everyone | Checkpoints, pit lane and joker gate, each on or off, on your screen only (see [Seeing the checkpoints](#seeing-the-checkpoints)) |
 | 🔊 | everyone | Start sounds on or off (see [Race Lights (PRM)](#race-lights-prm)) |
 
 **Never behind the menu:** the header (phase, clock, flag), the READY banner, a

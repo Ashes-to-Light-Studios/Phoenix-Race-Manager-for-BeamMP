@@ -687,8 +687,8 @@ local function drawDriverGate(derbyLive)
   -- still labels everything. ALL of a checkpoint's gates are drawn: a branch
   -- gate is the driver's choice.
   --
-  -- The player's pillar switch hides the armed and next gates and nothing
-  -- below: the joker, the pit lane and the markers each tell a driver what to do.
+  -- The player's gate switches each hide one group below and nothing else:
+  -- checkpoints (edit.poles), the joker, the pit lane. Markers have none.
   if edit.poles ~= false then
     local a = session.armedWp
     if a < 1 or a > n then a = 1 end
@@ -712,7 +712,7 @@ local function drawDriverGate(derbyLive)
   end
 
   -- The joker and the pit lane, in the same style.
-  if session.jokerEnabled and #track.jokerRoute > 0 then
+  if edit.jokerGates ~= false and session.jokerEnabled and #track.jokerRoute > 0 then
     local j = session.jokerArmed
     if j < 1 or j > #track.jokerRoute then j = 1 end
     local wp = track.jokerRoute[j]
@@ -731,8 +731,13 @@ local function drawDriverGate(derbyLive)
   -- With an ENTRY GATE only that gate shows while racing; the stalls appear
   -- once in the lane (a hundred draws down to three). A track without one shows
   -- every stall, as before.
+  -- The pit switch hides the lane only until the driver crosses Pit In: past
+  -- it they need the stalls. An ungated lane has no Pit In, so stays hidden.
+  -- Drawing only: pit.inLane and the stop run elsewhere.
   local gated = #track.pitEntry > 0
-  if gated and not pit.inLane then
+  if edit.pitGates == false and not (gated and pit.inLane) then
+    -- Hidden by the player, and not in the lane.
+  elseif gated and not pit.inLane then
     -- One gate at the mouth: poles, a panel and a big P, no words.
     for _, wp in ipairs(track.pitEntry) do
       drawPoleGate(wp, p.pit, nil, p.pitFill, 'pit')
