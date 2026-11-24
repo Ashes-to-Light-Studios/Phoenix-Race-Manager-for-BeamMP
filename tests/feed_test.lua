@@ -742,6 +742,19 @@ check(driver(doc, 1).name == 'A "quoted"\n\tname\1', 'quotes, newlines and contr
 check(driver(doc, 2).gap == NULL, 'NaN is null, not invalid JSON')
 check(raw:find('"gap":0.333', 1, true) ~= nil, 'three decimals at most')
 
+-- No car, no grid: a row the server marks unlisted (left off for want of a car
+-- and never joined) is on no board, the overlay included: not listed, and not
+-- counted as a spectator either.
+local leftOff = race()
+leftOff.drivers[#leftOff.drivers + 1] = { id = 9, name = 'Gus', status = 'waiting',
+  unlisted = true, noCar = true }
+feed.feedState(leftOff)
+doc = live()
+check(driver(doc, 9) == nil, 'an unlisted row is not on the overlay')
+check(#doc.drivers == 6 and doc.session.spectators == 1,
+  'and is neither listed nor counted (got ' .. #doc.drivers .. ' listed, '
+    .. tostring(doc.session.spectators) .. ' spectating)')
+
 -- ===========================================================================
 -- 8. LAN, Linux, ports
 -- ===========================================================================

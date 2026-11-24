@@ -8147,6 +8147,34 @@ function M.readyAll()
   if inMultiplayer() then TriggerServerEvent('RM_ReadyAll', '') end
 end
 
+-- Join: the grid formed without us (no car then), and we are in one now. The
+-- back of the grid, placed at once. Refused here with no car, as Ready is.
+function M.joinField()
+  if not inMultiplayer() then return end
+  if not ownVehicle() then
+    pushNotice('grid', 'Get in a car first', { sub = 'Then press Join' })
+    return
+  end
+  TriggerServerEvent('RM_JoinField', '')
+end
+
+-- Admin: place a driver the grid left off (they have a car now).
+function M.placeDriver(pid)
+  pid = tonumber(pid)
+  if pid and inMultiplayer() then
+    TriggerServerEvent('RM_JoinField', jsonEncode({ pid = pid }))
+  end
+end
+
+-- Admin: put a driver in the field with or without a car (until they leave),
+-- or take that back.
+function M.addDriver(pid, on)
+  pid = tonumber(pid)
+  if pid and inMultiplayer() then
+    TriggerServerEvent('RM_SetAdminEntry', jsonEncode({ pid = pid, on = on ~= false }))
+  end
+end
+
 function M.setReadyCheck(on)
   if inMultiplayer() then
     TriggerServerEvent('RM_SetReadyCheck', jsonEncode({ on = on == true }))
@@ -8762,6 +8790,10 @@ local function onServerUpdate(rawData)
   -- Our status and slot, for the Ready button ('called': the grid waits on us).
   local wasStatus = session.myStatus
   session.myStatus, session.myGridPos = nil, nil
+  -- No car, no grid: the Join banner (the grid formed without us and we have a
+  -- car now), and the Race Entry row's "no car spawned".
+  local wasJoinable = session.myJoinable == true
+  session.myJoinable, session.myNoCar = false, false
   -- Checkpoint-skip tallies off our row; nil is 0 (the server leaves zeros out).
   local rowWarn, rowPen, rowLift, rowWindow = 0, 0, 0, nil
   local cpr = session.cpRow
@@ -8772,6 +8804,8 @@ local function onServerUpdate(rawData)
       if tonumber(d.id) == myId then
         session.myStatus  = d.status
         session.myGridPos = tonumber(d.gridPos)
+        session.myJoinable = d.joinable == true
+        session.myNoCar    = d.noCar == true and d.adminEntry ~= true
         rowWarn   = tonumber(d.checkpointWarningsUsed) or 0
         rowPen    = tonumber(d.penaltySeconds) or 0
         rowLift   = tonumber(d.liftOwed) or 0
@@ -8818,6 +8852,13 @@ local function onServerUpdate(rawData)
     pushNotice('grid', 'The grid is forming', {
       sub = 'Press READY in Phoenix Race Manager (PRM) to take '
         .. (session.myGridPos and ('slot P' .. session.myGridPos) or 'your slot'),
+    })
+  end
+  -- The grid formed without us and we have a car now: told once, on the edge.
+  -- Nothing puts us in but Join (or an admin).
+  if session.myJoinable and not wasJoinable then
+    pushNotice('grid', 'The grid formed without you', {
+      sub = 'Press JOIN in Phoenix Race Manager (PRM) to start from the back',
     })
   end
 
@@ -8875,6 +8916,8 @@ local function onServerUpdate(rawData)
   data.driverFlag = driverFlag()
   data.myStatus   = session.myStatus
   data.myGridPos  = session.myGridPos
+  data.myJoinable = session.myJoinable == true
+  data.myNoCar    = session.myNoCar == true
   -- Our own checkpoint-skip state for the header readout, nil when clean.
   do
     local cr, L = session.cpRow, session.lift

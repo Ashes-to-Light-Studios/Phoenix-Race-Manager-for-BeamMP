@@ -429,9 +429,9 @@ across server restarts:
 
 ### Step 4 - Who is actually in the race
 
-**Everyone races.** Every connected player is in the field, so a server nobody
-has configured grids the people who turned up. The **Race Entry** bar shows how
-many that is.
+**Everyone races.** Every connected player in a car is in the field, so a server
+nobody has configured grids the people who turned up. The **Race Entry** bar
+shows how many that is.
 
 A driver who does not want to race presses **Spectate** and the session runs
 without them. Their car stays exactly where it is and becomes a ghost: nothing
@@ -453,6 +453,46 @@ This replaced three overlapping answers to "am I in this race": an admin-set
 entry mode, a per-driver **Join Race**, and spectating. They could disagree, and
 the failure that made the case for cutting them down to one was a driver who sat
 out and then had no way back in.
+
+#### No car, no grid
+
+**A player with no car spawned is not in the field.** When a grid forms (Generate
+Grid, Start Quali, Restart From Grid), a heat draw is made, a derby forms up or
+a drag ladder is drawn, everyone in a car is in, and anyone without one is left
+off. They get a chat message saying so, and the admins are told who was left off.
+The server asks BeamMP which cars each player has, so nothing is needed from the
+player's game. Walking (BeamMP's unicycle) does not count as a car.
+
+**A car spawned later does not put them in.** Once the grid has formed without
+them, nothing happens on its own:
+
+- **Join.** As soon as they are in a car, a **JOIN** banner appears where the
+  Ready button does, with a HUD notice. Pressing it puts them on the back of the
+  grid, placed and held like everyone else. It is offered while the grid is
+  forming, before the start, with or without the ready check.
+- **Never pressed, never listed.** A driver who does not join is on no board:
+  not the driver tables, the broadcast board, the overlay feed, or the results
+  file (the qualifying table included). Until then they have no place, so
+  nobody else's place number moves for them.
+
+**For an admin**, **Not in the field** (under Race Entry) lists everyone the
+board leaves out:
+
+| Tag | Means | Button |
+|---|---|---|
+| **NO CAR** | No car spawned | **Add**: in the field with or without a car, until they leave the server. On a grid being formed they are called to the back and press Ready once they are in a car. If they never do, the start goes without them, as for anyone not ready |
+| **LEFT OFF** | The grid formed while they had no car; they have one now | **Place** (while the grid forms): onto the back of the grid now |
+| **ADDED** | An admin added them | **Remove**: the no-car rule applies to them again. Still car-less and not yet placed, they come off the grid |
+
+An added driver shows **ADDED** in the driver table too, with **Remove**. An Add
+lasts until the player disconnects and survives Start Quali and Reset.
+
+**A slot once given is kept.** Deleting your car on the grid and spawning another,
+to change cars, does not take you off it. The rule decides who is picked, never
+who is dropped.
+
+If BeamMP cannot say which cars a player has (a server build without the call),
+everyone counts as in a car, which is how the mod behaved before this rule.
 
 ### Step 5 - Qualifying
 
@@ -1386,7 +1426,10 @@ menu, halfway across the map. Now it **calls** them to the grid instead.
   recorded against you; you never started.
 - Joining the server, or pressing Race after Spectate, while the grid is being
   called puts you at the **back** of it with a Ready button of your own, until
-  the start positions run out.
+  the start positions run out. **You need a car for that**: a player who joins
+  with no car, or was left off for having none, is not called when they spawn
+  one. They press **JOIN** instead, which places them at the back in one press
+  (see [No car, no grid](#no-car-no-grid)).
 
 **For an admin or moderator**, beside Start Countdown:
 
@@ -1600,7 +1643,9 @@ point-to-point layout in every other way.
 
 Connecting mid-race does not put you in it. A driver who arrives has no grid
 slot, no laps and no out lap behind them, so they are held as a **spectator until
-the next grid forms** - which is where entry is decided for everybody.
+the next grid forms** - which is where entry is decided for everybody. They
+arrive with no car, so they are on no board for this session either (see
+[No car, no grid](#no-car-no-grid)).
 
 **Their car is a ghost to everyone still racing.** They arrive with a vehicle, a
 spawn point and no idea a session is running, and without this they can put a
@@ -3407,7 +3452,9 @@ server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
 | `entrants`, `spectators` | Drivers in the session, and players watching (counted, never listed). |
 | `gridSource` | `locked` once the grid is called, `quali` for a provisional grid from qualifying times, otherwise `null`. |
 
-**`drivers`**, in running order (qualifying: by best lap). Spectators are left out.
+**`drivers`**, in running order (qualifying: by best lap). Spectators are left
+out, and so is anyone not in the field for want of a car
+([No car, no grid](#no-car-no-grid)).
 
 | Field | Meaning |
 |---|---|
@@ -4915,8 +4962,10 @@ derby mode, and derby controls are not shown anywhere else - see
    is. Closing the Derby panel is enough to get the driving view: you do not
    have to start a derby to see what your drivers will see.
 3. **Entry** is the same one switch the circuit races use: every connected
-   player is in the field unless they have pressed **Spectate**, which is how
-   the derby has always behaved by default. Somebody who only wants to watch
+   player in a car is in the field unless they have pressed **Spectate**, which
+   is how the derby has always behaved by default. A player with no car spawned
+   at Form Up is left out, unless an admin added them (see
+   [No car, no grid](#no-car-no-grid)). Somebody who only wants to watch
    sits out both modes with one press - worth knowing that being entered means
    losing your car to freecam the moment you are eliminated. The counter shows
    how many would be in a derby started right now, and the field is locked from

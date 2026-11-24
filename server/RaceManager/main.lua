@@ -810,6 +810,64 @@ local function onlinePlayers()
   return out
 end
 
+-- ---------------------------------------------------------------------------
+-- NO CAR, NO GRID
+-- ---------------------------------------------------------------------------
+-- A player with no car spawned is left out of every field that forms (grid,
+-- qualifying, derby, drag, heat draw) unless an admin added them. Three flags
+-- on the record, none of which makes isEntrant ask BeamMP (it runs per
+-- broadcast):
+--   noCar       no car right now: set on a new record, refreshed by every
+--               selection (race.refreshCars), kept current by the spawn and
+--               delete events
+--   adminEntry  an admin's Add: in the field with or without a car, until they
+--               leave (in the identity registry, so a wipe keeps it)
+--   leftOff     the grid or session in hand formed without them. A car
+--               spawned later does NOT put them in: they press Join, or an
+--               admin places them. Until then they are on no board
+-- A slot already handed out is never taken back over a car: deleting and
+-- respawning on the grid keeps it. On `race`: the locals ceiling.
+
+-- Does this connection have a car spawned? BeamMP's own list, so it needs
+-- nothing from the client. A unicycle (BeamMP's walking mode) is not a car.
+-- FAILS OPEN: a server build without the call, or one that errors, counts
+-- everyone as in a car, as before the rule existed. `ignoreVid`: a car being
+-- deleted, which the list may still hold.
+race.hasCar = function (pid, ignoreVid)
+  if type(MP.GetPlayerVehicles) ~= 'function' then return true end
+  local ok, cars = pcall(MP.GetPlayerVehicles, pid)
+  if not ok then return true end
+  if type(cars) ~= 'table' then return false end
+  local skip = tonumber(ignoreVid)
+  for vid, data in pairs(cars) do
+    if skip == nil or tonumber(vid) ~= skip then
+      local model = type(data) == 'string' and data:match('"jbm"%s*:%s*"([^"]*)"') or nil
+      if model ~= 'unicycle' then return true end
+    end
+  end
+  return false
+end
+
+-- Out of the field for want of a car: none, and no admin put them in.
+race.carOut = function (rec)
+  return rec ~= nil and rec.noCar == true and not rec.adminEntry
+end
+
+-- On no board: not in this field and never joined it (left off for want of a
+-- car, or car-less). A spectator keeps its own label. The row still goes out,
+-- after the board and with no place: each client reads its own.
+race.unlisted = function (rec)
+  return rec.status == 'waiting' and not rec.spectating
+    and (rec.leftOff == true or race.carOut(rec))
+end
+
+-- The car of every record, from BeamMP, before a field is picked.
+race.refreshCars = function ()
+  for id, rec in pairs(players) do
+    rec.noCar = (not race.hasCar(id)) or nil
+  end
+end
+
 -- The stored identity for this connection, cleared when the name no longer
 -- matches (somebody else holds the id).
 local function identityFor(pid, name)
@@ -844,6 +902,9 @@ local function rememberIdentity(rec)
     car         = rec.carLabel,
     -- BeamMP account (nil for a guest), read once at join.
     account     = rec.account,
+    -- An admin's Add (race.carOut): kept across a wipe of `players`, dropped
+    -- when they disconnect (RM_onPlayerDisconnect).
+    adminEntry  = rec.adminEntry,
   }
 end
 
@@ -874,7 +935,10 @@ local function ensurePlayer(pid)
       rec.transferred = ident.transferred
       rec.carLabel    = ident.car
       rec.account     = ident.account
+      rec.adminEntry  = ident.adminEntry
     end
+    -- Whether they have a car, from BeamMP: a fresh joiner has none.
+    rec.noCar = (not race.hasCar(pid)) or nil
     players[pid] = rec
     rememberIdentity(rec)
   end
@@ -892,6 +956,9 @@ race.derbyUnderWay = function () return false end
 --   dragEntryChanged the entry list moved
 --   dragWarm         boot-time load of a half-run ladder
 race.dragUnderWay    = function () return false end
+-- A derby being called takes a late entrant (an admin's Add). Inert until the
+-- derby installs its own.
+race.derbyLateEntry  = function () return false end
 race.dragEntryChanged = function () end
 race.dragWarm        = function () end
 race.dragSetCupHooks = function () end
@@ -919,13 +986,15 @@ local rosterWarm, cupWarm
 -- ---------------------------------------------------------------------------
 -- Race entry list
 -- ---------------------------------------------------------------------------
--- EVERYONE RACES UNLESS THEY SPECTATE. A heat is an ordinary race run by a
+-- EVERYONE IN A CAR RACES UNLESS THEY SPECTATE. No car spawned is out too,
+-- unless an admin added them (race.carOut). A heat is an ordinary race run by a
 -- subset of the field, and this is the whole of what makes that true: during a
 -- heat (heatCount > 0, heatCurrent > 0) only that heat's drivers are entrants.
 -- QUALIFYING IS NEVER SPLIT: the draw is made from its times.
 local function isEntrant(rec)
   if not rec then return false end
   if rec.spectating then return false end
+  if race.carOut(rec) then return false end
   if race.heatCount > 0 and race.heatCurrent > 0 and race.sessionKind == 'race' then
     return rec.heat == race.heatCurrent
   end
@@ -938,6 +1007,14 @@ local function entrantCount()
     if isEntrant(rec) then n = n + 1 end
   end
   return n
+end
+
+-- In the field now, for the derby and drag: a connection with no record yet
+-- (their join handlers run before ours) is in if it has a car.
+race.inField = function (id)
+  local rec = players[id]
+  if rec then return isEntrant(rec) end
+  return race.hasCar(id)
 end
 
 local function decodeNumber(rawData, field)
@@ -1189,6 +1266,11 @@ local DRIVER_WIRE_FIELDS = {
   -- Teams and car numbers (teams.lua): resolved per record in driverForWire,
   -- nil when unset, so a league without them sends nothing extra.
   'team', 'number',
+  -- No car, no grid (race.carOut): no car right now, and an admin's Add.
+  -- `unlisted` (on no board: left off, or car-less, and never joined) and
+  -- `joinable` (has a car now and can press Join) are worked out in
+  -- driverForWire. The row still goes out: each client reads its own.
+  'noCar', 'adminEntry', 'unlisted', 'joinable',
 }
 
 -- The projection buffer lives ON the record and is reused: no allocation per
@@ -1213,13 +1295,24 @@ local function driverForWire(rec)
   if wire.liftOwed == 0 then wire.liftOwed = nil end
   if wire.penaltyServed == 0 then wire.penaltyServed = nil end
   if wire.pitStops == 0 then wire.pitStops = nil end
+  -- Never on a board until they are in, and Join while a grid is called.
+  local unlisted = race.unlisted(rec)
+  wire.unlisted = unlisted or nil
+  wire.joinable = (unlisted and rec.leftOff and not rec.noCar
+    and race.phase == 'grid') or nil
   return wire
 end
 
 local function buildDrivers()
-  local list = {}
+  local list, hidden = {}, nil
   for _, rec in pairs(players) do
-    list[#list + 1] = rec
+    -- On no board (race.unlisted): no place, so the DNFs' numbers stay right.
+    if race.unlisted(rec) then
+      hidden = hidden or {}
+      hidden[#hidden + 1] = rec
+    else
+      list[#list + 1] = rec
+    end
   end
   if race.phase == 'qualifying' or race.phase == 'waiting' then
     -- Provisional grid order: fastest quali Best Lap first, no-time last.
@@ -1240,6 +1333,17 @@ local function buildDrivers()
   assignPositions(list)
   local wire = {}
   for i = 1, #list do wire[i] = driverForWire(list[i]) end
+  -- After the board, placeless: sent because each client reads its own row
+  -- (bystander ghosting, the Join banner).
+  if hidden then
+    table.sort(hidden, function (a, b) return a.id < b.id end)
+    for _, rec in ipairs(hidden) do
+      rec.position, rec.classPos = nil, nil
+      rec.gap, rec.intv, rec.down, rec.idown = nil, nil, nil, nil
+      rec.blue, rec.lapping, rec.blueWas = nil, nil, nil
+      wire[#wire + 1] = driverForWire(rec)
+    end
+  end
   return wire
 end
 
@@ -1583,9 +1687,11 @@ race.readyUp = function (rec, order, count)
 end
 
 -- A late arrival (or a rejoin from Spectate) goes to the back of the grid, not
--- past the last placed start position.
+-- past the last placed start position. Never a driver left off for want of a
+-- car: a car spawned later is Join's to use (race.joinLate), not this.
 race.callLate = function (rec)
   if race.phase ~= 'grid' or not race.readyCheck or not isEntrant(rec) then return false end
+  if rec.leftOff then return false end
   if rec.status == 'called' or rec.status == 'gridded' then return false end
   local nextPos = (race.gridSize or 0) + 1
   if race.startSlots > 0 and nextPos > race.startSlots then
@@ -1595,6 +1701,33 @@ race.callLate = function (rec)
   end
   race.gridSize = nextPos
   race.callToGrid(rec, nextPos)
+  return true
+end
+
+-- THE ONE LATE ENTRY onto a grid already formed: a left-off driver's Join, an
+-- admin's Place or Add. Never automatic. The back of the grid, as a fresh
+-- session; `placeNow` lands them on the slot (they are in a car and asked),
+-- otherwise they are called and placed on Ready (dropUnready sits them out at
+-- the start if they never are).
+race.joinLate = function (rec, placeNow)
+  if race.phase ~= 'grid' or not rec then return false end
+  if rec.status == 'called' or rec.status == 'gridded' then return false end
+  local nextPos = (race.gridSize or 0) + 1
+  if race.startSlots > 0 and nextPos > race.startSlots then
+    MP.SendChatMessage(rec.id, '[RaceManager] The grid is full: every start position '
+      .. 'is taken. You are in the next one.')
+    return false
+  end
+  race.gridSize = nextPos
+  race.freshSession(rec)
+  rec.leftOff = nil
+  rec.gridPos = nextPos
+  if placeNow then
+    race.readyUp(rec)
+  else
+    race.callToGrid(rec, nextPos)
+  end
+  race.announceIfAllReady()
   return true
 end
 
@@ -1932,7 +2065,12 @@ end
 -- independent of the race, so pole and winner stay distinct.
 local function qualiClassification()
   local list = {}
-  for _, rec in pairs(players) do list[#list + 1] = rec end
+  for _, rec in pairs(players) do
+    -- On no board (race.unlisted), so not here either, unless they set a time.
+    if rec.gridPos or rec.qualiBest or not race.unlisted(rec) then
+      list[#list + 1] = rec
+    end
+  end
   table.sort(list, function (a, b)
     if a.gridPos and b.gridPos then return a.gridPos < b.gridPos end
     if (a.gridPos ~= nil) ~= (b.gridPos ~= nil) then return a.gridPos ~= nil end
@@ -2592,7 +2730,8 @@ local function respawnAll(source)
 
   local participants, bystanders = {}, {}
   for _, rec in ipairs(field) do
-    if rec.gridPos or isEntrant(rec) then
+    -- A driver left off for want of a car never took part: a bystander.
+    if rec.gridPos or (isEntrant(rec) and not rec.leftOff) then
       participants[#participants + 1] = rec
     else
       bystanders[#bystanders + 1] = rec
@@ -2844,7 +2983,8 @@ function RM_onSetSpectating(pid, rawData)
     if race.phase == 'grid' then race.announceIfAllReady() end
   else
     rec.bystander = nil
-    MP.SendChatMessage(-1, '[RaceManager] ' .. rec.name .. ' rejoined the field.')
+    MP.SendChatMessage(-1, '[RaceManager] ' .. rec.name .. ' rejoined the field'
+      .. (race.carOut(rec) and ' (no car spawned yet: spawn one to take a slot).' or '.'))
     -- While the grid is being called, rejoining means the back of it.
     race.callLate(rec)
   end
@@ -3047,6 +3187,50 @@ local function orderForGrid(ordered)
   return ordered
 end
 
+-- A driver taking a slot in a new session: everything off the last one goes.
+-- formGrid's field, and a late Join (race.joinLate), alike.
+race.freshSession = function (rec)
+  rec.raceBest   = nil
+  rec.lastLap, rec.lastLapOn = nil, nil
+  rec.currentLap = 0
+  rec.lapsLed    = 0
+  rec.finishTime = nil
+  rec.lapsDone, rec.atLine = nil, nil
+  -- A new session: allowances and joker credit start over.
+  rec.resets     = 0
+  rec.resetsBlocked = 0
+  rec.jokerTaken = 0
+  rec.jokerLap   = nil
+  rec.outReason  = nil
+  rec.dnfPos     = nil
+  rec.heldPos    = nil
+  -- The clock goes back to zero, so every stamp off the old one goes too: a
+  -- stale holdCorrectedAt reads as "just corrected" and suppressed the grid
+  -- hold for a minute; old splits would read minutes behind.
+  rec.holdCorrectedAt = nil
+  rec.holdCorrections = 0
+  rec.splits   = nil
+  rec.splitLap = nil
+  rec.splitCp  = nil
+  rec.gap, rec.intv = nil, nil
+  -- "This session" counters.
+  rec.pitStops   = 0
+  rec.ghosts     = 0
+  -- Checkpoint skips start over: warnings, penalties, lifts, cut laps.
+  race.resetSkips(rec, isQualiSession())
+  -- A qualifying grid clears the times it replaces.
+  if isQualiSession() then
+    rec.qualiBest = nil
+    rec.qualiLaps = 0
+  end
+  -- Set here as well as at GO, so the board says so during the hold.
+  rec.outLap = outLapOwed()
+  -- In the field: not left off, and no longer a bystander.
+  rec.leftOff   = nil
+  rec.bystander = nil
+  progress.clear(rec)
+end
+
 -- Form the grid for a session: THE one path, for Generate Grid and Start
 -- Qualifying alike. Returns true when a grid was formed.
 formGrid = function (kind, byName)
@@ -3077,14 +3261,18 @@ formGrid = function (kind, byName)
   end
   -- Every connected player gets a record, identity restored by ensurePlayer.
   for id in pairs(online) do ensurePlayer(id) end
+  -- Who has a car NOW: no car, no slot (race.carOut).
+  race.refreshCars()
 
-  local ordered, skipped = {}, {}
+  local ordered, skipped, carless = {}, {}, {}
   for _, rec in pairs(players) do
     if isEntrant(rec) then
       ordered[#ordered + 1] = rec
     else
       -- Not entered: off the grid, no stale slot...
       skipped[#skipped + 1] = rec.name
+      rec.leftOff = nil
+      if race.carOut(rec) and not rec.spectating then carless[#carless + 1] = rec end
       rec.gridPos = nil
       rec.status  = 'waiting'
       -- ...and no result from the last race. A finish time kept a driver who
@@ -3115,12 +3303,27 @@ formGrid = function (kind, byName)
       '[RaceManager] Grid not formed: no entrants (%d connected, %d record(s): %s)',
       connected, #skipped,
       #skipped > 0 and table.concat(skipped, ', ') or 'none'))
-    -- Empty means nobody is here, or everybody pressed Spectate.
-    MP.SendChatMessage(-1, connected > 0
-      and string.format('[RaceManager] Everyone on the server is spectating '
-        .. '(%d connected). Press Race in Phoenix Race Manager (PRM) to take part.', connected)
-      or '[RaceManager] Nobody is on the server to grid.')
+    -- Empty means nobody is here, nobody is in a car, or everybody pressed
+    -- Spectate.
+    if #carless > 0 then
+      MP.SendChatMessage(-1, string.format('[RaceManager] Nobody in the field has a car '
+        .. 'spawned (%d connected). Spawn a vehicle, or an admin can Add a driver.', connected))
+    else
+      MP.SendChatMessage(-1, connected > 0
+        and string.format('[RaceManager] Everyone on the server is spectating '
+          .. '(%d connected). Press Race in Phoenix Race Manager (PRM) to take part.', connected)
+        or '[RaceManager] Nobody is on the server to grid.')
+    end
     return false
+  end
+  -- The grid forms without the car-less: left off, on no board, and a car
+  -- spawned later does not put them in. Join does, or an admin.
+  local carlessNames = {}
+  for _, rec in ipairs(carless) do
+    rec.leftOff = true
+    carlessNames[#carlessNames + 1] = rec.name
+    MP.SendChatMessage(rec.id, '[RaceManager] No car spawned, so you are not on this grid. '
+      .. 'Spawn one and press Join in Phoenix Race Manager (PRM) to start from the back.')
   end
 
   if race.regrid then
@@ -3145,44 +3348,7 @@ formGrid = function (kind, byName)
     local wasReady = reform and rec.status == 'gridded'
     rec.gridPos    = gridPos
     rec.status     = 'gridded'
-    rec.raceBest   = nil
-    rec.lastLap, rec.lastLapOn = nil, nil
-    rec.currentLap = 0
-    rec.lapsLed    = 0
-    rec.finishTime = nil
-    rec.lapsDone, rec.atLine = nil, nil
-    -- A new session: allowances and joker credit start over.
-    rec.resets     = 0
-    rec.resetsBlocked = 0
-    rec.jokerTaken = 0
-    rec.jokerLap   = nil
-    rec.outReason  = nil
-    rec.dnfPos     = nil
-    rec.heldPos    = nil
-    -- The clock goes back to zero, so every stamp off the old one goes too: a
-    -- stale holdCorrectedAt reads as "just corrected" and suppressed the grid
-    -- hold for a minute; old splits would read minutes behind.
-    rec.holdCorrectedAt = nil
-    rec.holdCorrections = 0
-    rec.splits   = nil
-    rec.splitLap = nil
-    rec.splitCp  = nil
-    rec.gap, rec.intv = nil, nil
-    -- "This session" counters.
-    rec.pitStops   = 0
-    rec.ghosts     = 0
-    -- Checkpoint skips start over: warnings, penalties, lifts, cut laps.
-    race.resetSkips(rec, isQualiSession())
-    -- A qualifying grid clears the times it replaces.
-    if isQualiSession() then
-      rec.qualiBest = nil
-      rec.qualiLaps = 0
-    end
-    -- Set here as well as at GO, so the board says so during the hold.
-    rec.outLap = outLapOwed()
-    -- Gridded: no longer a bystander.
-    rec.bystander = nil
-    progress.clear(rec)
+    race.freshSession(rec)
     if race.readyCheck and not wasReady then
       -- Called: placed when they press Ready.
       race.callToGrid(rec, gridPos)
@@ -3208,6 +3374,13 @@ formGrid = function (kind, byName)
   print(string.format('[RaceManager] %s grid formed by %s (%d drivers, %s order, pole: %s)',
     isQualiSession() and 'Qualifying' or 'Race', tostring(byName), #ordered, race.gridMode,
     ordered[1] and ordered[1].name or 'n/a'))
+  if #carlessNames > 0 then
+    table.sort(carlessNames)
+    local list = table.concat(carlessNames, ', ')
+    print('[RaceManager] Left off the grid with no car: ' .. list)
+    race.tellAdmins('Left off the grid with no car: ' .. list .. '. They can press Join '
+      .. 'once they spawn one; Place or Add under Not in the field puts one in.')
+  end
   if race.readyCheck then
     local ready, total = race.readyCounts()
     MP.SendChatMessage(-1, string.format('[RaceManager] Grid called: press Ready in '
@@ -3284,6 +3457,106 @@ function RM_onReadyAll(pid)
   for i, rec in ipairs(called) do race.readyUp(rec, i, #called) end
   print(string.format('[RaceManager] Ready All by %s: %d placed',
     MP.GetPlayerName(pid) or pid, #called))
+  broadcastState()
+end
+
+-- JOIN: a driver the grid formed without (no car then) takes the back of it now
+-- they have one, placed at once. An admin's Place does it for them (`pid` in
+-- the payload). The grid only: a running session is never joined.
+function RM_onJoinField(pid, rawData)
+  local data = {}
+  if type(rawData) == 'string' and rawData ~= '' then
+    local ok, d = pcall(Util.JsonDecode, rawData)
+    if ok and type(d) == 'table' then data = d end
+  end
+  local target, byAdmin = pidKey(pid), false
+  if data.pid ~= nil and pidKey(data.pid) ~= target then
+    if not requireAuth(pid) then return end
+    target, byAdmin = pidKey(data.pid), true
+  end
+  local rec = target and players[target]
+  if not rec or rec.status == 'called' or rec.status == 'gridded' then
+    broadcastState(pid)
+    return
+  end
+  if race.phase ~= 'grid' then
+    MP.SendChatMessage(pid, '[RaceManager] There is no grid to join: you are in the next one '
+      .. 'if you are in a car when it forms.')
+    broadcastState(pid)
+    return
+  end
+  if rec.spectating then
+    MP.SendChatMessage(pid, byAdmin
+      and ('[RaceManager] ' .. rec.name .. ' is spectating: only they can rejoin the field.')
+      or '[RaceManager] You are spectating: press Race first.')
+    return
+  end
+  -- A driver's own Join is for the one the grid left off; anyone else waiting
+  -- (another heat's driver) is not theirs to take a slot for.
+  if not byAdmin and not rec.leftOff then
+    broadcastState(pid)
+    return
+  end
+  if not race.hasCar(rec.id) then
+    rec.noCar = true
+    MP.SendChatMessage(pid, byAdmin
+      and ('[RaceManager] ' .. rec.name .. ' has no car spawned: Add puts them in without one.')
+      or '[RaceManager] Spawn a car first, then press Join.')
+    broadcastState()
+    return
+  end
+  rec.noCar = nil
+  if not race.joinLate(rec, true) then
+    broadcastState()
+    return
+  end
+  local by = byAdmin and (' (placed by ' .. tostring(MP.GetPlayerName(pid) or pid) .. ')') or ''
+  MP.SendChatMessage(-1, string.format('[RaceManager] %s joined the grid at P%d%s.',
+    rec.name, rec.gridPos, by))
+  print(string.format('[RaceManager] %s joined the grid late at P%d%s', rec.name, rec.gridPos, by))
+  broadcastState()
+end
+
+-- ADD: an admin puts a driver in the field with or without a car, until they
+-- leave the server; Remove takes it back. Allowed any time, being a flag: a
+-- grid being formed takes them now (called, and placed on Ready in a car),
+-- anything else at the next field.
+function RM_onSetAdminEntry(pid, rawData)
+  local data = adminPayload(pid, rawData)
+  if not data then return end
+  local target = pidKey(data.pid)
+  local rec = target and players[target]
+  if not rec then return end
+  local on = data.on ~= false
+  if (rec.adminEntry == true) == on then
+    broadcastState(pid)
+    return
+  end
+  rec.adminEntry = on or nil
+  -- Into the registry, or Start Qualifying's wipe would drop it.
+  rememberIdentity(rec)
+  local who = tostring(MP.GetPlayerName(pid) or pid)
+  if on then
+    local called = false
+    if rec.leftOff and not rec.spectating then called = race.joinLate(rec, false) end
+    -- A derby being called takes them too.
+    race.derbyLateEntry(rec.id)
+    MP.SendChatMessage(rec.id, called
+      and string.format('[RaceManager] An admin added you to the grid at P%d: press Ready '
+        .. 'once you are in a car.', rec.gridPos)
+      or '[RaceManager] An admin added you to the field: you are in, with or without a car, '
+        .. 'until you leave the server.')
+  elseif race.carOut(rec) and rec.status == 'called' then
+    -- Still no car and never placed: stood down, and left off again.
+    rec.gridPos, rec.status, rec.bystander = nil, 'waiting', true
+    rec.leftOff = true
+    assignGridSlot(rec.id, nil)
+    race.announceIfAllReady()
+  end
+  print(string.format('[RaceManager] %s %s the field by %s', rec.name,
+    on and 'added to' or 'no longer added to', who))
+  if derbyEntryListChanged then derbyEntryListChanged() end
+  race.dragEntryChanged()
   broadcastState()
 end
 
@@ -4202,13 +4475,16 @@ function RM_onDrawHeats(pid)
     MP.SendChatMessage(pid, '[RaceManager] Set the number of heats to 2 or more first.')
     return
   end
-  -- The whole field: the draw creates the heats (isEntrant would filter).
+  -- The whole field: the draw creates the heats (isEntrant would filter). No
+  -- car is no place in a heat either, unless an admin added them.
+  race.refreshCars()
   local field = {}
   for _, rec in pairs(players) do
-    if not rec.spectating then field[#field + 1] = rec end
+    if not rec.spectating and not race.carOut(rec) then field[#field + 1] = rec end
   end
   if #field == 0 then
-    MP.SendChatMessage(pid, '[RaceManager] Nobody to draw: every connected driver is sitting out.')
+    MP.SendChatMessage(pid, '[RaceManager] Nobody to draw: every connected driver is '
+      .. 'sitting out or has no car spawned.')
     return
   end
   -- What the draw is seeded on; the serpentine is the same either way.
@@ -8179,12 +8455,36 @@ local function garageModelFromPacket(data)
 end
 
 function RM_onVehicleSpawn(pid, vid, data)
-  if not garageEnforcing() then return end
   local model = garageModelFromPacket(data)
-  if model and not garageHasModel(model) then
+  if garageEnforcing() and model and not garageHasModel(model) then
     rejectVehicle(pid, vid, 'vehicle "' .. model .. '" is not on the Garage List')
     return 1  -- cancel the spawn
   end
+  -- Allowed: they have a car now. Not asked of BeamMP, whose list does not hold
+  -- it while this runs. NEVER AN ENTRY: a driver the grid formed without
+  -- presses Join (the panel offers it off the broadcast), or an admin places
+  -- them. Guarded: nothing here may cost anyone their spawn.
+  if model == 'unicycle' then return end
+  local ok, err = pcall(function ()
+    local rec = players[pidKey(pid)]
+    if rec and rec.noCar then
+      rec.noCar = nil
+      broadcastState()
+    end
+  end)
+  if not ok then print('[RaceManager] Car spawn bookkeeping failed: ' .. tostring(err)) end
+end
+
+-- A car gone: still one left? The deleted one may still be on BeamMP's list.
+-- A slot already handed out is kept: deleting and respawning on the grid is
+-- not leaving it.
+function RM_onVehicleDeleted(pid, vid)
+  local rec = players[pidKey(pid)]
+  if not rec then return end
+  local noCar = (not race.hasCar(rec.id, vid)) or nil
+  if noCar == rec.noCar then return end
+  rec.noCar = noCar
+  broadcastState()
 end
 
 function RM_onVehicleEdited(pid, vid, data)
@@ -8224,6 +8524,7 @@ derbyMod.init({
 
 -- Installed by the host; the inert defaults apply if the module fails to load.
 race.derbyUnderWay    = derbyMod.underWay
+race.derbyLateEntry   = derbyMod.lateEntry
 derbyEntryListChanged = derbyMod.entryListChanged
 
 
@@ -10322,6 +10623,11 @@ function RM_onPlayerJoin(pid)
   end
   local rec = ensurePlayer(pid)
   if not rec then return end
+  -- Arriving with no car while a field is formed: left off it and on no board.
+  -- Join is the way in once they spawn one (or an admin's Place or Add).
+  if race.phase ~= 'waiting' and race.carOut(rec) and not rec.spectating then
+    rec.leftOff = true
+  end
   -- Guarded: a roster fault must not cost the player their join.
   local okRoster, rosterErr = pcall(race.rosterOnJoin, rec)
   if not okRoster then print('[RaceManager] Roster on join failed: ' .. tostring(rosterErr)) end
@@ -10358,6 +10664,9 @@ function RM_onPlayerDisconnect(pid)
   clearGhost(pid, 'player disconnected')
   -- The binding goes with the connection; the ENTRY and its points stay.
   if rosterUnbind then rosterUnbind(pid) end
+  -- An admin's Add lasts until they leave.
+  if identities[pid] then identities[pid].adminEntry = nil end
+  if players[pid] then players[pid].adminEntry = nil end
   local rec = players[pid]
   if not rec then
     -- Non-racer admin (e.g. a spectating host) left: still refresh adminPresent.
@@ -10470,6 +10779,10 @@ function onInit()
   MP.RegisterEvent('RM_VehicleConfig',    'RM_onVehicleConfig')
   MP.RegisterEvent('onVehicleSpawn',      'RM_onVehicleSpawn')
   MP.RegisterEvent('onVehicleEdited',     'RM_onVehicleEdited')
+  -- No car, no grid: a car gone, a late Join, an admin's Add.
+  MP.RegisterEvent('onVehicleDeleted',    'RM_onVehicleDeleted')
+  MP.RegisterEvent('RM_JoinField',        'RM_onJoinField')
+  MP.RegisterEvent('RM_SetAdminEntry',    'RM_onSetAdminEntry')
   MP.RegisterEvent('RM_StartCountdown',   'RM_onStartCountdown')
   MP.RegisterEvent('RM_StartRace',        'RM_onStartRace')      -- pace-lap start
   MP.RegisterEvent('RM_SetPaceLap',       'RM_onSetPaceLap')

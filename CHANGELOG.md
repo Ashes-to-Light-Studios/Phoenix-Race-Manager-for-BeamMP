@@ -6,6 +6,29 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Changed
+
+- **No car, no grid.** A player with no car spawned is no longer put in the
+  field. When a grid forms (race or qualifying), a heat draw is made, a derby
+  forms up or a drag ladder is drawn, they are left off, told why, and the
+  admins are told who. Spawning a car afterwards **does not** put them in: a
+  **JOIN** banner appears instead, which starts them from the back of the grid.
+  A player who never joins is on no board: not the driver tables, the
+  broadcast board, the overlay feed or the results file. Walking (BeamMP's
+  unicycle) is not a car. Deleting and respawning your car on the grid keeps
+  your slot. See
+  [No car, no grid](docs/REFERENCE.md#no-car-no-grid).
+
+#### Added
+
+- **Not in the field**, for admins, under Race Entry: everyone the board leaves
+  out. **Place** puts a left-off driver who now has a car on the back of the
+  grid. **Add** puts a driver in with or without a car until they leave the
+  server, and **Remove** takes that back. An added driver is tagged **ADDED**
+  in the driver table.
+
 ## 0.29.1 - Layouts folder path
 
 #### Fixed
