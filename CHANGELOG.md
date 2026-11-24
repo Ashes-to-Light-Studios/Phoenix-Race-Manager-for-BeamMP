@@ -460,11 +460,12 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 #### Changed
 
-- **The repo moved** to
-  [Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG),
-  and the download page to
-  <https://ashes-to-light-studios.github.io/Phoenix-Race-Manager-for-BeamNG/>.
-  The old page address no longer works. Update checks look in the new repo; a
+- **The repo moved** to Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG,
+  since renamed
+  [Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP),
+  and the download page with it, now
+  <https://ashes-to-light-studios.github.io/Phoenix-Race-Manager-for-BeamMP/>.
+  The old page addresses no longer work. Update checks look in the new repo; a
   server whose `config.json` still names the old one in `updateRepo` is
   switched over at boot. One pointed at a fork keeps its own.
 
