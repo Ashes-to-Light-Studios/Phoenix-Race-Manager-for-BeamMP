@@ -6,7 +6,7 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
-## Unreleased
+## 0.30.0 - Black flags, pit stops and rulesets
 
 #### Added
 
@@ -25,10 +25,6 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   or disqualify a driver from the race, with an optional reason that goes to the
   field and into the results file's new race control block. See
   [Race control](docs/REFERENCE.md#race-control).
-
-## 0.30.0 - Pit stops, rulesets and no-car grids
-
-#### Added
 
 - **Mandatory pit stops.** **Pit stops** in the Race settings requires every
   driver to make that many stops, and only one counts per lap. A driver who
