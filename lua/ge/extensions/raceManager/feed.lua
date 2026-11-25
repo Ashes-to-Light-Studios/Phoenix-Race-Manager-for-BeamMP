@@ -221,7 +221,7 @@ local DRIVER_KEYS = {
   'bestLap', 'bestLapText', 'qualiBest', 'qualiBestText', 'fastest',
   'gap', 'gapText', 'interval', 'intervalText', 'lapsDown',
   'jokerTaken', 'jokerLap', 'jokerText', 'pitStops',
-  'finishTime', 'finishText', 'penalty', 'resets',
+  'finishTime', 'finishText', 'penalty', 'blackFlag', 'resets',
   'number', 'team', 'teamName', 'teamShort', 'teamColor', 'teamLogo',
   'onCamera',
 }
@@ -546,6 +546,8 @@ local function buildModel(data, teams, cameraPid)
     d.finishTime = num(src.finishTime)
     d.finishText = fmtLap(d.finishTime)
     d.penalty = num(src.penaltySeconds) or 0
+    -- A black flag out: the row carries its seconds, and 0 is still a flag.
+    d.blackFlag = src.blackFlag ~= nil
     d.resets = num(src.resets) or 0
     -- The league's team and car number (server teams.lua).
     local number = type(src.number) == 'string' and src.number:match('^%d%d?%d?$') or nil

@@ -22,15 +22,19 @@ local hooks    = {}
 local handlers = {}
 local sounds   = {}
 
-local veh = { id = 7, x = 0, y = 0, z = 0, hx = 0, hy = 1 }
+local veh = { id = 7, x = 0, y = 0, z = 0, hx = 0, hy = 1, speed = 0 }
+-- The vehicle VM, as far as the lift probe goes: it answers with the throttle.
+local vm = { throttle = 0 }
 function veh:getID() return self.id end
 function veh:getPosition() return { x = self.x, y = self.y, z = self.z } end
 function veh:getRotation() return { x = 0, y = 0, z = 0, w = 1 } end
 function veh:getDirectionVector() return { x = self.hx, y = self.hy, z = 0 } end
-function veh:getVelocity() return { x = 0, y = 0, z = 0 } end
+function veh:getVelocity() return { x = 0, y = self.speed, z = 0 } end
 function veh:getJBeamFilename() return 'etk800' end
 function veh:setPositionRotation(x, y, z) self.x, self.y, self.z = x, y, z end
-function veh:queueLuaCommand() end
+function veh:queueLuaCommand(cmd)
+  if cmd:find('onLiftThrottle', 1, true) then raceManager.onLiftThrottle(vm.throttle) end
+end
 function veh:setMeshAlpha() end
 
 be               = { getPlayerVehicle = function () return veh end }
@@ -61,6 +65,7 @@ end }
 
 package.path = 'lua/ge/extensions/?.lua;' .. package.path
 local RM = dofile('lua/ge/extensions/raceManager.lua')
+raceManager = RM          -- the VM calls back through the extension's global name
 RM.onExtensionLoaded()
 
 -- ---------------------------------------------------------------------------
@@ -238,6 +243,133 @@ reset()
 RM.lightsTree({ stage = 'off' })
 check(lastLight() and lastLight().light == 'off' and lastLight().tree == nil,
   'the tree going out gives the lights back')
+
+-- ---------------------------------------------------------------------------
+-- THE LIFT METER: a lift owed lights the meter, pushed as it moves
+-- ---------------------------------------------------------------------------
+local LIFT = { enabled = true, warnings = 0, type = 'lift', penaltySec = 5, liftSec = 3,
+  liftWindow = 30, maxGates = 2 }
+local function frames(secs, step)
+  step = step or 0.05
+  for _ = 1, math.floor(secs / step + 0.5) do RM.onUpdate(step) end
+end
+local function liftRow(t, extra)
+  local me = { id = 1, name = 'Me', status = 'racing' }
+  for k, v in pairs(t or {}) do me[k] = v end
+  local st = { phase = 'racing', flag = 'green', cpSkip = LIFT, drivers = { me } }
+  for k, v in pairs(extra or {}) do st[k] = v end
+  serverState(st)
+end
+serverState({ phase = 'waiting', drivers = {} })
+liftRow()
+veh.speed, vm.throttle = 30, 1
+reset()
+liftRow({ liftOwed = 1, liftWindowLeft = 30 })
+frames(0.2)
+local L = lastLight()
+check(L and L.light == 'lift', 'a lift owed lights the meter')
+check(L and L.lift and L.lift.full == 3 and L.lift.left == 3, 'full and untouched while the throttle is on')
+check(L and L.lift and L.lift.st == 'wait', 'waiting on the driver to lift')
+check(L and L.lift and L.lift.win and L.lift.win > 29 and L.lift.win <= 30,
+  'with the serve window, counted down between broadcasts')
+reset()
+frames(1.0)
+check(#lightPushes() <= 1, 'nothing moving, nothing pushed (the window ticks in whole seconds)')
+
+vm.throttle = 0
+reset()
+frames(1.0)
+local pushes = lightPushes()
+check(#pushes >= 5 and #pushes <= 11, 'lifting: the meter is pushed at most ten times a second ('
+  .. #pushes .. ')')
+L = lastLight()
+check(L and L.lift and L.lift.st == 'lifting', 'the meter says the driver is lifting')
+check(L and L.lift and L.lift.left > 1.8 and L.lift.left < 2.2, 'and how much is left (about 2s)')
+
+-- The window pauses with the field, as the server's does.
+liftRow({ liftOwed = 1, liftWindowLeft = 20 }, { caution = true, flag = 'yellow' })
+check(lastLight() and lastLight().light == 'caution', 'a caution outranks the meter')
+frames(2.0)
+reset()
+liftRow({ liftOwed = 1, liftWindowLeft = 20 })
+L = lastLight()
+check(L and L.light == 'lift' and L.lift.win == 20, 'back to the meter at the window the server holds')
+-- THE GREEN IS NOT LOST TO A PENALTY: the caution ending is the green flag,
+-- with its tone, for a driver who owes a lift as for everybody else.
+check(L and L.moment == 'green' and L.hold == 4, 'the caution ending is still the green flag')
+check(lastSound() == 'event:UI_CountdownGo', 'with the start tone')
+
+-- A hazard yellow is about the whole field: it outranks the meter too.
+liftRow({ liftOwed = 1, liftWindowLeft = 20 }, { flag = 'yellow' })
+frames(0.2)
+check(lastLight() and lastLight().light == 'yellow', 'a hazard yellow outranks the meter')
+reset()
+liftRow({ liftOwed = 1, liftWindowLeft = 20 })
+frames(0.2)
+check(lightPushes()[1] and lightPushes()[1].light == 'lift' and lightPushes()[1].moment == 'green',
+  'and its end is a green, back to the meter')
+
+-- Throttle on past the grace: the meter empties and says so.
+vm.throttle = 1
+reset()
+frames(0.5)
+L = lastLight()
+check(L and L.lift and L.lift.st == 'restart' and L.lift.left == 3, 'throttle on: the lift restarts')
+
+-- Two owed: the meter says one more.
+liftRow({ liftOwed = 2, liftWindowLeft = 20 })
+frames(0.2)
+check(lastLight() and lastLight().lift and lastLight().lift.more == 1, 'one more owed after this')
+
+-- Served: the moment, then the light goes out when the server catches up.
+liftRow({ liftOwed = 1, liftWindowLeft = 20 })
+vm.throttle = 0
+reset()
+frames(3.3)
+local served = false
+for _, p in ipairs(lightPushes()) do
+  if p.moment == 'liftServed' and p.hold == 2 then served = true end
+end
+check(served, 'a served lift is a two second moment')
+liftRow()
+frames(0.2)
+check(lastLight() and lastLight().light == 'off', 'and nothing is left standing')
+reset()
+frames(1.0)
+check(#lightPushes() == 0, 'nothing owed: the meter costs nothing')
+vm.throttle = 1
+
+-- ---------------------------------------------------------------------------
+-- THE BLACK FLAG: this driver's own standing light, under the field's
+-- ---------------------------------------------------------------------------
+reset()
+liftRow({ blackFlag = 10, blackBy = 4 })
+L = lastLight()
+check(L and L.light == 'black' and L.black and L.black.sec == 10 and L.black.by == 4,
+  'a black flag is a standing light, with its seconds and lap')
+reset()
+liftRow({ blackFlag = 10, blackBy = 4 })
+check(#lightPushes() == 0, 'the same flag again pushes nothing')
+liftRow({ blackFlag = 15, blackBy = 6 })
+check(lastLight() and lastLight().black and lastLight().black.by == 6,
+  'one added to it moves the lap without a new light')
+liftRow({ blackFlag = 10, blackBy = 4 }, { caution = true, flag = 'yellow' })
+check(lastLight() and lastLight().light == 'caution', 'a caution outranks it')
+reset()
+liftRow({ blackFlag = 10, blackBy = 4 })
+check(lastLight() and lastLight().light == 'black' and lastLight().moment == 'green',
+  'and its end is the green flag, back to the black flag')
+check(lastSound() == 'event:UI_CountdownGo', 'with the start tone')
+liftRow({ blackFlag = 10, blackBy = 4, liftOwed = 1, liftWindowLeft = 20 })
+frames(0.2)
+check(lastLight() and lastLight().light == 'lift', 'a lift being served shows over it')
+liftRow()
+frames(0.2)
+check(lastLight() and lastLight().light == 'off', 'served or withdrawn, the light goes out')
+reset()
+RM.lightsMoment('dsq')
+check(lastLight() and lastLight().moment == 'dsq' and lastLight().hold == 6,
+  'a disqualification is a six second moment')
 
 -- ---------------------------------------------------------------------------
 -- Sound off, and a resend

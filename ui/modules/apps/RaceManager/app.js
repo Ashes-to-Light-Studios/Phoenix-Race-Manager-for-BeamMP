@@ -66,7 +66,10 @@ angular.module('beamng.apps')
         cpSkipPenaltySec: 5,
         cpSkipLiftSec: 3,
         cpSkipLiftWindow: 30,
-        cpSkipPitLaps: 3        // laps to serve penalty seconds in, when required
+        cpSkipPitLaps: 3,       // laps to serve penalty seconds in, when required
+        // Black flags: the stop's seconds on top of the usual one, and the laps.
+        bfSeconds: 10,
+        bfLaps: 3
       };
 
       // ----------------------------------------------------------------
@@ -104,6 +107,15 @@ angular.module('beamng.apps')
       $scope.cpSkipPitLaps = 3;
       $scope.cpSkipPitStalls = 0;
       $scope.myCpSkip = null;
+      // An unserved lift becomes 'time' or 'black'; liftBlack is whether black
+      // is in force (it needs stalls).
+      $scope.cpSkipLiftUnserved = 'time';
+      $scope.cpSkipLiftBlack = false;
+      // BLACK FLAGS: the rule (the stop's seconds, the laps, stalls loaded), this
+      // driver's own flag (null while clear), and race control's strip.
+      $scope.bf = { seconds: 10, laps: 3, stalls: 0 };
+      $scope.myBlack = null;
+      $scope.stewardUi = { pid: null, seconds: null, reason: '', confirm: false, menu: false };
       // What a legal reset does: repair in place, or respawn at the last
       // checkpoint the driver crossed. Mirrored from the server.
       $scope.resetMode = 'inplace';
@@ -2475,8 +2487,26 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
               if ($scope.cpSkipPitLaps !== cs.pitLaps) { $scope.settingsUi.cpSkipPitLaps = cs.pitLaps; }
               $scope.cpSkipPitLaps = cs.pitLaps;
             }
+            if (cs.liftUnserved === 'time' || cs.liftUnserved === 'black') {
+              $scope.cpSkipLiftUnserved = cs.liftUnserved;
+            }
+            $scope.cpSkipLiftBlack = cs.liftBlack === true;
           }
           $scope.myCpSkip = data.myCpSkip || null;
+          // Black flags, each box re-seeded only when the server's value moved.
+          var bf = data.bf || null;
+          if (bf) {
+            if (typeof bf.seconds === 'number') {
+              if ($scope.bf.seconds !== bf.seconds) { $scope.settingsUi.bfSeconds = bf.seconds; }
+              $scope.bf.seconds = bf.seconds;
+            }
+            if (typeof bf.laps === 'number') {
+              if ($scope.bf.laps !== bf.laps) { $scope.settingsUi.bfLaps = bf.laps; }
+              $scope.bf.laps = bf.laps;
+            }
+            $scope.bf.stalls = typeof bf.stalls === 'number' ? bf.stalls : 0;
+          }
+          $scope.myBlack = data.myBlack || null;
           $scope.jokerEnabled = !!data.jokerEnabled;
           $scope.paceLap = !!data.paceLap;
           $scope.pacing = !!data.pacing;
@@ -4494,6 +4524,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if ($scope.caution) { return 'Yellow flag: caution, positions frozen. Hold your place.'; }
           return 'Yellow flag: hazard on track, take care';
         }
+        if ($scope.driverFlag === 'black') {
+          return 'Black flag: stop in a pit stall to serve it, or you are disqualified';
+        }
         if ($scope.driverFlag === 'white') { return 'White flag: last lap'; }
         if ($scope.driverFlag === 'blue') {
           return 'Blue flag: a car a lap up is close behind you. Hold your line '
@@ -5068,7 +5101,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         var n = isInt ? parseInt(box, 10) : parseFloat(box);
         return isNaN(n) ? null : n;
       }
-      function sendCpSkip(enabled, type, fromButton, pitServe) {
+      function sendCpSkip(enabled, type, fromButton, pitServe, liftUnserved) {
         var w = cpSkipNum($scope.settingsUi.cpSkipWarnings, true);
         var s = cpSkipNum($scope.settingsUi.cpSkipPenaltySec, false);
         var l = cpSkipNum($scope.settingsUi.cpSkipLiftSec, false);
@@ -5082,7 +5115,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         if (pl === null) { pl = $scope.cpSkipPitLaps; }
         bngApi.engineLua('raceManager.setCheckpointSkip(' + (enabled ? 'true' : 'false') + ', '
           + w + ', ' + luaStr(type) + ', ' + s + ', ' + l + ', ' + win + ', '
-          + luaStr(pitServe || $scope.cpSkipPitServe) + ', ' + pl + ')');
+          + luaStr(pitServe || $scope.cpSkipPitServe) + ', ' + pl + ', '
+          + luaStr(liftUnserved || $scope.cpSkipLiftUnserved) + ')');
       }
       $scope.toggleCpSkip = function () {
         sendCpSkip(!$scope.cpSkipEnabled, $scope.cpSkipType, true);
@@ -5097,6 +5131,76 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.applyCpSkip = function () {
         sendCpSkip($scope.cpSkipEnabled, $scope.cpSkipType, false);
+      };
+      $scope.setCpSkipLiftUnserved = function (mode) {
+        if (mode !== 'time' && mode !== 'black') { return; }
+        sendCpSkip($scope.cpSkipEnabled, $scope.cpSkipType, true, null, mode);
+      };
+      // A black flag with nowhere to serve it runs as time, and the panel says so.
+      $scope.cpSkipLiftNoStalls = function () {
+        return $scope.cpSkipEnabled && $scope.cpSkipHasLift()
+          && $scope.cpSkipLiftUnserved === 'black' && !$scope.cpSkipPitStalls;
+      };
+
+      // BLACK FLAGS: the rule, applied as typed. A blank box is mid-edit.
+      $scope.applyBlackFlag = function () {
+        var s = cpSkipNum($scope.settingsUi.bfSeconds, true);
+        var l = cpSkipNum($scope.settingsUi.bfLaps, true);
+        if (s === null || l === null) { return; }
+        bngApi.engineLua('raceManager.setBlackFlag(' + s + ', ' + l + ')');
+      };
+      $scope.bfLabel = function () {
+        var n = $scope.bf.laps;
+        return 'Stop in a pit stall: the usual stop + ' + $scope.bf.seconds + 's, within '
+          + n + ' lap' + (n === 1 ? '' : 's') + ', or disqualified';
+      };
+
+      // RACE CONTROL on one driver, from the strip under the session controls.
+      // The server checks it all again and answers a refusal in chat.
+      $scope.stewardShown = function () {
+        return $scope.isAdmin && $scope.isMode('race') && $scope.sessionKind === 'race'
+          && $scope.phase === 'racing';
+      };
+      // Who can be ruled on: a car racing (any of the three) or home (DQ).
+      $scope.stewardDrivers = function () {
+        var out = [];
+        for (var i = 0; i < $scope.drivers.length; i++) {
+          var d = $scope.drivers[i];
+          if (d.status === 'racing' || d.status === 'finished') { out.push(d); }
+        }
+        return out;
+      };
+      $scope.stewardPick = function (row) {
+        $scope.stewardUi.pid = row.id;
+        $scope.stewardUi.menu = false;
+        $scope.stewardUi.confirm = false;
+      };
+      $scope.stewardRow = function () {
+        var id = $scope.stewardUi.pid;
+        for (var i = 0; i < $scope.drivers.length; i++) {
+          if ($scope.drivers[i].id === id) { return $scope.drivers[i]; }
+        }
+        return null;
+      };
+      $scope.stewardCan = function (action) {
+        var r = $scope.stewardRow();
+        if (!r) { return false; }
+        if (action === 'black') { return r.status === 'racing' && $scope.bf.stalls > 0; }
+        if (action === 'clear') { return r.blackFlag !== undefined && r.blackFlag !== null; }
+        return r.status === 'racing' || r.status === 'finished';
+      };
+      $scope.stewardBlackTitle = function () {
+        if (!$scope.bf.stalls) { return 'Needs pit stalls: the loaded layout has none to serve one in'; }
+        return 'Stop in a pit stall for the seconds here (empty: ' + $scope.bf.seconds + 's) within '
+          + $scope.bf.laps + ' lap' + ($scope.bf.laps === 1 ? '' : 's') + ', or disqualified';
+      };
+      $scope.steward = function (action) {
+        var r = $scope.stewardRow();
+        if (!r || !$scope.stewardCan(action)) { return; }
+        var s = cpSkipNum($scope.stewardUi.seconds, true);
+        bngApi.engineLua('raceManager.steward(' + Number(r.id) + ', ' + luaStr(action) + ', '
+          + (s === null ? 'nil' : s) + ', ' + luaStr($scope.stewardUi.reason || '') + ')');
+        $scope.stewardUi.confirm = false;
       };
       // Required with nowhere to stop runs as Optional, and the panel says so.
       $scope.cpSkipPitNoStalls = function () {
@@ -5125,12 +5229,18 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         var head = w === 0 ? 'No warnings: ' : (w + ' warning' + (w === 1 ? '' : 's') + ', then ');
         var pen = '+' + Number($scope.cpSkipPenaltySec).toFixed(1) + 's';
         var lift = 'lift ' + Number($scope.cpSkipLiftSec).toFixed(1) + 's';
-        var serve = ' (serve within ' + $scope.cpSkipLiftWindow + 's or ' + pen
-          + ($scope.cpSkipType === 'liftAndTime' ? ' more)' : ')');
+        var black = $scope.cpSkipLiftUnserved === 'black' && $scope.cpSkipPitStalls > 0;
+        var serve = ' (serve within ' + $scope.cpSkipLiftWindow + 's or '
+          + (black ? 'a black flag)' : pen + ($scope.cpSkipType === 'liftAndTime' ? ' more)' : ')'));
         var tail = cpSkipPitTail();
         if ($scope.cpSkipType === 'lift') { return head + lift + serve + tail; }
         if ($scope.cpSkipType === 'liftAndTime') { return head + pen + ' and ' + lift + serve + tail; }
         return head + pen + ' per skipped checkpoint' + tail;
+      };
+      // The board's black flag badge: the stop, the lap and why.
+      $scope.blackTitle = function (row) {
+        return 'Black flag: stop in a pit stall for ' + (row.blackFlag || 0) + 's by lap '
+          + (row.blackBy || '?') + ', or disqualified' + (row.blackWhy ? ' (' + row.blackWhy + ')' : '');
       };
       // The board's badges. nil on the wire is 0.
       $scope.penaltyLabel = function (row) {
@@ -5141,6 +5251,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.cpWarnLabel = function (row) {
         return 'W ' + (row.checkpointWarningsUsed || 0) + '/' + $scope.cpSkipWarnings;
+      };
+      // This driver's own black flag, for the driver bar.
+      $scope.myBlackLabel = function () {
+        var b = $scope.myBlack;
+        if (!b) { return ''; }
+        return 'STOP ' + (b.sec || 0) + 's \u00b7 PIT BY LAP ' + (b.by || '?');
       };
       // This driver's own readout: warnings, penalty, and a lift being served.
       $scope.myCpLabel = function () {

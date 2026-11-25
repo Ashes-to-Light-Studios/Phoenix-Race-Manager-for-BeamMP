@@ -2,9 +2,11 @@
 --
 -- One light for the Race Lights (PRM) app, decided here from the session, the
 -- countdown, this driver's own flag edges and the drag tree, and pushed on
--- RaceManagerLights only when it changes: a handful of times a race, never per
--- frame. The app draws what it is told and binds nothing, so it adds nothing to
--- the digest the main panel already pays for.
+-- RaceManagerLights only when it changes: a handful of times a race. The one
+-- exception is a lift being served, whose meter is pushed up to ten times a
+-- second, and only when what it shows moved. The app draws what it is told and
+-- binds nothing, so it adds nothing to the digest the main panel already pays
+-- for.
 --
 -- The SOUNDS play from here, on the same transitions, so a driver hears them
 -- whether or not the Lights app is on screen.
@@ -30,7 +32,21 @@ local SOUND = {
 
 -- Seconds a moment holds before the app falls back to the standing light. The
 -- app keeps the time, so nothing here runs on a clock.
-local HOLD = { go = 3, green = 4, white = 4, checkered = 6, blue = 4 }
+local HOLD = {
+  go = 3, green = 4, white = 4, checkered = 6, blue = 4,
+  liftServed = 2, blackServed = 3, dsq = 6,
+}
+
+-- THE LIFT METER. The serve window arrives three times a second (cpRow.window)
+-- and is counted down here between, paused when the server pauses it. `k*` is
+-- what the app last got, so a frame that changes nothing pushes nothing.
+local METER_EVERY = 0.1
+local meter = {
+  win = nil, age = 0, due = 0, was = false,
+  kLeft = -1, kWin = -1, kSt = nil, kMore = -1,
+}
+-- The black flag last pushed: a second one moves the lap without a new light.
+local blackShown = { sec = nil, by = nil }
 
 -- The standing lights a race is HELD under. Leaving one for plain racing is the
 -- green flag, whichever way it happened: pace lap, restart, red lifted.
@@ -72,14 +88,47 @@ local function standing()
   if s.cautionPending then return 'cautionBack' end
   if s.caution then return 'caution' end
   if s.pacing then return 'pace' end
+  -- A hazard yellow too: every light about the whole field outranks this
+  -- driver's own penalties. The HUD line still counts a lift down under it.
   if s.raceFlag == 'yellow' then return 'yellow' end
+  if s.lift.active then return 'lift' end
+  if s.black and not s.spectatorLock then return 'black' end
   return 'off'
+end
+
+-- What a driver races under once a held light goes: nothing, or a penalty of
+-- their own. Leaving a held light for any of them is the green flag.
+local RACING = { off = true, lift = true, black = true }
+
+local function windowLeft()
+  if not meter.win then return nil end
+  local w = meter.win - meter.age
+  return w > 0 and w or 0
+end
+
+-- What the meter shows, noted as shown.
+local function liftData()
+  local s = host.session
+  local L = s.lift
+  local left, win, st, owed = math.max(L.left or 0, 0), windowLeft(), L.state(), L.owed()
+  meter.kLeft = math.floor(left * 10 + 0.5)
+  meter.kWin  = win and math.ceil(win) or -1
+  meter.kSt, meter.kMore = st, owed
+  return { left = left, full = s.cpSkip.liftSec, win = win, more = math.max(owed - 1, 0), st = st }
+end
+
+local function blackData()
+  local b = host.session.black
+  blackShown.sec, blackShown.by = b.sec, b.by
+  return { sec = b.sec, by = b.by }
 end
 
 local function push(moment)
   guihooks.trigger('RaceManagerLights', {
     light = lightShown, tree = treeLit, moment = moment,
     hold = moment and HOLD[moment] or nil,
+    lift = lightShown == 'lift' and liftData() or nil,
+    black = lightShown == 'black' and blackData() or nil,
   })
 end
 
@@ -94,7 +143,7 @@ local function settle(moment)
       play('beep')
     elseif light == 'red' then
       play('stop')
-    elseif light == 'off' and HELD[was] and running() and not moment then
+    elseif RACING[light] and HELD[was] and running() and not moment then
       moment = 'green'
       play('go')
     end
@@ -102,9 +151,43 @@ local function settle(moment)
   push(moment)
 end
 
--- After every state broadcast.
+-- After every state broadcast. A black flag stacked on one already out keeps
+-- the light and moves the lap, so it is pushed too.
 function D.lightsSync()
+  local s = host.session
+  meter.win, meter.age = s.cpRow.window, 0
+  local b = s.black
+  if lightShown == 'black' and b and standing() == 'black'
+     and (b.sec ~= blackShown.sec or b.by ~= blackShown.by) then
+    push()
+    return
+  end
   settle()
+end
+
+-- Every frame: one comparison unless a lift is being served.
+function D.lightsUpdate(dt)
+  local s = host.session
+  local active = s.lift.active
+  if active ~= meter.was then
+    meter.was = active
+    settle()
+  end
+  if lightShown ~= 'lift' then return end
+  if not (s.caution or s.cautionPending or s.pacing or s.raceFlag == 'red') then
+    meter.age = meter.age + dt
+  end
+  meter.due = meter.due - dt
+  if meter.due > 0 then return end
+  local L = s.lift
+  local w = windowLeft()
+  if math.floor(math.max(L.left or 0, 0) * 10 + 0.5) == meter.kLeft
+     and (w and math.ceil(w) or -1) == meter.kWin
+     and L.state() == meter.kSt and L.owed() == meter.kMore then
+    return
+  end
+  meter.due = METER_EVERY
+  push()
 end
 
 -- 3, 2, 1, then 0 for GO, or -1 for a countdown called off. `derby` is set
@@ -134,7 +217,8 @@ function D.lightsCountdown(n, derby)
   settle()
 end
 
--- This driver's own flags: 'white', 'checkered', 'blue'.
+-- This driver's own flags: 'white', 'checkered', 'blue', and the penalty
+-- moments: 'liftServed', 'blackServed', 'dsq'.
 function D.lightsMoment(kind)
   if HOLD[kind] then settle(kind) end
 end

@@ -116,6 +116,7 @@ they are performing.
 | | Admin | Moderator |
 |---|---|---|
 | Run sessions, grids, flags, cautions | ✅ | ✅ |
+| Black flags and disqualifications ([Race control](#race-control)) | ✅ | ✅ |
 | Race, quali, reset and garage settings | ✅ | ✅ |
 | Build, save and load track layouts | ✅ | ✅ |
 | Cup, derby and drag ladder | ✅ | ✅ |
@@ -1195,6 +1196,7 @@ crossed, so it is not left stuck, and the skip costs a **warning**, then the
 | Serve within (s) | `checkpointSkipLiftWindow` | `30` | 5-300 seconds of green-flag running |
 | Serve in pits | `checkpointSkipPitServe` | `"off"` | `"off"`, `"optional"`, `"required"` (see [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)) |
 | within (laps) | `checkpointSkipPitLaps` | `3` | 1-20: laps to serve them in, when required |
+| Unserved | `checkpointSkipLiftUnserved` | `"time"` | `"time"` (the seconds), `"black"` (a [black flag](#black-flags)) |
 | (not in the panel) | `checkpointSkipMaxGates` | `2` | 1-5: how far ahead, in gates, a crossing still counts as a skip |
 
 The `config.json` values are what the server starts with; the panel changes
@@ -1251,9 +1253,10 @@ warning 1/2`, `... +5.0s`, `... lift 3.0s owed`, `Alice lift served`,
 `Alice lift converted to +5.0s`.
 
 **Serving a lift.** While a lift is owed the HUD holds
-`LIFT OFF THE THROTTLE: 3.0s`, counting down while it is being served. It does
-not time out like the other HUD lines: it stays until the lift is served or
-turned into time.
+`LIFT OFF THE THROTTLE: 3.0s - 22s to serve`, counting down while it is being
+served, with the green-flag running left to serve it in. It does not time out
+like the other HUD lines: it stays until the lift is served or turned into
+time. [Race Lights (PRM)](#race-lights-prm) shows the same as a meter.
 
 - The countdown runs while the throttle is off (5% or less), the car is doing
   at least 5 m/s, the race is green, and the car is not held (a pit stop, the
@@ -1271,7 +1274,10 @@ watched, not enforced: nothing cuts the throttle for the driver.
 
 The serve window counts green-flag running only: it pauses under a caution, a
 caution called, a red flag and the pace lap. Each new penalty starts the window
-again. When it runs out, every lift still owed becomes `penalty seconds` each.
+again. When it runs out, every lift still owed becomes `penalty seconds` each,
+or, with **Unserved** set to **Black flag**, one [black flag](#black-flags).
+A black flag needs a stall to be served in, so on a layout with none it is the
+seconds, and the panel says so.
 A lift still owed when the car takes the flag is turned into time at once,
 before its place is worked out. A car that retires (DNF or DSQ) has its owed
 lift dropped; its warnings and seconds stay in the results.
@@ -1350,6 +1356,71 @@ the corrected time with `(+5.0s pen)` beside it, and adds a **Track cuts**
 column: skips, warnings used, penalty seconds, lifts served, converted or owed,
 and cut laps. Qualifying's lines note laps that were cut. The Discord post uses
 the corrected times too.
+
+### Black flags
+
+A black flag tells one driver to **stop in a pit stall**. It is raised by race
+control (see [Race control](#race-control)), or by a lift not served in its
+window when **Unserved** is **Black flag**. Black flags are for races only.
+
+| Setting | `config.json` key | Default | Range |
+|---------|-------------------|---------|-------|
+| Stop (s) | `blackFlagSeconds` | `10` | 0-120: seconds held on top of the usual 5 s stop. `0` is the usual stop alone |
+| within (laps) | `blackFlagLaps` | `3` | 1-20: laps to make the stop in |
+
+They are under **Race ▾ → Rules**, locked once a session starts like every rule,
+and kept in [rulesets](#rulesets).
+
+**Serving it.** Stop in a stall as usual. The car is held for the usual 5 s, plus
+the penalty seconds it owes if [Serve in pits](#serving-penalty-seconds-in-the-pits)
+is on, plus the black flag's seconds: `PIT STOP: 5s + BLACK FLAG 10s`, then
+`BLACK FLAG SERVED - GO!`. The car is repaired as at any stop. A stop cut short
+serves nothing, and one raised while the car is held waits for the next stop.
+
+**The window.** A flag raised on lap 4 with 3 laps can be served on laps 4 to 7.
+A second flag adds its seconds to the one out, so one stop serves both, and
+starts the window again. Past it, the driver is **disqualified at once**
+(`Disqualified - Black Flag Ignored`) and goes to spectate. A car that takes the
+checkered flag with its window still open has the stop it did not make put on
+its race time: the flag's seconds plus 5.
+
+**It needs stalls.** With no saved layout with pit stalls loaded, race control's
+Black flag button is off and says why, and an unserved lift is the seconds.
+
+**What the driver sees.** A black `BLACK FLAG` flash saying what to do, by when
+and why, the same line on the HUD until the flag is served or withdrawn, a black
+flag in the header, `BLACK FLAG` in the driver bar, and black lamps in
+[Race Lights (PRM)](#race-lights-prm). The board shows `BLACK` beside the name,
+and the [broadcast feed](#broadcast-feed) has `blackFlag`.
+
+### Race control
+
+During a race, admins and moderators get a **Race control** strip under the
+session controls: pick a driver, then
+
+- **Black flag** raises one, with the seconds typed beside it (empty: the rule's).
+- **Clear** withdraws one. The driver is told `Black flag withdrawn`.
+- **Disqualify**, then **Yes, disqualify**: nothing undoes it. A car on track is
+  ruled out and goes to spectate, told `DISQUALIFIED` rather than shown the
+  checkered flag. A car already home is ruled out where it stands. The last car
+  on track out ends the race.
+
+An optional **reason** (40 characters, plain text) goes to the field in chat and
+into the results: `Disqualified - Avoidable contact`. Without one it is
+`Race Control`. Each ruling is told to the field and to race control, and the
+results file lists them under the header:
+
+```
+ Race control (black flags: stop 10s, within 3 laps):
+   Lap 4: Alice black flag, 10s (Avoidable contact)
+   Lap 5: Alice black flag served
+   Lap 7: Dan disqualified: Black Flag Ignored
+```
+
+A disqualified driver is classified `DSQ`, scores nothing in the cup, sets no lap
+record and never transfers from a heat, as any other disqualification. The
+server checks every ruling again, and a refusal (no stalls, a driver not on
+track) is answered in chat.
 
 ### Fastest lap
 
@@ -3477,6 +3548,7 @@ server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
 | `pitStops` | Pit stops this session. |
 | `finishTime`, `finishText` | Race time at the flag. |
 | `penalty` | Time penalties, in seconds. |
+| `blackFlag` | A black flag is out for this driver (see [Black flags](#black-flags)). |
 | `resets` | Resets used. |
 | `number` | The car number, as text (`"07"` is not `"7"`), or `null`. |
 | `team`, `teamName`, `teamShort`, `teamColor`, `teamLogo` | The driver's team: its id, name, short code (`PHX`), color (`#ff7a1a`) and logo link; `null` with no team. |
@@ -3945,10 +4017,36 @@ drag tree, flag and status lights use the same colors.
 | Yellow, flashing | YELLOW FLAG | An advisory yellow (qualifying) |
 | Red | RED FLAG | A red flag |
 | White / checkered / blue | LAST LAP / CHECKERED FLAG / BLUE FLAG | Your own white, checkered and blue flags |
+| The lift meter (see below) | LIFT 1.8s · 22s | A [lift](#checkpoint-skips-track-cuts) owed: served so far, and the time left to serve it |
+| Green | LIFT SERVED | The lift is served |
+| Black, white rims | BLACK FLAG · PIT BY LAP 7 | Your own [black flag](#black-flags) |
+| Green | SERVED · GO | The black flag is served |
+| Black | DISQUALIFIED | Race control ruled you out |
 
 GO, the green and your own flags show for a few seconds and go out; the rest stay
 up for as long as they are true. A red flag or a caution always wins over a flag
 of your own.
+
+**The lift meter.** While a lift is owed, the five lamps are a meter that fills
+green as it is served, the lamp being filled blinking, and unlit lamps wear a
+white rim. The caption says what is left and how long you have:
+
+| Caption | You are |
+|---|---|
+| `LIFT OFF 3.0s · 22s` | Still on the throttle, nothing served yet |
+| `LIFT 1.8s · 22s` | Off the throttle: 1.8 s to go, 22 s to serve it in |
+| `THROTTLE ON · 3.0s · 19s` | Back on the throttle: it starts again |
+| `LIFT PAUSED · 1.8s · 22s` | Paused: too slow, held, or the race neutralised |
+
+` · +1` is a second lift owed after this one. The window counts green-flag
+running, as the server's does, so it stops under a caution. There is no red or
+amber in the meter: red is the red flag and amber the drag tree. In a tall box
+it fills from the bottom.
+
+Every light about the whole field (a red, a caution, the pace lap, a restart, a
+hazard yellow) takes the box over from the meter and from a black flag, and the
+green that ends it shows, with its tone, before they come back. The HUD line
+keeps counting a lift down under a hazard yellow.
 
 **Drag racing.** During a pass the box becomes the tree: PRE and STAGE bulbs,
 three ambers, green and red. Unlit lenses keep a tint and a rim of their own
@@ -3968,7 +4066,9 @@ remembered.
 
 **Cost.** The app binds nothing: the client pushes one small event when the
 light changes, a handful of times a race, and the app sets classes on its lamps.
-It adds nothing to the work the main panel does on each timing update.
+The lift meter is the exception, pushed up to ten times a second while a lift
+is being served and only when what it shows moved. It adds nothing to the work
+the main panel does on each timing update.
 
 ## Radar (PRM)
 

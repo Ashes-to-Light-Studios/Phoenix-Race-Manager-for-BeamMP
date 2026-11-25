@@ -99,9 +99,18 @@ local CFG = {
   -- laps, or disqualified at the flag).
   checkpointSkipPitServe        = 'off',
   checkpointSkipPitLaps         = 3,
+  -- What a lift not served in its window becomes: 'time' (the seconds above)
+  -- or 'black' (a black flag; the seconds where the layout has no stalls).
+  checkpointSkipLiftUnserved    = 'time',
   -- Furthest ahead (gates) a crossing still counts as a skip; further is
   -- ignored, as it always was. config.json only, never the panel.
   checkpointSkipMaxGates        = 2,
+
+  -- BLACK FLAGS, raised by race control or an unserved lift: stop in a pit
+  -- stall for blackFlagSeconds on top of the usual stop, within blackFlagLaps
+  -- laps, or be disqualified. Needs stalls on the loaded layout.
+  blackFlagSeconds = 10,
+  blackFlagLaps    = 3,
 
   -- THE BLUE FLAG: shown within blueFlagWithin seconds, cleared past
   -- blueFlagClear. Two numbers, so a car hovering at one threshold does not make
@@ -242,6 +251,12 @@ local race = {
   checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow,
   checkpointSkipPitServe        = CFG.checkpointSkipPitServe,
   checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps,
+  checkpointSkipLiftUnserved    = CFG.checkpointSkipLiftUnserved,
+  blackFlagSeconds              = CFG.blackFlagSeconds,
+  blackFlagLaps                 = CFG.blackFlagLaps,
+  -- Black flags and disqualifications this session, for the results file:
+  -- { lap, name, what }. Cleared with the grid.
+  stewardLog = {},
   -- The rules this race's cautions ran under ({ line = true, call = true }),
   -- for the results file: the setting may have changed between them.
   cautionRulesUsed = {},
@@ -573,6 +588,14 @@ local function newRecord(pid)
     pitMissed  = nil,        -- 'required': true once that lap passed unserved
     pitStopAt  = nil,        -- race.time the current stop began; not sent
     pitServing = nil,        -- penalty seconds owed when it began; not sent
+    -- A BLACK FLAG out (race.raiseBlack). nil when there is none; blackFlag 0
+    -- is a flag too (the usual stop and nothing more).
+    blackFlag  = nil,        -- seconds a stop holds on top of the usual one
+    blackBy    = nil,        -- the last lap a stop counts on
+    blackWhy   = nil,        -- why, for the driver and the board
+    blackStopAt = nil,       -- race.time the stop serving it began; not sent
+    blackServing = nil,      -- its seconds when that stop began; not sent
+    blackStopCount = nil,    -- blackFlags raised when that stop began; not sent
     cutLaps    = 0,          -- race laps with a skip on them (no time, results)
     qualiCutLaps = 0,        -- the same in qualifying, kept with qualiBest
     cutOnLap   = nil,        -- lap a skip was reported on (RM_onLap's cross-check)
@@ -713,12 +736,20 @@ function race.resetSkips(rec, quali)
   rec.liftOwed = 0
   rec.checkpointSkips = 0
   rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = nil, nil, nil
-  rec.liftsServed, rec.liftsConverted = 0, 0
+  rec.liftsServed, rec.liftsConverted, rec.liftsToBlack = 0, 0, 0
+  rec.blackFlags, rec.blackServed, rec.blackConverted = 0, 0, 0
   rec.penaltyServed, rec.pitServeBy, rec.pitMissed = 0, nil, nil
   rec.pitStopAt, rec.pitServing = nil, nil
   rec.cutLaps = 0
   rec.cutOnLap, rec.skipSeen = nil, nil
+  race.dropBlack(rec)
   if quali then rec.qualiCutLaps = 0 end
+end
+
+-- Take a black flag down without a ruling: a new session, a retirement.
+function race.dropBlack(rec)
+  rec.blackFlag, rec.blackBy, rec.blackWhy = nil, nil, nil
+  rec.blackStopAt, rec.blackServing, rec.blackStopCount = nil, nil, nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -1184,6 +1215,9 @@ local DRIVER_WIRE_FIELDS = {
   -- Serving penalty seconds in the pits: served so far, the last lap a stop
   -- counts on, and a window missed. All nil until there is something to say.
   'penaltyServed', 'pitServeBy', 'pitMissed',
+  -- A black flag out: the stop's seconds, the last lap it counts on, and why.
+  -- All nil while there is none (0 seconds is still a flag).
+  'blackFlag', 'blackBy', 'blackWhy',
   -- The broadcast feed (client feed.lua): the last lap, the crossing it was
   -- completed on, and pit stops. Zero stops go out as nil (driverForWire).
   'lastLap', 'lastLapOn', 'pitStops',
@@ -1448,6 +1482,17 @@ local function broadcastState(targetPid)
       pitMode    = race.pitServeMode(),
       pitLaps    = race.checkpointSkipPitLaps,
       pitStalls  = race.pitStalls(),
+      -- An unserved lift: 'time' or 'black' as set; liftBlack is whether it
+      -- can be a black flag on this layout (it needs stalls).
+      liftUnserved = race.checkpointSkipLiftUnserved,
+      liftBlack  = race.liftBlackInForce(),
+    },
+    -- Black flags: the stop's seconds, the laps to serve it in, and whether
+    -- the loaded layout has a stall to serve it in.
+    bf           = {
+      seconds    = race.blackFlagSeconds,
+      laps       = race.blackFlagLaps,
+      stalls     = race.pitStalls(),
     },
     -- The heat program; heatLaps because the flags are waved client-side and
     -- must reach the same distance as sessionLapTarget.
@@ -1542,7 +1587,7 @@ end
 
 -- Out of the session (finished, DNF, derby eliminated). `source` scopes the lock
 -- so race and derby never release each other's spectators.
-local function forceSpectate(pid, reason, source, place, provisional)
+local function forceSpectate(pid, reason, source, place, provisional, out)
   MP.TriggerClientEvent(pid, 'RM_ForceSpectate', Util.JsonEncode({
     reason = reason or 'You are out of this session',
     source = source or 'race',
@@ -1551,6 +1596,8 @@ local function forceSpectate(pid, reason, source, place, provisional)
     -- A penalty on their time: a car still out can finish inside it, so the
     -- place is told as provisional. nil otherwise.
     provisional = provisional or nil,
+    -- 'dsq': ruled out by race control, so no checkered flag. nil otherwise.
+    out    = out,
   }))
 end
 
@@ -2084,6 +2131,9 @@ local function buildResultsText(cupRound)
     if (rec.liftsConverted or 0) > 0 then
       parts[#parts + 1] = rec.liftsConverted .. ' lift converted'
     end
+    if (rec.liftsToBlack or 0) > 0 then
+      parts[#parts + 1] = rec.liftsToBlack .. ' lift to black flag'
+    end
     if (rec.liftOwed or 0) > 0 then parts[#parts + 1] = rec.liftOwed .. ' lift owed' end
     if (rec.cutLaps or 0) > 0 then
       parts[#parts + 1] = rec.cutLaps .. ' cut lap' .. (rec.cutLaps == 1 and '' or 's')
@@ -2138,15 +2188,24 @@ local function buildResultsText(cupRound)
     add(string.format(' Checkpoint skips: %s, then %s per skipped checkpoint%s',
       w == 0 and 'no warnings' or (w .. ' warning' .. (w == 1 and '' or 's')),
       race.skipCostText(1),
-      race.checkpointSkipPenaltyType ~= 'time' and string.format(
-        ' (lift within %ds or +%.1fs)', race.checkpointSkipLiftWindow,
-        race.checkpointSkipPenaltySeconds) or ''))
+      race.checkpointSkipPenaltyType ~= 'time' and (race.liftBlackInForce()
+        and string.format(' (lift within %ds or a black flag)', race.checkpointSkipLiftWindow)
+        or string.format(' (lift within %ds or +%.1fs)', race.checkpointSkipLiftWindow,
+          race.checkpointSkipPenaltySeconds)) or ''))
     local pm = race.pitServeMode()
     if pm == 'required' then
       add(string.format(' Penalty seconds: served in the pits within %d lap%s, or disqualified',
         race.checkpointSkipPitLaps, race.checkpointSkipPitLaps == 1 and '' or 's'))
     elseif pm == 'optional' then
       add(' Penalty seconds: could be served in the pits')
+    end
+  end
+  -- Race control's rulings: black flags and disqualifications, in order.
+  if #race.stewardLog > 0 then
+    add(string.format(' Race control (black flags: stop %ds, within %d lap%s):', race.blackFlagSeconds,
+      race.blackFlagLaps, race.blackFlagLaps == 1 and '' or 's'))
+    for _, e in ipairs(race.stewardLog) do
+      add(string.format('   Lap %d: %s %s', e.lap, e.name, e.what))
     end
   end
   if race.closedHow then add(' Ended: ' .. race.closedHow) end
@@ -2498,6 +2557,8 @@ local function retireDriver(rec, reason, atLine)
   -- A lift still owed at the flag can no longer be served: it becomes time
   -- NOW, before the place below is worked out, so it counts.
   if race.sessionKind == 'race' then race.convertLift(rec, 'at the flag') end
+  -- So does a black flag still inside its window: the stop it did not make.
+  if race.sessionKind == 'race' then race.convertBlack(rec) end
   -- Their place: in a race, where the classification puts them (laps first,
   -- so not simply how many are home); in qualifying, the count home.
   local place = 0
@@ -2549,6 +2610,7 @@ local function retireAsDnf(rec, reason)
   -- A lift owed is discarded: there is no race time for it to go on. Warnings
   -- and penalty seconds stay, for the results.
   rec.liftOwed, rec.liftDeadline, rec.liftWindowLeft = 0, nil, nil
+  race.dropBlack(rec)
   -- Where they were running, kept apart from where they classify.
   if rec.heldPos == nil then
     rec.heldPos = rec.position or rec.gridPos
@@ -3930,6 +3992,7 @@ local function releaseField(pacing)
   race.cautionLapsTotal = 0
   race.cautionRulesUsed = {}
   race.cautionPasses    = {}
+  race.stewardLog       = {}
   race.lapCredits       = {}
   thawOrder()
   race.time = 0.0
@@ -4880,6 +4943,7 @@ function RM_onResetLeaderboard(pid)
   race.cautionLapsTotal = 0
   race.cautionRulesUsed = {}
   race.cautionPasses    = {}
+  race.stewardLog       = {}
   race.lapCredits       = {}
   thawOrder()
   -- The heat program goes with the evening (the records holding the draw are
@@ -5221,6 +5285,14 @@ end
 function race.convertLift(rec, why)
   local n = rec.liftOwed or 0
   if n <= 0 then return 0 end
+  -- Under 'black' it is a black flag where a stall can serve one. At the flag
+  -- there is no stop left to make, so it is time.
+  if why ~= 'at the flag' and race.liftBlackInForce()
+     and race.raiseBlack(rec, race.blackFlagSeconds, 'Lift not served') then
+    rec.liftsToBlack = (rec.liftsToBlack or 0) + n
+    rec.liftOwed, rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = 0, nil, nil, nil
+    return 0
+  end
   local add = n * race.checkpointSkipPenaltySeconds
   rec.penaltySeconds = (rec.penaltySeconds or 0) + add
   rec.liftsConverted = (rec.liftsConverted or 0) + n
@@ -5302,6 +5374,13 @@ end
 -- the car is held waits for the next stop.
 function race.pitStopBegan(rec)
   rec.pitStopAt, rec.pitServing = nil, nil
+  -- A black flag out is served by this stop whatever the pit rule. One raised
+  -- while the car is held waits for the next.
+  rec.blackStopAt, rec.blackServing, rec.blackStopCount = nil, nil, nil
+  if race.sessionKind == 'race' and rec.blackFlag ~= nil then
+    rec.blackStopAt, rec.blackServing = race.time, rec.blackFlag
+    rec.blackStopCount = rec.blackFlags or 0
+  end
   if race.sessionKind ~= 'race' or race.pitServeMode() == 'off' or rec.pitMissed then return end
   if (rec.penaltySeconds or 0) <= 0 then return end
   rec.pitStopAt, rec.pitServing = race.time, rec.penaltySeconds
@@ -5309,20 +5388,34 @@ end
 
 -- The client held the stop for the seconds it owed. Not watchable, but it
 -- cannot have been served sooner than that after the stop began.
+-- `black`: the stop held a black flag's seconds too (race.serveBlack).
 function RM_onPenaltyServed(pid, rawData)
   if not sessionRunning() or race.sessionKind ~= 'race' then return end
   local rec = players[pidKey(pid) or -1]
-  if not onTrack(rec) or not rec.pitStopAt then return end
+  if not onTrack(rec) then return end
+  local claimed = decodeNumber(rawData, 'seconds')
+  local black = false
+  if rec.blackStopAt and type(rawData) == 'string' and rawData ~= '' then
+    local ok, data = pcall(Util.JsonDecode, rawData)
+    black = ok and type(data) == 'table' and (data.black == true or data.black == 1)
+  end
+  local served = race.servePitSeconds(rec, claimed)
+  local blackServed = black and race.serveBlack(rec, served or 0)
+  if served or blackServed then broadcastState() end
+end
+
+-- The penalty seconds half of a stop. The seconds served, or nil.
+function race.servePitSeconds(rec, claimed)
+  if not rec.pitStopAt then return nil end
   local from, owed = rec.pitStopAt, rec.pitServing or 0
   rec.pitStopAt, rec.pitServing = nil, nil
-  local claimed = decodeNumber(rawData, 'seconds')
-  if not claimed or claimed ~= claimed or claimed <= 0 then return end
+  if not claimed or claimed ~= claimed or claimed <= 0 then return nil end
   local served = math.min(claimed, owed, rec.penaltySeconds or 0)
-  if served <= 0 then return end
+  if served <= 0 then return nil end
   if race.time - from < served - 0.5 then
     print(string.format('[RaceManager] %s: %.1fs served %.1fs after the stop began: ignored',
       rec.name, served, race.time - from))
-    return
+    return nil
   end
   rec.penaltySeconds = (rec.penaltySeconds or 0) - served
   if rec.penaltySeconds < 0.05 then rec.penaltySeconds = 0 end
@@ -5333,7 +5426,7 @@ function RM_onPenaltyServed(pid, rawData)
   MP.SendChatMessage(rec.id, string.format('[RaceManager] Penalty served: %.1fs%s', served, left))
   race.tellRaceControl(string.format('[RaceManager] Race control: %s served %.1fs in the pits%s',
     displayName(rec), served, left))
-  broadcastState()
+  return served
 end
 
 -- THE SERVE WINDOW, from RM_Tick. It runs on GREEN-FLAG RUNNING only: under a
@@ -5502,6 +5595,205 @@ function RM_onLiftServed(pid, rawData)
   broadcastState()
 end
 
+-- ---------------------------------------------------------------------------
+-- BLACK FLAGS AND DISQUALIFICATION (race control)
+-- ---------------------------------------------------------------------------
+-- A black flag is served by a stop in a pit stall: the usual stop plus its
+-- seconds, held by the client (pit.blackOwed) and timed here as penalty
+-- seconds are. Past blackBy unserved, the car is disqualified at once. All of
+-- it rides the driver row: no new event reaches a client. Race sessions only.
+
+-- The usual stop's hold (the client's PIT_HOLD_SEC): what a black flag left
+-- open at the flag costs on top of its own seconds.
+race.BLACK_STOP_SEC = 5
+
+-- An unserved lift can be a black flag only where a stall can serve it.
+function race.liftBlackInForce()
+  return race.checkpointSkipLiftUnserved == 'black' and race.pitStalls() > 0
+end
+
+-- A line for the results file's race control block.
+function race.stewardNote(rec, what)
+  local notes = race.stewardLog
+  if #notes >= 200 then return end
+  notes[#notes + 1] = { lap = rec.currentLap or 0, name = displayName(rec), what = what }
+end
+
+-- Race control's free text, safe for chat and a padded results file: ASCII,
+-- one line, 40 characters at most. nil when nothing is left of it.
+function race.stewardReason(raw)
+  if type(raw) ~= 'string' then return nil end
+  local s = raw:gsub("[^%w %-%_%.%,%!%?%(%)']", ''):gsub('%s+', ' ')
+  s = s:sub(1, 40):gsub('^ ', ''):gsub(' $', '')
+  return s ~= '' and s or nil
+end
+
+-- Raise one, or add to the one out: one stop serves both, and the window
+-- starts again. true, or nil and why not.
+function race.raiseBlack(rec, seconds, why, by)
+  if race.sessionKind ~= 'race' or not sessionRunning() then
+    return nil, 'black flags are for a running race'
+  end
+  if not onTrack(rec) then return nil, displayName(rec) .. ' is not on track' end
+  if race.pitStalls() == 0 then
+    return nil, 'the loaded layout has no pit stalls to serve one in'
+  end
+  local n = tonumber(seconds)
+  if not n or n ~= n then n = race.blackFlagSeconds end
+  n = math.min(math.max(math.floor(n), 0), 120)
+  why = why or 'Race control'
+  local stacked = rec.blackFlag ~= nil
+  rec.blackFlag = math.min((rec.blackFlag or 0) + n, 240)
+  rec.blackBy   = (rec.currentLap or 0) + race.blackFlagLaps
+  rec.blackWhy  = why
+  rec.blackFlags = (rec.blackFlags or 0) + 1
+  local name = displayName(rec)
+  MP.SendChatMessage(-1, string.format('[RaceManager] BLACK FLAG for %s: %s', name, why))
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] BLACK FLAG: stop in a pit stall for '
+    .. '%ds by lap %d, or you are disqualified%s', rec.blackFlag, rec.blackBy,
+    stacked and ' (added to the one already out)' or ''))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s black flag, %ds by lap %d (%s%s)',
+    name, rec.blackFlag, rec.blackBy, why, by and (', by ' .. by) or ''))
+  race.stewardNote(rec, string.format('black flag, %ds (%s)', n, why))
+  return true
+end
+
+function race.clearBlack(rec, by)
+  if rec.blackFlag == nil then return nil, displayName(rec) .. ' has no black flag out' end
+  race.dropBlack(rec)
+  MP.SendChatMessage(-1, '[RaceManager] Black flag withdrawn for ' .. displayName(rec))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s black flag withdrawn%s',
+    displayName(rec), by and (' by ' .. by) or ''))
+  race.stewardNote(rec, 'black flag withdrawn')
+  return true
+end
+
+-- The stop held the flag it began with. Not sooner than it could have: the
+-- usual stop is the client's, so only the seconds on top are checked, as for
+-- penalty seconds. `also`: penalty seconds served in the same stop.
+function race.serveBlack(rec, also)
+  local from, owed, count = rec.blackStopAt, rec.blackServing or 0, rec.blackStopCount or 0
+  rec.blackStopAt, rec.blackServing, rec.blackStopCount = nil, nil, nil
+  if not from or rec.blackFlag == nil then return false end
+  if race.time - from < owed + (also or 0) - 0.5 then
+    print(string.format('[RaceManager] %s: black flag served %.1fs after the stop began: ignored',
+      rec.name, race.time - from))
+    return false
+  end
+  rec.blackServed = (rec.blackServed or 0) + 1
+  -- RAISED AGAIN WHILE HELD: that one waits for the next stop. Counted, not
+  -- read off the seconds left: a 0 second flag adds none and is still a flag.
+  local raised = (rec.blackFlags or 0) > count
+  local left = math.max(rec.blackFlag - owed, 0)
+  if raised then rec.blackFlag = left else race.dropBlack(rec) end
+  local more = raised and string.format(' (one raised during the stop is still out: %ds)', left) or ''
+  MP.SendChatMessage(rec.id, '[RaceManager] Black flag served' .. (more ~= '' and more or ' - carry on'))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s served the black flag%s',
+    displayName(rec), more))
+  race.stewardNote(rec, 'black flag served')
+  return true
+end
+
+-- At the flag, still inside its window: its seconds and the stop it did not
+-- make go on the race time, as unserved pit seconds do.
+function race.convertBlack(rec)
+  if rec.blackFlag == nil then return 0 end
+  local add = rec.blackFlag + race.BLACK_STOP_SEC
+  rec.penaltySeconds = (rec.penaltySeconds or 0) + add
+  rec.blackConverted = (rec.blackConverted or 0) + 1
+  race.dropBlack(rec)
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Black flag not served by the flag: +%.1fs', add))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s black flag converted to +%.1fs '
+    .. 'at the flag', displayName(rec), add))
+  race.stewardNote(rec, string.format('black flag not served by the flag: +%.1fs', add))
+  return add
+end
+
+-- Ruled out of the race: a car on track goes to spectate, one already home is
+-- only reclassified. true (and 'ended' when it was the last car out, which
+-- has broadcast), or nil and why not.
+function race.disqualify(rec, reason, by)
+  if race.sessionKind ~= 'race' or not sessionRunning() then
+    return nil, 'a driver can be disqualified only while a race is running'
+  end
+  local was = rec.status
+  if was ~= 'racing' and was ~= 'finished' then
+    return nil, displayName(rec) .. ' is not racing or home'
+  end
+  rec.status    = 'dsq'
+  rec.outReason = 'Disqualified - ' .. (reason or 'Race Control')
+  rec.liftOwed, rec.liftDeadline, rec.liftWindowLeft, rec.liftFrom = 0, nil, nil, nil
+  race.dropBlack(rec)
+  if was == 'racing' then
+    if rec.heldPos == nil then rec.heldPos = rec.position or rec.gridPos end
+    clearGhost(rec.id, 'driver disqualified')
+    forceSpectate(rec.id, rec.outReason, 'race', nil, nil, 'dsq')
+  end
+  local name = displayName(rec)
+  MP.SendChatMessage(-1, string.format('[RaceManager] %s DISQUALIFIED: %s', name, reason or 'Race Control'))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s disqualified (%s)%s', name,
+    reason or 'Race Control', by and (' by ' .. by) or ''))
+  race.stewardNote(rec, 'disqualified: ' .. (reason or 'Race Control'))
+  print(string.format('[RaceManager] %s disqualified%s: %s', rec.name, by and (' by ' .. by) or '',
+    rec.outReason))
+  if was == 'racing' and driversOnTrack() == 0 then
+    finishSession('every driver is home or out')
+    return true, 'ended'
+  end
+  return true
+end
+
+-- From RM_Tick: a black flag past its last lap disqualifies. Not while a stop
+-- serving it is held (the pit window's 15 s grace for a report never sent).
+function race.blackTick()
+  if race.sessionKind ~= 'race' then return end
+  local out = nil
+  for _, rec in pairs(players) do
+    if rec.blackBy and onTrack(rec) and (rec.currentLap or 0) > rec.blackBy then
+      local held = rec.blackStopAt
+        and race.time - rec.blackStopAt < (rec.blackServing or 0) + (rec.pitServing or 0) + 15
+      if not held then
+        out = out or {}
+        out[#out + 1] = rec
+      end
+    end
+  end
+  if not out then return end
+  for _, rec in ipairs(out) do
+    MP.SendChatMessage(rec.id, '[RaceManager] Black flag not served in time: disqualified')
+    local _, ended = race.disqualify(rec, 'Black Flag Ignored')
+    if ended then return end
+  end
+  broadcastState()
+end
+
+-- RACE CONTROL on one driver: 'black' (seconds, or the rule's), 'clear', or
+-- 'dq'. Both tiers: a moderator runs the race. Every refusal answers in chat.
+function RM_onSteward(pid, rawData)
+  local data = adminPayload(pid, rawData)
+  if not data then return end
+  local rec = players[math.floor(tonumber(data.pid) or -1)]
+  local by = tostring(MP.GetPlayerName(pid) or pid)
+  local ok, why
+  if not rec then
+    ok, why = nil, 'that driver is not in this session'
+  elseif data.action == 'black' then
+    ok, why = race.raiseBlack(rec, data.seconds, race.stewardReason(data.reason), by)
+  elseif data.action == 'clear' then
+    ok, why = race.clearBlack(rec, by)
+  elseif data.action == 'dq' then
+    ok, why = race.disqualify(rec, race.stewardReason(data.reason), by)
+  else
+    return
+  end
+  if not ok then
+    MP.SendChatMessage(pid, '[RaceManager] Not done: ' .. tostring(why) .. '.')
+    broadcastState(pid)
+    return
+  end
+  if why ~= 'ended' then broadcastState() end
+end
+
 -- The admin's rules for the next session, every field in one event. Locked
 -- while one is under way, like every rule that changes how a lap is scored. A
 -- field left out keeps its value; every value is clamped.
@@ -5540,14 +5832,39 @@ function RM_onSetCheckpointSkip(pid, rawData)
   if n and n == n then
     race.checkpointSkipPitLaps = math.min(math.max(math.floor(n), 1), 20)
   end
+  if data.liftUnserved == 'time' or data.liftUnserved == 'black' then
+    race.checkpointSkipLiftUnserved = data.liftUnserved
+  end
   broadcastState()
   print(string.format('[RaceManager] Checkpoint skips %s by %s: %d warning(s), then %s '
-    .. '(%.1fs, lift %.1fs within %ds, pit serving %s within %d laps)',
+    .. '(%.1fs, lift %.1fs within %ds or %s, pit serving %s within %d laps)',
     race.enableCheckpointSkipPenalty and 'ENABLED' or 'disabled',
     tostring(MP.GetPlayerName(pid) or pid), race.checkpointSkipWarningsAllowed,
     race.checkpointSkipPenaltyType, race.checkpointSkipPenaltySeconds,
     race.checkpointSkipLiftSeconds, race.checkpointSkipLiftWindow,
+    race.checkpointSkipLiftUnserved == 'black' and 'a black flag' or 'time',
     race.checkpointSkipPitServe, race.checkpointSkipPitLaps))
+end
+
+-- The black flag rules for the next session: the stop's seconds and the laps
+-- to serve it in. Locked while one is under way, like every scoring rule.
+function RM_onSetBlackFlag(pid, rawData)
+  if not requireAuth(pid) then return end
+  if sessionUnderWay() then
+    MP.SendChatMessage(pid, '[RaceManager] Black flag rules are locked while a session '
+      .. 'is running. Change them before the next one.')
+    broadcastState(pid)
+    return
+  end
+  local data = adminPayload(pid, rawData, true)
+  if not data then return end
+  local n = tonumber(data.seconds)
+  if n and n == n then race.blackFlagSeconds = math.min(math.max(math.floor(n), 0), 120) end
+  n = tonumber(data.laps)
+  if n and n == n then race.blackFlagLaps = math.min(math.max(math.floor(n), 1), 20) end
+  broadcastState()
+  print(string.format('[RaceManager] Black flags set by %s: stop %ds, within %d lap(s)',
+    tostring(MP.GetPlayerName(pid) or pid), race.blackFlagSeconds, race.blackFlagLaps))
 end
 
 -- Clear Results Cache: delete every saved results file. ADMIN ONLY (the
@@ -6074,7 +6391,12 @@ local function applyConfigTable(data)
   num('checkpointSkipMaxGates', 1, 5)
   str('checkpointSkipPitServe', { off = true, optional = true, required = true })
   num('checkpointSkipPitLaps', 1, 20)
+  str('checkpointSkipLiftUnserved', { time = true, black = true })
+  num('blackFlagSeconds', 0, 120)
+  num('blackFlagLaps', 1, 20)
   -- Whole numbers where a count is meant, and half seconds where a time is.
+  CFG.blackFlagSeconds              = math.floor(CFG.blackFlagSeconds)
+  CFG.blackFlagLaps                 = math.floor(CFG.blackFlagLaps)
   CFG.checkpointSkipPitLaps         = math.floor(CFG.checkpointSkipPitLaps)
   CFG.checkpointSkipWarningsAllowed = math.floor(CFG.checkpointSkipWarningsAllowed)
   CFG.checkpointSkipLiftWindow      = math.floor(CFG.checkpointSkipLiftWindow)
@@ -6183,7 +6505,10 @@ local function configFileText()
     checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow,
     checkpointSkipPitServe        = CFG.checkpointSkipPitServe,
     checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps,
+    checkpointSkipLiftUnserved    = CFG.checkpointSkipLiftUnserved,
     checkpointSkipMaxGates        = CFG.checkpointSkipMaxGates,
+    blackFlagSeconds              = CFG.blackFlagSeconds,
+    blackFlagLaps                 = CFG.blackFlagLaps,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
     qualiLapLimit  = CFG.qualiLapLimit,
@@ -6242,6 +6567,9 @@ local function applyConfigToRace()
   race.checkpointSkipLiftWindow      = CFG.checkpointSkipLiftWindow
   race.checkpointSkipPitServe        = CFG.checkpointSkipPitServe
   race.checkpointSkipPitLaps         = CFG.checkpointSkipPitLaps
+  race.checkpointSkipLiftUnserved    = CFG.checkpointSkipLiftUnserved
+  race.blackFlagSeconds              = CFG.blackFlagSeconds
+  race.blackFlagLaps                 = CFG.blackFlagLaps
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
   race.readyCheck     = CFG.readyCheck
@@ -10328,6 +10656,8 @@ function RM_Tick()
   end
   -- Owed lifts: the serve window runs on green-flag running only.
   race.skipTick(dt, race.caution or race.cautionPending or race.pacing)
+  -- Black flags: a window in laps, so nothing to pause.
+  race.blackTick()
   -- The pace lap: watch the leader home and drop the green. Every tick (ten
   -- metres is under half a second at pace), and a scan, not a sort.
   if race.pacing then paceLapWatch() end
@@ -10490,6 +10820,8 @@ function onInit()
   MP.RegisterEvent('RM_SetCheckpointSkip', 'RM_onSetCheckpointSkip')
   MP.RegisterEvent('RM_CheckpointSkip',    'RM_onCheckpointSkip')
   MP.RegisterEvent('RM_LiftServed',        'RM_onLiftServed')
+  MP.RegisterEvent('RM_SetBlackFlag',      'RM_onSetBlackFlag')
+  MP.RegisterEvent('RM_Steward',           'RM_onSteward')     -- black flag, clear, DQ
   MP.RegisterEvent('RM_VehicleReset',     'RM_onVehicleReset')
   MP.RegisterEvent('RM_ResetDenied',      'RM_onResetDenied')
   -- Reset ghosting

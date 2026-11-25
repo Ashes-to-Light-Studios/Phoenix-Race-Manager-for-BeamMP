@@ -40,11 +40,23 @@ angular.module('beamng.apps')
         red:         { lamps: 'rrrrr', cap: 'RED FLAG' },
         white:       { lamps: 'wwwww', cap: 'LAST LAP' },
         checkered:   { lamps: 'ccccc', cap: 'CHECKERED FLAG' },
-        blue:        { lamps: 'bbbbb', cap: 'BLUE FLAG', blink: true }
+        blue:        { lamps: 'bbbbb', cap: 'BLUE FLAG', blink: true },
+        // This driver's penalties. 'k' is a black lamp. The lift meter is
+        // drawn by drawLift; its pattern here is only the fallback.
+        lift:        { lamps: '-----', cap: 'LIFT OFF' },
+        black:       { lamps: 'kkkkk', cap: 'BLACK FLAG · PIT' },
+        liftServed:  { lamps: 'ggggg', cap: 'LIFT SERVED' },
+        blackServed: { lamps: 'ggggg', cap: 'SERVED · GO' },
+        dsq:         { lamps: 'kkkkk', cap: 'DISQUALIFIED' }
       };
+      // THE LIFT METER IS GREEN ONLY. Red is the red flag and amber the drag
+      // tree; a driver glancing at five red lamps mid-race would stop.
+      var METER_LAMPS = 5;
       // A moment (GO, the green, a flag of your own) only shows over these. A
-      // red or a caution that arrives during one wins at once.
-      var LOW = { off: true, grid: true };
+      // red or a caution that arrives during one wins at once. Over a penalty
+      // of the driver's own too: the green ending a caution must not be lost to
+      // a lift meter, which comes back when the moment is over.
+      var LOW = { off: true, grid: true, lift: true, black: true };
       var HINT = ['a', 'a', 'a', 'g', 'r'];
       var PREVIEW_MS = 6000;
       // Widest a caption may run, per layout, before it is squeezed to fit.
@@ -56,6 +68,8 @@ angular.module('beamng.apps')
 
       var standing = 'off';
       var tree = null;
+      var lift = null;
+      var black = null;
       var moment = null;
       var momentUntil = 0;
       var momentTimer = null;
@@ -127,21 +141,64 @@ angular.module('beamng.apps')
         fit(el()[v ? 1 : 0]);
       }
 
-      function drawRace(name) {
-        var p = RACE[name] || RACE.idle;
+      // `lamps`: one letter per lamp, '-' unlit, 'm' an empty meter lamp, an
+      // upper case letter that one lamp blinking. `rise`: the tall layout
+      // reads bottom up, so a meter fills from the bottom there.
+      function drawLamps(lamps, blinkAll, rise) {
         el().forEach(function (L) {
-          for (var i = 0; i < L.race.length; i++) {
-            var c = p.lamps.charAt(i);
+          var n = L.race.length;
+          for (var i = 0; i < n; i++) {
+            var c = lamps.charAt(rise && L.key === 't' ? n - 1 - i : i);
+            var blink = blinkAll;
+            if (c !== c.toLowerCase()) { c = c.toLowerCase(); blink = true; }
             var cls = 'rml-lamp';
             if (c === 'c') {
               cls += (i % 2 === 0) ? ' rml-chk-a' : ' rml-chk-b';
+            } else if (c === 'm') {
+              cls += ' rml-hint-w';
             } else if (c !== '-') {
-              cls += ' rml-' + c + (p.blink ? ' rml-blink' : '');
+              cls += ' rml-' + c + (blink ? ' rml-blink' : '');
             }
             setClass(L.race[i], L.key + 'r' + i, cls);
           }
         });
-        setCaption(p.cap);
+      }
+
+      function drawRace(name) {
+        var p = RACE[name] || RACE.idle;
+        drawLamps(p.lamps, !!p.blink, false);
+        var cap = p.cap;
+        if (name === 'black' && black && black.by) { cap = 'BLACK FLAG · PIT BY LAP ' + black.by; }
+        setCaption(cap);
+      }
+
+      function secs(v) {
+        return Math.max(Number(v) || 0, 0).toFixed(1) + 's';
+      }
+
+      // Served lamps green, the one filling blinks, the rest an empty meter.
+      function drawLift() {
+        var t = lift || {};
+        var full = Number(t.full) || 0;
+        var left = Math.max(Number(t.left) || 0, 0);
+        var done = full > 0 ? Math.min(Math.max(1 - left / full, 0), 1) : 0;
+        var st = t.st || 'wait';
+        var lit = st === 'restart' ? 0 : Math.floor(done * METER_LAMPS + 1e-6);
+        var lamps = '';
+        for (var i = 0; i < METER_LAMPS; i++) {
+          if (i < lit) { lamps += 'g'; }
+          else if (i === lit && st === 'lifting') { lamps += 'G'; }
+          else { lamps += 'm'; }
+        }
+        drawLamps(lamps, false, true);
+        var win = (t.win === null || t.win === undefined) ? '' : ' · ' + Math.ceil(Number(t.win)) + 's';
+        var cap;
+        if (st === 'restart') { cap = 'THROTTLE ON · ' + secs(left) + win; }
+        else if (st === 'paused') { cap = 'LIFT PAUSED · ' + secs(left) + win; }
+        else if (st === 'lifting') { cap = 'LIFT ' + secs(left) + win; }
+        else { cap = 'LIFT OFF ' + secs(left) + win; }
+        if (t.more > 0) { cap += ' · +' + t.more; }
+        setCaption(cap);
       }
 
       function fmt(v, n) {
@@ -191,6 +248,8 @@ angular.module('beamng.apps')
         root.classList.toggle('rml-dragmode', dragMode);
         if (dragMode) {
           drawTree();
+        } else if (show === 'lift') {
+          drawLift();
         } else {
           drawRace(show === 'off' ? 'idle' : show);
         }
@@ -201,6 +260,8 @@ angular.module('beamng.apps')
         if (!data) { return; }
         standing = data.light || 'off';
         tree = data.tree || null;
+        lift = data.lift || null;
+        black = data.black || null;
         if (data.moment) {
           moment = data.moment;
           momentUntil = Date.now() + (Number(data.hold) || 3) * 1000;
