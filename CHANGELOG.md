@@ -33,6 +33,12 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   about such a gate while you build the layout. See
   [Starting from the pit stalls](docs/REFERENCE.md#starting-from-the-pit-stalls).
 
+- **Not in the field**, for admins, under Race Entry: everyone the board leaves
+  out. **Place** puts a left-off driver who now has a car on the back of the
+  grid. **Add** puts a driver in with or without a car until they leave the
+  server, and **Remove** takes that back. An added driver is tagged **ADDED**
+  in the driver table.
+
 #### Fixed
 
 - **Pit stalls vanished at a checkpoint in the pits.** With a Pit In gate
@@ -50,6 +56,17 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   stalls. Pit In keeps its big P and is drawn all race; PIT OUT is drawn within
   200 m, like the stalls. Layouts that have them keep them, and layouts without
   them lose nothing.
+
+- **No car, no grid.** A player with no car spawned is no longer put in the
+  field. When a grid forms (race or qualifying), a heat draw is made, a derby
+  forms up or a drag ladder is drawn, they are left off, told why, and the
+  admins are told who. Spawning a car afterwards **does not** put them in: a
+  **JOIN** banner appears instead, which starts them from the back of the grid.
+  A player who never joins is on no board: not the driver tables, the
+  broadcast board, the overlay feed or the results file. Walking (BeamMP's
+  unicycle) is not a car. Deleting and respawning your car on the grid keeps
+  your slot. See
+  [No car, no grid](docs/REFERENCE.md#no-car-no-grid).
 
 ## 0.29.1 - Layouts folder path
 
@@ -482,11 +499,12 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 #### Changed
 
-- **The repo moved** to
-  [Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG),
-  and the download page to
-  <https://ashes-to-light-studios.github.io/Phoenix-Race-Manager-for-BeamNG/>.
-  The old page address no longer works. Update checks look in the new repo; a
+- **The repo moved** to Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG,
+  since renamed
+  [Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP),
+  and the download page with it, now
+  <https://ashes-to-light-studios.github.io/Phoenix-Race-Manager-for-BeamMP/>.
+  The old page addresses no longer work. Update checks look in the new repo; a
   server whose `config.json` still names the old one in `updateRepo` is
   switched over at boot. One pointed at a fork keeps its own.
 
