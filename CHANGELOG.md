@@ -6,6 +6,51 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Added
+
+- **Mandatory pit stops.** **Pit stops** in the Race settings requires every
+  driver to make that many stops, and only one counts per lap. A driver who
+  takes the flag short is disqualified, or, with **If missed: Time**, gets the
+  seconds you set (30 by default) per missing stop on their race time. Drivers
+  are told the rule at GO and after every stop, the timing table shows
+  `PIT 1/2`, and the results file has a Pits column. It needs pit stalls on the
+  layout, as Required serving does. The defaults are `pitStopsRequired`,
+  `pitStopMissed` and `pitStopPenaltySeconds` in `config.json`. See
+  [Mandatory pit stops](docs/REFERENCE.md#mandatory-pit-stops).
+
+- **Qualifying and the race can start from the pit stalls.** **Start in pits**
+  in the Qualifying settings and again in the Race settings, each its own
+  switch, so qualifying can line up in the pits and the race on the grid.
+  Stall 1 is pole. The first lap is an untimed out lap: extra in qualifying,
+  lap 1 in a race. A car standing in its stall at the green is not making a pit
+  stop. Every car is sent to the same first checkpoint (CP 1, or **Pit start**
+  in the editor's Stalls tab), and the field only lines up in the stalls when
+  no gate of that checkpoint runs between two stalls in use, so nobody starts
+  past it and drives an extra lap. Otherwise, or with fewer stalls than
+  drivers, the session uses the grid and chat says why. The Stalls tab warns
+  about such a gate while you build the layout. See
+  [Starting from the pit stalls](docs/REFERENCE.md#starting-from-the-pit-stalls).
+
+#### Fixed
+
+- **Pit stalls vanished at a checkpoint in the pits.** With a Pit In gate
+  placed, the stalls showed once you crossed it and went again at Pit Out or at
+  the next checkpoint you cleared, so a driver who missed Pit Out did not keep
+  them all race. A checkpoint inside the pit lane (a branch gate through the
+  pits, or a start/finish line that spans them) counted as leaving, and the
+  stalls disappeared on the way to one. Stalls are now drawn whenever you are
+  within 200 m of them, whatever you have crossed, and not drawn at all from
+  farther away. See [Pit stalls](docs/REFERENCE.md#pit-stalls).
+
+#### Changed
+
+- **Pit In and Pit Out are signs only.** They no longer show or hide the
+  stalls. Pit In keeps its big P and is drawn all race; PIT OUT is drawn within
+  200 m, like the stalls. Layouts that have them keep them, and layouts without
+  them lose nothing.
+
 ## 0.29.1 - Layouts folder path
 
 #### Fixed

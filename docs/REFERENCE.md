@@ -382,15 +382,52 @@ as one. Every stop is logged server-side with the driver, the stall and the lap.
 They are **not** respawn points. A stall repairs a car where it stands and does
 nothing else - a later reset still goes wherever the reset ruleset says.
 
+Qualifying and the race can each start **from** the stalls, with stall 1 as
+pole: see [Starting from the pit stalls](#starting-from-the-pit-stalls).
+
 With **Serve in pits** on, a stop also serves any checkpoint-skip penalty
 seconds the driver owes, holding the car that much longer (see
 [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)).
 
-Every stall in the lane is drawn as a box; only the nearest gets the stop bar,
-the chevron and the two-band walls. With a **Pit In** gate placed, the stalls
-appear only once a driver has crossed it. That gate carries a large white **P**
-across its face and no text; the exit gate is labeled **PIT OUT**. The editor
-still labels both, numbered.
+#### Mandatory pit stops
+
+**Pit stops** in the Race settings makes every driver stop a set number of
+times in the race (0, the default, turns it off). **If missed** decides what
+happens to a driver who takes the flag short of the number:
+
+| If missed | What happens |
+|-----------|--------------|
+| **Disqualify** (default) | `Disqualified - Pit Stop Not Made` at the flag, ruled like a missed joker lap |
+| **Time** | The seconds you set (30 by default) go on the race time for **each** stop missed, in the final classification |
+
+- **One stop counts per lap.** Driving out of one stall and straight into
+  another is one stop. The driver is told after each one: `Pit stop 1 of 2
+  done`, or `Same lap as your last stop: not counted`.
+- Any stop in a stall counts, including one that serves penalty seconds.
+  Standing in your stall at the green after a
+  [start from the pits](#starting-from-the-pit-stalls) is not a stop.
+- **Races only.** Qualifying and practice ignore it.
+- **It needs stalls.** On a layout with no pit stalls the rule does not run,
+  and the panel says so, so nobody is ruled out for having nowhere to stop.
+- The rule is announced in chat at GO, every row of the timing table shows
+  `PIT 1/2` (green once done), and it is locked once the race starts.
+- A driver classified where they stood when the race closed is ruled the same
+  way as one who took the flag. A retirement is already out.
+
+The results file states the rule under the header, adds a **Pits** column
+(`1/2`), and shows a time penalty beside the race time as `(+30.0s pit)`.
+
+Every stall within **200 m** of your car is drawn as a box; only the nearest
+gets the stop bar, the chevron and the two-band walls. That depends only on
+where your car is, not on which gates you have crossed, so nothing hides a stall
+from a driver on the way to one, whatever shape the pit lane is. On the far side
+of the track the lane is not drawn at all.
+
+**In** and **Out** are optional signs. They do not show or hide anything. The
+**Pit In** gate carries a large white **P** across its face and no text, and is
+drawn all race so drivers can see where the pits are. The exit gate is labeled
+**PIT OUT** and is drawn within 200 m, like the stalls. The editor still labels
+both, numbered.
 
 #### Placing the starting grid
 
@@ -461,6 +498,9 @@ qualifying grid exactly the way Generate Grid forms a race one - every
 entrant is called to the grid, and stood on a start position and held once
 they press Ready (see [The ready check](#the-ready-check)) - and the countdown
 releases the field.
+
+Qualifying can also line up in the pit stalls: see
+[Starting from the pit stalls](#starting-from-the-pit-stalls).
 
 **The out lap.** The field starts from a standing grid, so the first lap is
 the lap you spent getting off the line. It is given away: **not timed, not
@@ -696,6 +736,40 @@ the stragglers are taken where they stand and the session closes normally.
    staggered, the same as a grid forming - and each driver's camera is put
    explicitly back on their *own* car rather than on whichever vehicle the
    game happens to pick.
+
+#### Starting from the pit stalls
+
+Qualifying and the race can each line up in the [pit stalls](#pit-stalls)
+instead of on the grid: **Start in pits** in the Qualifying settings, and again
+in the Race settings. Both are off by default, and like Ghost quali they are off
+again after a server restart. A common setup is qualifying from the pits and the
+race from the grid.
+
+- **Stall 1 is pole**, stall 2 is P2, and so on, in the usual grid order. So
+  number the stalls from the pit exit back. Cars are placed and held exactly as
+  on the grid, facing the way each stall was placed.
+- **The first lap is an out lap.** Every car is sent to the same checkpoint
+  first (CP 1, unless you set **Pit start** in the editor's Stalls tab), round
+  the lap and over the line. It is not timed. In qualifying it is extra, as
+  qualifying's out lap always is; in a race it counts as lap 1, as it does for
+  any [grid away from the line](#the-out-lap).
+- **Standing in your stall at the green is not a pit stop.** The stall only
+  works again once you have driven out of it.
+
+**The whole field starts behind the same checkpoint.** A car standing past the
+checkpoint the field is sent to would never cross it on the way out, and its
+out lap would be a lap longer than everyone else's. So before the field is
+placed in the stalls, the server checks that no gate of that checkpoint (main
+or branch) runs between two of the stalls in use. If one does, that session
+lines up on the grid instead and chat says why, for example: *Race from the
+track grid: CP 1 runs between pit stalls 3 and 4*. Move that gate, or set **Pit
+start** to a checkpoint ahead of every stall. The Stalls tab shows the same
+warning while you build the layout. The check follows the lane from stall to
+stall by number, which is one more reason to number them in order.
+
+The grid is also used when the layout has **fewer stalls than drivers** (per
+heat, with heats) or no stalls at all, again with a chat line saying so. The
+**Pit start** checkpoint is saved with the layout.
 
 ### Step 7 - Results
 
@@ -1196,6 +1270,9 @@ crossed, so it is not left stuck, and the skip costs a **warning**, then the
 | Serve in pits | `checkpointSkipPitServe` | `"off"` | `"off"`, `"optional"`, `"required"` (see [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)) |
 | within (laps) | `checkpointSkipPitLaps` | `3` | 1-20: laps to serve them in, when required |
 | (not in the panel) | `checkpointSkipMaxGates` | `2` | 1-5: how far ahead, in gates, a crossing still counts as a skip |
+| Pit stops | `pitStopsRequired` | `0` | 0-10 mandatory stops in a race, 0 off (see [Mandatory pit stops](#mandatory-pit-stops)) |
+| If missed | `pitStopMissed` | `"dsq"` | `"dsq"` (disqualified at the flag) or `"time"` |
+| + s per stop | `pitStopPenaltySeconds` | `30` | 1-600, in steps of 0.5, per missing stop under `"time"` |
 
 The `config.json` values are what the server starts with; the panel changes
 them for the night. Like every regulation they are locked once a countdown or

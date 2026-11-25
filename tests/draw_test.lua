@@ -817,6 +817,83 @@ for _, c in ipairs(cylinders) do
 end
 check(pStrokes == 6, 'but still carries a white P across its face (got ' .. pStrokes .. ' strokes)')
 
+-- ===========================================================================
+-- THE STALLS ARE ON SCREEN WHENEVER YOU ARE NEAR THEM
+-- ===========================================================================
+-- Reported: the stalls vanished when a driver crossed a checkpoint in the pits.
+-- They were hidden until the Pit In gate and hidden again at the next checkpoint
+-- cleared (the fallback for a driver who missed Pit Out), and a checkpoint IN
+-- the lane counted as leaving it. What is drawn now depends only on how far the
+-- car is: every stall and PIT OUT gate within TUNE.PIT_DRAW_DIST (200 m), and
+-- the Pit In gate's P all race.
+local function pitShown()
+  local floor = stallShapes()
+  local exitLabel = false
+  for _, t in ipairs(texts) do
+    if tostring(t.text) == 'PIT OUT' then exitLabel = true end
+  end
+  return floor ~= nil, exitLabel
+end
+local function entryStrokes()
+  local n = 0
+  for _, c in ipairs(cylinders) do
+    local white = c.color and c.color[1] == 1 and c.color[2] == 1 and c.color[3] == 1
+    if white and math.abs((c.a.y + c.b.y) * 0.5 - 40) < 0.01 then n = n + 1 end
+  end
+  return n
+end
+-- The armed checkpoint, read off the route state the app is sent.
+local armed
+local quietTrigger = guihooks.trigger
+guihooks.trigger = function (e, payload)
+  if e == 'RaceManagerRoute' and type(payload) == 'table' then armed = payload.nextWp end
+end
+handlers['RM_ApplyLayout']({
+  name = 'pit lane checkpoint', width = 20, height = 10,
+  checkpoints = {
+    { x = 0, y = 100, z = 5, hx = 0, hy = 1 },
+    { x = 0, y = 200, z = 5, hx = 0, hy = 1 },
+  },
+  -- CP 1's other way through, across the pit lane short of the stall: how a
+  -- layout lets a car in the pits keep its lap.
+  branches = { { slot = 1, x = -50, y = 80, z = 5, hx = 0, hy = 1 } },
+  pits     = { { x = -50, y = 100, z = 5, hx = 1, hy = 0 } },
+  pitEntry = { { x = -50, y = 40, z = 5, hx = 0, hy = 1, width = 12, height = 8, depth = 2 } },
+  pitExit  = { { x = -50, y = 160, z = 5, hx = 0, hy = 1, width = 12, height = 8, depth = 2 } },
+})
+serverState({ phase = 'racing', totalLaps = 3, maxResets = -1, drivers = {} })
+
+-- In the lane without ever crossing Pit In (put there, as a reset would).
+veh.x, veh.y, veh.z = -50, 70, 5
+frame()
+local stalls, exitGate = pitShown()
+check(stalls, 'a car near the stalls sees them without having crossed Pit In')
+check(exitGate, 'and the PIT OUT gate with them')
+check(armed == 1, 'CP 1 is armed before the lane checkpoint (got ' .. tostring(armed) .. ')')
+
+-- Through the branch gate at y = 80, a meter a frame.
+for y = 71, 90 do
+  veh.y = y
+  frame()
+end
+check(armed == 2, 'the branch gate in the lane cleared CP 1 (armed: '
+  .. tostring(armed) .. ')')
+stalls, exitGate = pitShown()
+check(stalls, 'and clearing a checkpoint IN the pit lane leaves the stalls on '
+  .. 'screen: this is what hid them from a driver on the way to one')
+check(exitGate, 'and the PIT OUT gate')
+
+-- Far side of the track: nothing of the lane but its sign.
+veh.x, veh.y = -50, 400
+frame()
+stalls, exitGate = pitShown()
+check(not stalls, 'a car 300 m from the stalls draws none of them')
+check(not exitGate, 'nor the PIT OUT gate, 240 m off')
+check(entryStrokes() == 6, 'but the Pit In gate keeps its P all race (got '
+  .. entryStrokes() .. ' strokes)')
+guihooks.trigger = quietTrigger
+veh.x, veh.y, veh.z = 0, 0, 0
+
 
 -- ===========================================================================
 -- Direction markers are FILLED, and built once rather than per frame

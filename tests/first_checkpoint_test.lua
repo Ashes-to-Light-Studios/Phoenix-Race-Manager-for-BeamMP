@@ -221,5 +221,66 @@ RM.setFirstCheckpoint(4)
 check(routeState.firstCheckpoint == 2, 'it cannot be changed mid-session')
 serverState({ phase = 'waiting' })
 
+-- ---------------------------------------------------------------------------
+-- 7. A START FROM THE PIT STALLS HAS ITS OWN FIRST CHECKPOINT
+-- ---------------------------------------------------------------------------
+-- The pits are rarely where the track grid is, so a field gridded in the stalls
+-- (RM_GridAssign's grid = 'pits') arms the layout's pitFirstCheckpoint, not
+-- the grid's First checkpoint. Every car arms it, so the editor warns when one
+-- of its gates runs between two stalls: a car past it would never cross it.
+local function pitLayout(extra)
+  local t = {
+    name = 'pit start', width = 20, height = 8, depth = 2,
+    checkpoints = route(),
+    startPositions = { { x = 0, y = 1250, z = 0, hx = 0, hy = 1 } },
+    firstCheckpoint = 3,
+    pitFirstCheckpoint = 2,
+    -- Stall 1 nearest the exit, 8 m apart, in a lane at x = -30.
+    pits = { { x = -30, y = 1080, z = 0, hx = 0, hy = 1 }, { x = -30, y = 1072, z = 0, hx = 0, hy = 1 },
+             { x = -30, y = 1064, z = 0, hx = 0, hy = 1 } },
+  }
+  for k, v in pairs(extra or {}) do t[k] = v end
+  handlers['RM_ApplyLayout'](t)
+end
+pitLayout()
+check(routeState.pitFirstCheckpoint == 2, 'the pit start first checkpoint reaches the panel')
+
+veh.x, veh.y, veh.z = -30, 1072, 0
+serverState({ phase = 'grid', qualiOutLap = true, totalLaps = 5 })
+handlers['RM_GridAssign']({ slot = 2, order = 1, count = 1, grid = 'pits' })
+serverState({ phase = 'racing', qualiOutLap = true, totalLaps = 5 })
+check(routeState.nextWp == 2,
+  'a field started in the stalls arms the pit start first checkpoint (CP 2), not the grid\'s CP 3')
+serverState({ phase = 'waiting' })
+
+veh.x, veh.y = 0, 1250
+serverState({ phase = 'grid', qualiOutLap = true, totalLaps = 5 })
+handlers['RM_GridAssign']({ slot = 1, order = 1, count = 1 })
+serverState({ phase = 'racing', qualiOutLap = true, totalLaps = 5 })
+check(routeState.nextWp == 3, 'and the next session on the track grid arms the grid\'s own CP 3')
+serverState({ phase = 'waiting' })
+
+-- Renumbered with its gate, like the grid's.
+RM.setPitFirstCheckpoint(3)
+check(routeState.pitFirstCheckpoint == 3, 'the pit start picker sets it')
+RM.insertCheckpoint(2, { x = 0, y = 1150, z = 0, hx = 0, hy = 1 })
+check(routeState.pitFirstCheckpoint == 4, 'a gate inserted before it moves it along with its gate')
+RM.removeCheckpoint(1)
+check(routeState.pitFirstCheckpoint == 3, 'a gate removed before it moves it back')
+RM.reorderCheckpoint(3, 5)
+check(routeState.pitFirstCheckpoint == 5, 'reordering its gate takes it along')
+
+-- THE EDITOR'S WARNING. A branch gate of CP 2 across the lane between stalls 1
+-- and 2: a field gridded there would start on both sides of it.
+pitLayout()
+check(routeState.pitStartSplit == nil, 'no warning while no gate runs between the stalls')
+pitLayout({ branches = { { slot = 2, x = -30, y = 1076, z = 0, hx = 0, hy = 1, width = 10 } } })
+local split = routeState.pitStartSplit
+check(split and split[1] == 1 and split[2] == 2,
+  'a branch gate of the pit start checkpoint between stalls 1 and 2 is reported as that pair')
+pitLayout({ branches = { { slot = 1, x = -30, y = 1076, z = 0, hx = 0, hy = 1, width = 10 } } })
+check(routeState.pitStartSplit == nil,
+  'a gate of another checkpoint between the stalls is no concern: the field is not sent to it first')
+
 print(string.format('first_checkpoint_test: %d checks, %d failures', checks, fails))
 if fails > 0 then os.exit(1) end
