@@ -411,7 +411,9 @@ happens to a driver who takes the flag short of the number:
 - **It needs stalls.** On a layout with no pit stalls the rule does not run,
   and the panel says so, so nobody is ruled out for having nowhere to stop.
 - The rule is announced in chat at GO, every row of the timing table shows
-  `PIT 1/2` (green once done), and it is locked once the race starts.
+  `PIT 1/2` (green once done), and it is locked once the race starts. The
+  [broadcast overlay](#the-overlay) shows the same badge, and its banner can say
+  how many cars have made all their stops (the `pits` item).
 - A driver classified where they stood when the race closed is ruled the same
   way as one who took the flag. A retirement is already out.
 
@@ -3513,7 +3515,7 @@ falls back to polling `/live.json`. Pick what it shows with the address:
 
 | Address | Shows |
 |---|---|
-| `?view=tower` | The running order: position, name, gap, and badges for the fastest lap (**FL**), the joker (**J**, **J×2**), pit stops (**PIT**) and penalties. Rows flash green or red when they move. |
+| `?view=tower` | The running order: position, name, gap, and badges for the fastest lap (**FL**), the joker (**J**, **J×2**), pit stops (**PIT**, **PIT×2**) and penalties. With [mandatory pit stops](#mandatory-pit-stops) every car carries **PIT 1/2**, outlined until all its stops are made. Rows flash green or red when they move. |
 | `?view=grid` | The starting grid, two by two. Before a grid is called, the provisional grid from qualifying. |
 | `?view=banner` | One line: flag, session, lap, clock or time left, fastest lap. Or what you choose, a page at a time: see [the banner](#the-banner). |
 | `?view=results` | The classification: gap, best lap and places gained. |
@@ -3562,10 +3564,12 @@ banner then turns through its pages, a few seconds each, like a TV ticker.
 | `fastest` | The fastest lap: who, and the time. |
 | `leader` | The leader (provisional pole in qualifying), with their number and team logo. |
 | `margin` | The leader's margin over second: a time, or `+1 LAP`. |
-| `order` | The running order: place, number, name and gap. On a turning banner it steps through the field `&per` drivers at a time (5 unless the link says), up to `&rows`, before the next page. |
+| `order` | The running order: place, number, name and gap, and each driver's badges as on the tower (fastest lap, joker, pit stops, penalty, black flag). On a turning banner it steps through the field `&per` drivers at a time (5 unless the link says), up to `&rows`, before the next page. |
 | `onboard` | The driver this PC's camera is on (see `camera`, below), with their place. |
 | `heat` | The heat running, `2/3`, in a heat program. |
 | `field` | How many drivers are in the session. |
+| `joker` | How many of the cars still running have taken the joker: `5/8`. Only while the joker is in force. |
+| `pits` | The pit stops the field has made, `6`. With [mandatory pit stops](#mandatory-pit-stops), how many of the cars still running have made all of theirs instead: `5/8`. Races only. |
 | `latest` | What just happened: the newest line of the [ticker](#the-overlay). |
 | `sponsor` | The sponsor. Always last, on every page. |
 
@@ -3643,7 +3647,7 @@ refused, named in the answer, and keeps its old value.
 | `numbers` | Car numbers: `chip` (in the team's color), `plain` or `off` | `chip` |
 | `teamLogos` | Team logos beside names | `true` |
 | `teamLogoOverrides` | A file of yours for a team's logo, by its short code, like `{"PHX": "asset:phx.png"}`; at most 32 | none |
-| `badges` | The fastest-lap, joker, pit and penalty badges | `true` |
+| `badges` | The fastest-lap, joker, pit and penalty badges, on the tower and in the banner's running order | `true` |
 | `gained` | Places gained, in the results | `true` |
 | `flash` | A row flashes when it moves | `true` |
 | `flagStripe` | The flag-colored stripe | `true` |
@@ -3662,7 +3666,9 @@ when the layout has no name), `labels.qualifying`, `labels.qualiResult`,
 `labels.timeLeft`, `labels.time`, `labels.start`, `labels.fastestLap`,
 `labels.track` (Track), `labels.toGo` (To go), `labels.margin` (Margin),
 `labels.order` (Running order), `labels.onBoard` (On board), `labels.heat`
-(Heat), `labels.field` (Field) and `labels.latest` (Latest), the
+(Heat), `labels.field` (Field), `labels.latest` (Latest), `labels.jokers`
+(Jokers taken), `labels.pits` (Pit stops) and `labels.pitsDone` (All stops
+made), the
 badges' `labels.pit` (PIT), `labels.fl` (FL) and `labels.joker` (J), and
 `labels.waiting` (60 characters), shown while there is no session. An empty
 badge word hides that badge.
@@ -3725,6 +3731,7 @@ server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
 | `finalLap`, `raceExpired`, `finishCloseIn` | The final lap called; a timed race's clock ran out; seconds until the finish closes. |
 | `countdown` | 3, 2, 1 during the start countdown, otherwise `null`. |
 | `jokerEnabled` | The joker lap is in force. |
+| `pitStopsRequired` | The [mandatory pit stops](#mandatory-pit-stops) each driver must make in this race; `0` when there are none (and in qualifying). |
 | `heat` | In a heat program, the heat running (`current`) and how many there are (`count`); otherwise `null`. |
 | `fastestLap` | The session's fastest lap: the driver's `id` and `name`, the `time` and its `text`; or `null`. |
 | `entrants`, `spectators` | Drivers in the session, and players watching (counted, never listed). |
@@ -3754,6 +3761,7 @@ out, and so is anyone not in the field for want of a car
 | `lapsDown` | Laps behind the leader. |
 | `jokerTaken`, `jokerLap`, `jokerText` | How many times the joker was taken, the lap, and `L4` (or `×2!` twice). |
 | `pitStops` | Pit stops this session. |
+| `pitStopsCounted`, `pitStopsText` | The stops that count toward the [mandatory ones](#mandatory-pit-stops) (one per lap), and `1/2` while that rule is on (otherwise the stops made, `2`, or `""`). |
 | `finishTime`, `finishText` | Race time at the flag. |
 | `penalty` | Time penalties, in seconds: checkpoint skips and [missed mandatory pit stops](#mandatory-pit-stops) added up. |
 | `blackFlag` | A black flag is out for this driver (see [Black flags](#black-flags)). |

@@ -286,7 +286,10 @@
       <div class="field" data-key="labels.heat" data-type="text" data-max="24"><span class="lbl">Banner: heat</span></div>
       <div class="field" data-key="labels.field" data-type="text" data-max="24"><span class="lbl">Banner: drivers in the field</span></div>
       <div class="field" data-key="labels.latest" data-type="text" data-max="24"><span class="lbl">Banner: what just happened</span></div>
-      <div class="field" data-key="labels.pit" data-type="text" data-max="24"><span class="lbl">Pit badge</span></div>
+      <div class="field" data-key="labels.jokers" data-type="text" data-max="24"><span class="lbl">Banner: jokers taken</span></div>
+      <div class="field" data-key="labels.pits" data-type="text" data-max="24"><span class="lbl">Banner: pit stops made</span></div>
+      <div class="field" data-key="labels.pitsDone" data-type="text" data-max="24"><span class="lbl">Banner: all required stops made</span></div>
+      <div class="field" data-key="labels.pit" data-type="text" data-max="24"><span class="lbl">Pit badge (PIT 1/2 with stops required)</span></div>
       <div class="field" data-key="labels.fl" data-type="text" data-max="24"><span class="lbl">Fastest lap badge</span></div>
       <div class="field" data-key="labels.joker" data-type="text" data-max="24"><span class="lbl">Joker badge</span></div>
       <div class="field wide" data-key="labels.waiting" data-type="text" data-max="60"><span class="lbl">While the game is not in a session</span></div>
@@ -376,6 +379,7 @@
       session: 'Session', timeLeft: 'Time left', time: 'Time', start: 'Start',
       fastestLap: 'Fastest lap', track: 'Track', toGo: 'To go', margin: 'Margin',
       order: 'Running order', onBoard: 'On board', heat: 'Heat', field: 'Field', latest: 'Latest',
+      jokers: 'Jokers taken', pits: 'Pit stops', pitsDone: 'All stops made',
       waiting: 'Waiting for Phoenix Race Manager…',
       pit: 'PIT', fl: 'FL', joker: 'J'
     },
@@ -670,7 +674,10 @@
     ['countdown', 'The start countdown'], ['fastest', 'The fastest lap: who, and the time'],
     ['leader', 'The leader'], ['margin', 'The leader\'s margin over second'],
     ['order', 'The running order, a few drivers at a time'], ['onboard', 'The driver the camera is on'],
-    ['heat', 'Heat 2/3'], ['field', 'Drivers in the session'], ['latest', 'What just happened'],
+    ['heat', 'Heat 2/3'], ['field', 'Drivers in the session'],
+    ['joker', 'How many of the field have taken the joker: 5/8'],
+    ['pits', 'Pit stops made; with stops required, how many have made them all: 5/8'],
+    ['latest', 'What just happened'],
     ['sponsor', 'The sponsor (always last)']
   ];
   var BANNER_NAMES = BANNER_ITEMS.map(function (x) { return x[0]; });

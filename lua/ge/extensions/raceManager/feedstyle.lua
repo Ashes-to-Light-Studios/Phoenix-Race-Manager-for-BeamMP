@@ -141,7 +141,7 @@ end
 D.BANNER_ITEMS = {
   'logo', 'flag', 'session', 'title', 'track', 'lap', 'togo', 'time', 'clock', 'left',
   'countdown', 'fastest', 'leader', 'margin', 'order', 'onboard', 'heat', 'field',
-  'latest', 'sponsor',
+  'joker', 'pits', 'latest', 'sponsor',
 }
 D.BANNER_PAGES = 8
 local BANNER_SET = {}
@@ -232,6 +232,8 @@ D.SPEC = {
     { 'margin', text24, 'Margin' }, { 'order', text24, 'Running order' },
     { 'onBoard', text24, 'On board' }, { 'heat', text24, 'Heat' },
     { 'field', text24, 'Field' }, { 'latest', text24, 'Latest' },
+    { 'jokers', text24, 'Jokers taken' }, { 'pits', text24, 'Pit stops' },
+    { 'pitsDone', text24, 'All stops made' },
     { 'waiting', C.text(60), 'Waiting for Phoenix Race Manager…' },
     { 'pit', text24, 'PIT' }, { 'fl', text24, 'FL' }, { 'joker', text24, 'J' },
   } },

@@ -11,16 +11,24 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 #### Added
 
 - **Choose what the broadcast banner shows, and let it turn like a ticker.**
-  `?view=banner` can show any of twenty items in the order you name them:
+  `?view=banner` can show any of twenty-two items in the order you name them:
   session, track, lap, laps to go, clock, time left, countdown, fastest lap,
   leader, the leader's margin, the running order, the driver on camera, heat,
-  field size, what just happened, your title, logo, flag and sponsor. A `|`
-  starts a new page, and the banner turns through its pages every few seconds;
-  the running order steps through the field five drivers at a time. Set it in
+  field size, jokers taken (`5/8`), pit stops (or, with stops required, how
+  many cars have made them all), what just happened, your title, logo, flag
+  and sponsor. A `|` starts a new page, and the banner turns through its pages
+  every few seconds; the running order steps through the field five drivers at
+  a time, each with the tower's badges (fastest lap, joker, pit, penalty). Set it in
   the style editor's new **Banner** card (click the items, preview live), or per
   browser source with `&show=`, `&cycle=` and `&per=`. The Feed panel has a
   ready-made **banner ticker** link. As shipped, the banner looks as it did. See
   [The banner](docs/REFERENCE.md#the-banner).
+
+- **Mandatory pit stops on the broadcast.** With stops required, every car on
+  the overlay's tower carries `PIT 1/2`, outlined until all its stops are made,
+  as in the timing table. The feed has the number required
+  (`pitStopsRequired`) and each car's counted stops (`pitStopsCounted`,
+  `pitStopsText`). See [The data](docs/REFERENCE.md#the-data).
 
 #### Changed
 

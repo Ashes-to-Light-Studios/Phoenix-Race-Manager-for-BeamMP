@@ -178,6 +178,8 @@
   }
   .badge.joker { background: var(--accent); color: var(--on-accent); }
   .badge.pit { background: var(--pit); color: var(--on-pit); }
+  /* Mandatory stops still owed: PIT 0/2 in outline, filled once all are made. */
+  .badge.pit.owed { background: transparent; color: var(--pit); box-shadow: inset 0 0 0 1px var(--pit); }
   .badge.fast { background: var(--fastest); color: var(--on-fastest); }
   .badge.out { background: var(--flag-red); color: var(--on-red); }
   .badge.black { background: #000000; color: #ffffff; box-shadow: inset 0 0 0 1px #ffffff; }
@@ -209,6 +211,7 @@
   .banner .ents { display: flex; gap: 1em; }
   .banner .ent .p, .banner .who .p { color: var(--accent); }
   .banner .ent .g { color: var(--muted); font-weight: var(--w); font-size: 0.8em; }
+  .banner .ent .badges { padding: 0; min-width: 0; }
   .banner .flag { padding: 0; width: 0.5em; }
   .banner .k { font-size: 0.62em; color: var(--muted); font-weight: var(--w); letter-spacing: 0.1em; text-transform: uppercase; }
   .banner .v { font-weight: var(--w-strong); font-size: 1.1em; }
@@ -310,6 +313,7 @@
       session: 'Session', timeLeft: 'Time left', time: 'Time', start: 'Start',
       fastestLap: 'Fastest lap', track: 'Track', toGo: 'To go', margin: 'Margin',
       order: 'Running order', onBoard: 'On board', heat: 'Heat', field: 'Field', latest: 'Latest',
+      jokers: 'Jokers taken', pits: 'Pit stops', pitsDone: 'All stops made',
       waiting: 'Waiting for Phoenix Race Manager…',
       pit: 'PIT', fl: 'FL', joker: 'J'
     },
@@ -319,7 +323,7 @@
   // are its frame: on every page, wherever they are named.
   var BANNER_ITEMS = ['logo', 'flag', 'session', 'title', 'track', 'lap', 'togo', 'time', 'clock',
     'left', 'countdown', 'fastest', 'leader', 'margin', 'order', 'onboard', 'heat', 'field',
-    'latest', 'sponsor'];
+    'joker', 'pits', 'latest', 'sponsor'];
   var BANNER_FRAME = { logo: true, flag: true, sponsor: true };
   // "session,lap|order" -> [['session', 'lap'], ['order']], or null. strict: a
   // name it does not know makes the whole value null, as the feed refuses it
@@ -702,6 +706,28 @@
     return s.timeLeftText || s.clockText || s.phaseText;
   }
 
+  // A driver's badges: the fastest lap, the joker, pit stops, a penalty, a
+  // black flag. The tower's rows and the banner's running order.
+  function badges(d, s) {
+    var bs = el('div', 'badges');
+    if (d.fastest && L.fl) { bs.appendChild(el('span', 'badge fast', L.fl)); }
+    if (s.jokerEnabled && d.jokerTaken > 0 && L.joker) {
+      bs.appendChild(el('span', 'badge joker', d.jokerTaken > 1 ? L.joker + '×' + d.jokerTaken : L.joker));
+    }
+    // PIT, not P1: on a broadcast "P1" is a position. With stops required,
+    // every car carries PIT 1/2, outlined until all are made.
+    var need = s.pitStopsRequired > 0 ? s.pitStopsRequired : 0;
+    if (L.pit && need && !d.out) {
+      var made = d.pitStopsCounted || 0;
+      bs.appendChild(el('span', 'badge pit' + (made >= need ? '' : ' owed'), L.pit + ' ' + made + '/' + need));
+    } else if (L.pit && d.pitStops > 0) {
+      bs.appendChild(el('span', 'badge pit', d.pitStops > 1 ? L.pit + '×' + d.pitStops : L.pit));
+    }
+    if (d.penalty > 0) { bs.appendChild(el('span', 'badge out', '+' + d.penalty + 's')); }
+    if (d.blackFlag) { bs.appendChild(el('span', 'badge black', 'BLACK')); }
+    return bs;
+  }
+
   // --------------------------------------------------------------- the views
   var lastPos = {};      // id -> position, for the moved flash
   function tower(doc) {
@@ -736,18 +762,7 @@
       else if (i === 0) { gap = d.status === 'finished' ? d.finishText : (s.phase === 'finished' ? d.finishText : L.leader); }
       else { gap = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText || ''; }
       r.appendChild(el('div', 'gap', gap));
-      if (ST.badges) {
-        var bs = el('div', 'badges');
-        if (d.fastest && L.fl) { bs.appendChild(el('span', 'badge fast', L.fl)); }
-        if (s.jokerEnabled && d.jokerTaken > 0 && L.joker) {
-          bs.appendChild(el('span', 'badge joker', d.jokerTaken > 1 ? L.joker + '×' + d.jokerTaken : L.joker));
-        }
-        // PIT, not P1: on a broadcast "P1" is a position.
-        if (d.pitStops > 0 && L.pit) { bs.appendChild(el('span', 'badge pit', d.pitStops > 1 ? L.pit + '×' + d.pitStops : L.pit)); }
-        if (d.penalty > 0) { bs.appendChild(el('span', 'badge out', '+' + d.penalty + 's')); }
-        if (d.blackFlag) { bs.appendChild(el('span', 'badge black', 'BLACK')); }
-        r.appendChild(bs);
-      }
+      if (ST.badges) { r.appendChild(badges(d, s)); }
       rows.appendChild(r);
     });
     doc.drivers.forEach(function (d) { lastPos[d.id] = d.position; });
@@ -883,6 +898,25 @@
         if (s.heat && s.heat.count) { put(it, L.heat, (s.heat.current || '?') + '/' + s.heat.count); }
       } else if (it === 'field') {
         if (s.entrants > 0) { put(it, L.field, String(s.entrants)); }
+      } else if (it === 'joker') {
+        // Of the cars still running: how many have taken the joker.
+        if (s.jokerEnabled && fieldNow().length) {
+          var took = fieldNow().filter(function (d) { return d.jokerTaken > 0; }).length;
+          put(it, L.jokers, took + '/' + fieldNow().length);
+        }
+      } else if (it === 'pits') {
+        if (s.kind !== 'quali') {
+          if (s.pitStopsRequired > 0) {
+            // Mandatory stops: how many of the cars still running have made all.
+            var done = fieldNow().filter(function (d) { return (d.pitStopsCounted || 0) >= s.pitStopsRequired; }).length;
+            if (fieldNow().length) { put(it, L.pitsDone, done + '/' + fieldNow().length); }
+          } else {
+            // Otherwise every stop the field has made, retirements' included.
+            var stops = 0;
+            doc.drivers.forEach(function (d) { if (inClass(d)) { stops += d.pitStops || 0; } });
+            if (stops > 0) { put(it, L.pits, String(stops)); }
+          }
+        }
       } else if (it === 'latest') {
         put(it, L.latest, lastNews(doc));
       }
@@ -914,6 +948,10 @@
       else if (at === 0) { gap = d.status === 'finished' ? d.finishText : ''; }
       else { gap = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText; }
       if (gap) { e.appendChild(el('span', 'g', gap)); }
+      if (ST.badges) {
+        var bs = badges(d, doc.session);
+        if (bs.firstChild) { e.appendChild(bs); }
+      }
       row.appendChild(e);
     });
     c.appendChild(row);
@@ -1223,7 +1261,8 @@
           fastest: !!(fastest && fastest.id === c.id),
           gapText: i === 0 ? '' : (down >= 1 ? '+' + down + ' LAP' + (down > 1 ? 'S' : '') : '+' + (behind * c.pace).toFixed(3)),
           intervalText: i === 0 ? '' : '+' + (iv * c.pace).toFixed(3),
-          jokerTaken: c.joker, pitStops: c.pits, penalty: 0, finishText: '',
+          jokerTaken: c.joker, pitStops: c.pits, pitStopsCounted: c.pits,
+          pitStopsText: c.pits > 0 ? String(c.pits) : '', penalty: 0, finishText: '',
           number: c.number, team: c.team + 1, teamName: team.name, teamShort: team.short,
           teamColor: team.color, teamLogo: team.logo
         };
@@ -1243,7 +1282,8 @@
           lap: lap, lapTarget: LAPS, lapText: lap + '/' + LAPS, lapsToGo: LAPS - lap,
           clockText: Math.floor(clock / 60) + ':' + ('0' + Math.floor(clock % 60)).slice(-2),
           timeLeftText: '', flag: yellow ? 'yellow' : 'green', flagText: yellow ? 'YELLOW FLAG' : '',
-          countdown: null, jokerEnabled: true, gridSource: 'quali', entrants: drivers.length, heat: null,
+          countdown: null, jokerEnabled: true, pitStopsRequired: 0, gridSource: 'quali',
+          entrants: drivers.length, heat: null,
           fastestLap: fastest ? { id: fastest.id, name: fastest.name, time: fastest.time, text: fastest.text } : null
         },
         // The camera rides with whoever is third: the banner's `onboard`.

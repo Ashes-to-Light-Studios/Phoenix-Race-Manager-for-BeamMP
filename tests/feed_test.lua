@@ -387,6 +387,23 @@ check(a.lastLap == 83.456 and a.lastLapText == '1:23.456', 'last lap m:ss.sss')
 check(a.bestLapText == '1:23.456' and a.fastest == true and b.fastest == false, 'best lap, fastest marked')
 check(a.jokerText == 'L2' and b.jokerText == '×2!' and c.jokerText == '', 'joker: L2, ×2!, none')
 check(b.pitStops == 1 and a.pitStops == 0, 'pit stops, zero not null')
+check(doc.session.pitStopsRequired == 0 and b.pitStopsCounted == 0 and b.pitStopsText == '1'
+  and a.pitStopsText == '', 'no stops required: the stops made, as text')
+-- Mandatory stops: the number in force, each car's counted stops, "1/2".
+do
+  local m = race({ pitStopRule = { required = 2, missed = 'time', seconds = 30, active = 2 } })
+  rowOf(m, 2).pitCounted = 1
+  feed.feedState(m)
+  local d2 = live()
+  local mb, ma = driver(d2, 2), driver(d2, 1)
+  check(d2.session.pitStopsRequired == 2, 'stops required: the number in force')
+  check(mb.pitStopsCounted == 1 and mb.pitStopsText == '1/2' and ma.pitStopsText == '0/2',
+    'each car: the stops that count, and 1/2 as the timing table says it')
+  local q = race({ sessionKind = 'quali', pitStopRule = { required = 2, active = 0 } })
+  feed.feedState(q)
+  check(live().session.pitStopsRequired == 0, 'none in qualifying')
+  feed.feedState(race())
+end
 check(b.gapText == '+1.2' and b.intervalText == '+1.2', 'a gap under a minute: +s.s')
 check(c.gapText == '+1:02.3', 'over a minute: +m:ss.s')
 check(dn.gapText == '+1 LAP' and dn.lapsDown == 1, 'a lap down: +1 LAP')
