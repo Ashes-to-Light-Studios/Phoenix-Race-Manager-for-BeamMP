@@ -43,6 +43,17 @@ angular.module('beamng.apps')
       $scope.totalLaps = 5;
       $scope.countdown = null;    // null = hidden, 3..1 = number, 0 = GO!
       $scope.drivers = [];
+      // NO CAR, NO GRID. `drivers` is the board: who is in. Rows the server
+      // marks `unlisted` (left off for want of a car and never joined) are on no
+      // table, board or overlay; admins see them under Not in the field.
+      // `everyDriver` is every row, for the Display Names list.
+      $scope.notInField = [];
+      $scope.everyDriver = [];
+      // This driver: the grid formed without them and they have a car now
+      // (the Join banner), and no car spawned (the Race Entry row). Off our
+      // own row, through the extension, like myStatus.
+      $scope.myJoinable = false;
+      $scope.myNoCar = false;
 
       // Settings inputs, on an OBJECT: they sit inside ng-if child scopes, where
       // a bare primitive ng-model would shadow the controller's value.
@@ -66,7 +77,13 @@ angular.module('beamng.apps')
         cpSkipPenaltySec: 5,
         cpSkipLiftSec: 3,
         cpSkipLiftWindow: 30,
-        cpSkipPitLaps: 3        // laps to serve penalty seconds in, when required
+        cpSkipPitLaps: 3,       // laps to serve penalty seconds in, when required
+        // Black flags: the stop's seconds on top of the usual one, and the laps.
+        bfSeconds: 10,
+        bfLaps: 3,
+        // Mandatory pit stops: how many, and the seconds per missing stop.
+        pitStopsRequired: 0,
+        pitStopSecs: 30
       };
 
       // ----------------------------------------------------------------
@@ -104,6 +121,15 @@ angular.module('beamng.apps')
       $scope.cpSkipPitLaps = 3;
       $scope.cpSkipPitStalls = 0;
       $scope.myCpSkip = null;
+      // An unserved lift becomes 'time' or 'black'; liftBlack is whether black
+      // is in force (it needs stalls).
+      $scope.cpSkipLiftUnserved = 'time';
+      $scope.cpSkipLiftBlack = false;
+      // BLACK FLAGS: the rule (the stop's seconds, the laps, stalls loaded), this
+      // driver's own flag (null while clear), and race control's strip.
+      $scope.bf = { seconds: 10, laps: 3, stalls: 0 };
+      $scope.myBlack = null;
+      $scope.stewardUi = { pid: null, seconds: null, reason: '', confirm: false, menu: false };
       // What a legal reset does: repair in place, or respawn at the last
       // checkpoint the driver crossed. Mirrored from the server.
       $scope.resetMode = 'inplace';
@@ -143,8 +169,8 @@ angular.module('beamng.apps')
       $scope.jokerGates = 0;      // joker gates the LOADED TRACK has (server's count)
       $scope.jokerRoute = [];     // joker gates placed/loaded on this client
       // The pit lane, as this client has it. Declared rather than left to the
-      // first route state: the editor tabs read .length, and an ng-if on an
-      // undefined shows the "no entry gate" warning before a track has loaded.
+      // first route state: the editor tabs read .length before a track has
+      // loaded.
       $scope.pitRoute = [];
       $scope.pitEntry = [];
       $scope.pitExit  = [];
@@ -183,6 +209,8 @@ angular.module('beamng.apps')
       $scope.branchSlot = 1;       // checkpoint the next placed branch gate belongs to
       $scope.gridOffLine = false;  // grid is away from the line, so an out lap is owed
       $scope.firstCheckpoint = 1;  // the gate an out lap arms first
+      $scope.pitFirstCheckpoint = 1;  // ...and one from the pit stalls
+      $scope.pitStartSplit = null;    // [i, i+1]: that gate runs between two stalls
       // The layout's sectors: [{ from, to }], each a checkpoint number or 0 for
       // the start/finish line. Empty: every checkpoint is a sector of its own.
       $scope.sectors = [];
@@ -213,6 +241,11 @@ angular.module('beamng.apps')
       // set the Load/Delete buttons act on.
       $scope.garageSets = [];
       $scope.garageSetUi = { name: '', selected: '' };
+      // Saved rulesets: every rule in Race, Quali and Grid under a name. Names
+      // from the server; `active` is the set the live rules equal. `defaults`
+      // picks the server's own defaults instead of a set.
+      $scope.rulesets = { sets: [], active: null, atDefaults: false };
+      $scope.rulesetUi = { name: '', selected: '', defaults: false };
       // Behind a dot: the panel sits inside an ng-if (ui_bindings_test).
       $scope.garagePickUi = { open: false };
       $scope.resultsPath = '';   // the server's results folder, admins only
@@ -230,6 +263,11 @@ angular.module('beamng.apps')
       $scope.gridUi = { slot: {} };
       // Qualifying rules.
       $scope.ghostQuali = false;
+      $scope.qualiFromPits = false;
+      $scope.raceFromPits = false;
+      // Mandatory pit stops as the server has them; `active` is the number in
+      // force (0 with no stalls, or outside a race).
+      $scope.pitStopRule = { required: 0, missed: 'dsq', seconds: 30, active: 0 };
       // Put display names on BeamMP's nametags as well as on the board.
       // Server-owned so every client agrees; each client applies it locally,
       // because a nametag is drawn from that machine's own player list.
@@ -1388,8 +1426,8 @@ angular.module('beamng.apps')
         shape: null,          // { cx, cy, cz, halfW, halfL, rot } while 'rect'
         wallHeight: 6,        // how tall the arena walls are drawn (visual only)
         wallDepth: 1.5,       // how far they drop below the boundary (visual only)
-        // Who takes part: 'all' (every connected player, the historical
-        // behavior) or 'join' (only drivers who pressed Join Race).
+        // Who takes part: everyone connected in a car who is not spectating,
+        // plus anyone an admin added.
         entrants: 0,          // how many would be in a derby started right now
         maxResets: -1,        // resets per driver per derby (-1 = unlimited)
         visualize: true,      // boundary/grid visuals shown (client-local)
@@ -1545,7 +1583,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.29.1';
+      var APP_BUILD = '0.30.0';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -2057,7 +2095,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (online) { byKey[key].online = true; }
         }
         $scope.teamEntries.forEach(function (e) { add(e.name, false); });
-        ($scope.drivers || []).forEach(function (d) { add(d.alias || d.name, true); });
+        ($scope.everyDriver || []).forEach(function (d) { add(d.alias || d.name, true); });
         (($scope.cup && $scope.cup.roster) || []).forEach(function (e) { add(e.name, false); });
         teamsTyped.forEach(function (n) { add(n, false); });
         order.sort();
@@ -2398,7 +2436,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
             if (typeof data.dragStrip === 'boolean') { $scope.dragStrip = data.dragStrip; }
           }
           if (typeof data.layoutName === 'string') { $scope.loadedLayout = data.layoutName; }
-          $scope.drivers = data.drivers || [];
+          var rows = data.drivers || [];
+          $scope.everyDriver = rows;
+          $scope.drivers = rows.filter(function (d) { return !d.unlisted; });
+          $scope.notInField = rows.filter(function (d) { return !!d.unlisted; });
           // The broadcast board's buckets, cut once per broadcast.
           splitField($scope.drivers);
           // Note gains/losses before the table re-renders, so the arrows in the
@@ -2413,6 +2454,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (data.teams !== undefined && data.teams !== null) { takeTeams(data.teams); }
           if (data.teamEntries) { takeTeamEntries(data.teamEntries); }
           else if ($scope.adminTab === 'teams' && $scope.isAdmin) { teamsRebuildDrivers(); }
+          // Saved rulesets: admins' own sends and the broadcast after a change,
+          // absent otherwise (keep what we have).
+          if (data.rulesets) { takeRulesets(data.rulesets); }
           // Re-seed the distance box when the server's value moves (clamped, or
           // set by another admin).
           if (typeof data.totalLaps === 'number') {
@@ -2467,8 +2511,26 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
               if ($scope.cpSkipPitLaps !== cs.pitLaps) { $scope.settingsUi.cpSkipPitLaps = cs.pitLaps; }
               $scope.cpSkipPitLaps = cs.pitLaps;
             }
+            if (cs.liftUnserved === 'time' || cs.liftUnserved === 'black') {
+              $scope.cpSkipLiftUnserved = cs.liftUnserved;
+            }
+            $scope.cpSkipLiftBlack = cs.liftBlack === true;
           }
           $scope.myCpSkip = data.myCpSkip || null;
+          // Black flags, each box re-seeded only when the server's value moved.
+          var bf = data.bf || null;
+          if (bf) {
+            if (typeof bf.seconds === 'number') {
+              if ($scope.bf.seconds !== bf.seconds) { $scope.settingsUi.bfSeconds = bf.seconds; }
+              $scope.bf.seconds = bf.seconds;
+            }
+            if (typeof bf.laps === 'number') {
+              if ($scope.bf.laps !== bf.laps) { $scope.settingsUi.bfLaps = bf.laps; }
+              $scope.bf.laps = bf.laps;
+            }
+            $scope.bf.stalls = typeof bf.stalls === 'number' ? bf.stalls : 0;
+          }
+          $scope.myBlack = data.myBlack || null;
           $scope.jokerEnabled = !!data.jokerEnabled;
           $scope.paceLap = !!data.paceLap;
           $scope.pacing = !!data.pacing;
@@ -2516,6 +2578,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.readyCheck = data.readyCheck !== false;
           $scope.myStatus = data.myStatus || null;
           $scope.myGridPos = data.myGridPos || null;
+          $scope.myJoinable = data.myJoinable === true;
+          $scope.myNoCar = data.myNoCar === true;
           if (data.phase !== 'grid'
               && ($scope.readyUi.confirm === 'countdown' || $scope.readyUi.confirm === 'race')) {
             $scope.readyUi.confirm = null;
@@ -2524,6 +2588,21 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           // and resets fields are: only when the server's value actually moved,
           // so an edit in progress is never yanked out from under the admin.
           $scope.ghostQuali = !!data.ghostQuali;
+          $scope.qualiFromPits = !!data.qualiFromPits;
+          $scope.raceFromPits = !!data.raceFromPits;
+          if (data.pitStopRule && typeof data.pitStopRule.required === 'number') {
+            var psr = data.pitStopRule;
+            // The boxes follow the server only when its value moved, so typing
+            // is not overwritten by the next broadcast.
+            if ($scope.pitStopRule.required !== psr.required) { $scope.settingsUi.pitStopsRequired = psr.required; }
+            if ($scope.pitStopRule.seconds !== psr.seconds) { $scope.settingsUi.pitStopSecs = psr.seconds; }
+            $scope.pitStopRule = {
+              required: psr.required,
+              missed: psr.missed === 'time' ? 'time' : 'dsq',
+              seconds: typeof psr.seconds === 'number' ? psr.seconds : 30,
+              active: typeof psr.active === 'number' ? psr.active : 0
+            };
+          }
           $scope.nametags = !!data.nametags;
           $scope.qualiOutLap = !!data.qualiOutLap;
           // A limit becoming non-zero picks the Laps/Timed toggle, keyed on the
@@ -2663,8 +2742,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.routeWaypoints = data.waypoints || [];
           // Through toArray, not `|| []`: an empty Lua table arrives as {}.
           $scope.pitRoute = toArray(data.pitRoute);
-          // The lane's mouth and its exit. Both optional: with no entry gate
-          // every stall is drawn all race, which is what tracks did before this.
+          // The lane's mouth and its exit. Both optional signs: the stalls are
+          // drawn by distance from the car, not by which gate it crossed.
           $scope.pitEntry = toArray(data.pitEntry);
           $scope.pitExit  = toArray(data.pitExit);
           $scope.pitActive = !!data.pitActive;
@@ -2751,6 +2830,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (typeof data.branchSlot === 'number') { $scope.branchSlot = data.branchSlot; }
           $scope.gridOffLine = !!data.gridOffLine;
           $scope.firstCheckpoint = data.firstCheckpoint || 1;
+          $scope.pitFirstCheckpoint = data.pitFirstCheckpoint || 1;
+          // An empty Lua table arrives as {}: only a real pair is a warning.
+          $scope.pitStartSplit = (data.pitStartSplit && data.pitStartSplit[0]) ? toArray(data.pitStartSplit) : null;
           // THROUGH toArray: an empty list arrives from Lua as {}.
           $scope.sectors = toArray(data.sectors);
           if (typeof data.maxSectors === 'number') { $scope.maxSectors = data.maxSectors; }
@@ -2893,6 +2975,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.pickFirstCheckpoint = function (s) {
         $scope.laneUi.menu = null;
         bngApi.engineLua('raceManager.setFirstCheckpoint(' + (parseInt(s, 10) || 1) + ')');
+      };
+      $scope.pickPitFirstCheckpoint = function (s) {
+        $scope.laneUi.menu = null;
+        bngApi.engineLua('raceManager.setPitFirstCheckpoint(' + (parseInt(s, 10) || 1) + ')');
       };
       // ------------------------------------------------------------------
       // Sectors (editor)
@@ -4415,7 +4501,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // What is waiting on this driver: race grid, derby form-up or drag pass, one
       // banner. Used as !!readyPrompt() (a fresh object never settles a watch).
       $scope.readyPrompt = function () {
-        if (!$scope.readyCheck) { return null; }
+        // Called with the ready check off is an admin's Add: still a Ready to press.
+        var called = $scope.phase === 'grid' && $scope.myStatus === 'called';
+        if (!$scope.readyCheck && !called) { return null; }
         if ($scope.phase === 'grid'
             && ($scope.myStatus === 'called' || $scope.myStatus === 'gridded')) {
           return { mode: 'race', ready: $scope.myStatus === 'gridded',
@@ -4457,6 +4545,19 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.readyDriver = function (row) {
         if (row) { bngApi.engineLua('raceManager.readyDriver(' + row.id + ')'); }
       };
+      // JOIN: the grid formed without this driver (no car then) and they are in
+      // one now. Nothing else puts them in: not spawning, not waiting.
+      $scope.joinPress = function () {
+        bngApi.engineLua('raceManager.joinField()');
+      };
+      // Admin: put a left-off driver with a car on the back of the grid.
+      $scope.placeDriver = function (row) {
+        if (row) { bngApi.engineLua('raceManager.placeDriver(' + row.id + ')'); }
+      };
+      // Admin: in the field with or without a car, until they leave (Add), or not.
+      $scope.addDriver = function (row, on) {
+        if (row) { bngApi.engineLua('raceManager.addDriver(' + row.id + ',' + (on !== false) + ')'); }
+      };
       $scope.readyAll = function () {
         bngApi.engineLua('raceManager.readyAll()');
       };
@@ -4485,6 +4586,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if ($scope.cautionPending) { return 'Yellow flag: caution, race back to the line'; }
           if ($scope.caution) { return 'Yellow flag: caution, positions frozen. Hold your place.'; }
           return 'Yellow flag: hazard on track, take care';
+        }
+        if ($scope.driverFlag === 'black') {
+          return 'Black flag: stop in a pit stall to serve it, or you are disqualified';
         }
         if ($scope.driverFlag === 'white') { return 'White flag: last lap'; }
         if ($scope.driverFlag === 'blue') {
@@ -5060,7 +5164,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         var n = isInt ? parseInt(box, 10) : parseFloat(box);
         return isNaN(n) ? null : n;
       }
-      function sendCpSkip(enabled, type, fromButton, pitServe) {
+      function sendCpSkip(enabled, type, fromButton, pitServe, liftUnserved) {
         var w = cpSkipNum($scope.settingsUi.cpSkipWarnings, true);
         var s = cpSkipNum($scope.settingsUi.cpSkipPenaltySec, false);
         var l = cpSkipNum($scope.settingsUi.cpSkipLiftSec, false);
@@ -5074,7 +5178,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         if (pl === null) { pl = $scope.cpSkipPitLaps; }
         bngApi.engineLua('raceManager.setCheckpointSkip(' + (enabled ? 'true' : 'false') + ', '
           + w + ', ' + luaStr(type) + ', ' + s + ', ' + l + ', ' + win + ', '
-          + luaStr(pitServe || $scope.cpSkipPitServe) + ', ' + pl + ')');
+          + luaStr(pitServe || $scope.cpSkipPitServe) + ', ' + pl + ', '
+          + luaStr(liftUnserved || $scope.cpSkipLiftUnserved) + ')');
       }
       $scope.toggleCpSkip = function () {
         sendCpSkip(!$scope.cpSkipEnabled, $scope.cpSkipType, true);
@@ -5089,6 +5194,76 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.applyCpSkip = function () {
         sendCpSkip($scope.cpSkipEnabled, $scope.cpSkipType, false);
+      };
+      $scope.setCpSkipLiftUnserved = function (mode) {
+        if (mode !== 'time' && mode !== 'black') { return; }
+        sendCpSkip($scope.cpSkipEnabled, $scope.cpSkipType, true, null, mode);
+      };
+      // A black flag with nowhere to serve it runs as time, and the panel says so.
+      $scope.cpSkipLiftNoStalls = function () {
+        return $scope.cpSkipEnabled && $scope.cpSkipHasLift()
+          && $scope.cpSkipLiftUnserved === 'black' && !$scope.cpSkipPitStalls;
+      };
+
+      // BLACK FLAGS: the rule, applied as typed. A blank box is mid-edit.
+      $scope.applyBlackFlag = function () {
+        var s = cpSkipNum($scope.settingsUi.bfSeconds, true);
+        var l = cpSkipNum($scope.settingsUi.bfLaps, true);
+        if (s === null || l === null) { return; }
+        bngApi.engineLua('raceManager.setBlackFlag(' + s + ', ' + l + ')');
+      };
+      $scope.bfLabel = function () {
+        var n = $scope.bf.laps;
+        return 'Stop in a pit stall: the usual stop + ' + $scope.bf.seconds + 's, within '
+          + n + ' lap' + (n === 1 ? '' : 's') + ', or disqualified';
+      };
+
+      // RACE CONTROL on one driver, from the strip under the session controls.
+      // The server checks it all again and answers a refusal in chat.
+      $scope.stewardShown = function () {
+        return $scope.isAdmin && $scope.isMode('race') && $scope.sessionKind === 'race'
+          && $scope.phase === 'racing';
+      };
+      // Who can be ruled on: a car racing (any of the three) or home (DQ).
+      $scope.stewardDrivers = function () {
+        var out = [];
+        for (var i = 0; i < $scope.drivers.length; i++) {
+          var d = $scope.drivers[i];
+          if (d.status === 'racing' || d.status === 'finished') { out.push(d); }
+        }
+        return out;
+      };
+      $scope.stewardPick = function (row) {
+        $scope.stewardUi.pid = row.id;
+        $scope.stewardUi.menu = false;
+        $scope.stewardUi.confirm = false;
+      };
+      $scope.stewardRow = function () {
+        var id = $scope.stewardUi.pid;
+        for (var i = 0; i < $scope.drivers.length; i++) {
+          if ($scope.drivers[i].id === id) { return $scope.drivers[i]; }
+        }
+        return null;
+      };
+      $scope.stewardCan = function (action) {
+        var r = $scope.stewardRow();
+        if (!r) { return false; }
+        if (action === 'black') { return r.status === 'racing' && $scope.bf.stalls > 0; }
+        if (action === 'clear') { return r.blackFlag !== undefined && r.blackFlag !== null; }
+        return r.status === 'racing' || r.status === 'finished';
+      };
+      $scope.stewardBlackTitle = function () {
+        if (!$scope.bf.stalls) { return 'Needs pit stalls: the loaded layout has none to serve one in'; }
+        return 'Stop in a pit stall for the seconds here (empty: ' + $scope.bf.seconds + 's) within '
+          + $scope.bf.laps + ' lap' + ($scope.bf.laps === 1 ? '' : 's') + ', or disqualified';
+      };
+      $scope.steward = function (action) {
+        var r = $scope.stewardRow();
+        if (!r || !$scope.stewardCan(action)) { return; }
+        var s = cpSkipNum($scope.stewardUi.seconds, true);
+        bngApi.engineLua('raceManager.steward(' + Number(r.id) + ', ' + luaStr(action) + ', '
+          + (s === null ? 'nil' : s) + ', ' + luaStr($scope.stewardUi.reason || '') + ')');
+        $scope.stewardUi.confirm = false;
       };
       // Required with nowhere to stop runs as Optional, and the panel says so.
       $scope.cpSkipPitNoStalls = function () {
@@ -5117,12 +5292,18 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         var head = w === 0 ? 'No warnings: ' : (w + ' warning' + (w === 1 ? '' : 's') + ', then ');
         var pen = '+' + Number($scope.cpSkipPenaltySec).toFixed(1) + 's';
         var lift = 'lift ' + Number($scope.cpSkipLiftSec).toFixed(1) + 's';
-        var serve = ' (serve within ' + $scope.cpSkipLiftWindow + 's or ' + pen
-          + ($scope.cpSkipType === 'liftAndTime' ? ' more)' : ')');
+        var black = $scope.cpSkipLiftUnserved === 'black' && $scope.cpSkipPitStalls > 0;
+        var serve = ' (serve within ' + $scope.cpSkipLiftWindow + 's or '
+          + (black ? 'a black flag)' : pen + ($scope.cpSkipType === 'liftAndTime' ? ' more)' : ')'));
         var tail = cpSkipPitTail();
         if ($scope.cpSkipType === 'lift') { return head + lift + serve + tail; }
         if ($scope.cpSkipType === 'liftAndTime') { return head + pen + ' and ' + lift + serve + tail; }
         return head + pen + ' per skipped checkpoint' + tail;
+      };
+      // The board's black flag badge: the stop, the lap and why.
+      $scope.blackTitle = function (row) {
+        return 'Black flag: stop in a pit stall for ' + (row.blackFlag || 0) + 's by lap '
+          + (row.blackBy || '?') + ', or disqualified' + (row.blackWhy ? ' (' + row.blackWhy + ')' : '');
       };
       // The board's badges. nil on the wire is 0.
       $scope.penaltyLabel = function (row) {
@@ -5133,6 +5314,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.cpWarnLabel = function (row) {
         return 'W ' + (row.checkpointWarningsUsed || 0) + '/' + $scope.cpSkipWarnings;
+      };
+      // This driver's own black flag, for the driver bar.
+      $scope.myBlackLabel = function () {
+        var b = $scope.myBlack;
+        if (!b) { return ''; }
+        return 'STOP ' + (b.sec || 0) + 's \u00b7 PIT BY LAP ' + (b.by || '?');
       };
       // This driver's own readout: warnings, penalty, and a lift being served.
       $scope.myCpLabel = function () {
@@ -5342,6 +5529,56 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         bngApi.engineLua('raceManager.deleteGarageSet(' + luaStr(name) + ')');
         $scope.garageSetUi.selected = '';
       };
+
+      // --- Saved rulesets ------------------------------------------------
+      // The server owns the names, the cap and every refusal (rules.lua).
+      function takeRulesets(r) {
+        $scope.rulesets = {
+          sets: toArray(r.sets),
+          active: r.active || null,
+          atDefaults: r.atDefaults === true
+        };
+        // A set deleted elsewhere must not stay selected.
+        if ($scope.rulesetUi.selected
+            && $scope.rulesets.sets.indexOf($scope.rulesetUi.selected) === -1) {
+          $scope.rulesetUi.selected = '';
+        }
+      }
+      // No name picks the server defaults.
+      $scope.pickRuleset = function (name) {
+        $scope.rulesetUi.selected = name || '';
+        $scope.rulesetUi.defaults = !name;
+      };
+      $scope.rulesetPicked = function () {
+        return $scope.rulesetUi.defaults || !!$scope.rulesetUi.selected;
+      };
+      // Saving under a name already kept replaces it: the button says so.
+      $scope.rulesetNameTaken = function () {
+        var name = ($scope.rulesetUi.name || '').trim().toLowerCase();
+        return !!name && $scope.rulesets.sets.some(function (s) {
+          return String(s).toLowerCase() === name;
+        });
+      };
+      $scope.saveRuleset = function () {
+        var name = ($scope.rulesetUi.name || '').trim();
+        if (!name) { return; }
+        bngApi.engineLua("raceManager.rulesetAction('save', " + luaStr(name) + ')');
+        $scope.rulesetUi.name = '';
+      };
+      $scope.loadRuleset = function () {
+        if ($scope.rulesetUi.defaults) {
+          bngApi.engineLua("raceManager.rulesetAction('defaults', '')");
+        } else if ($scope.rulesetUi.selected) {
+          bngApi.engineLua("raceManager.rulesetAction('load', "
+            + luaStr($scope.rulesetUi.selected) + ')');
+        }
+      };
+      $scope.deleteRuleset = function () {
+        var name = $scope.rulesetUi.selected;
+        if (!name) { return; }
+        bngApi.engineLua("raceManager.rulesetAction('delete', " + luaStr(name) + ')');
+        $scope.rulesetUi.selected = '';
+      };
       // Tag an entry with the class its car runs in. Blank clears it.
       $scope.applyGarageClass = function (index) {
         var v = $scope.garageClassUi.input[index];
@@ -5431,6 +5668,40 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.toggleGhostQuali = function () {
         bngApi.engineLua('raceManager.setGhostQuali(' + (!$scope.ghostQuali) + ')');
+      };
+      // Mandatory pit stops. A blank box is mid-edit: nothing is sent.
+      function sendPitStopRule(missed) {
+        var n = parseInt($scope.settingsUi.pitStopsRequired, 10);
+        var s = parseFloat($scope.settingsUi.pitStopSecs);
+        if (isNaN(n)) { n = $scope.pitStopRule.required; }
+        if (isNaN(s)) { s = $scope.pitStopRule.seconds; }
+        bngApi.engineLua('raceManager.setPitStopRule(' + n + ', '
+          + luaStr(missed || $scope.pitStopRule.missed) + ', ' + s + ')');
+      }
+      $scope.applyPitStopRule = function () {
+        if (isNaN(parseInt($scope.settingsUi.pitStopsRequired, 10))) { return; }
+        if (isNaN(parseFloat($scope.settingsUi.pitStopSecs))) { return; }
+        sendPitStopRule();
+      };
+      $scope.setPitStopMissed = function (mode) {
+        if (mode !== 'dsq' && mode !== 'time') { return; }
+        sendPitStopRule(mode);
+      };
+      // The row badge: stops counted of those required, in a race with the
+      // rule in force.
+      $scope.pitStopsShown = function () {
+        return $scope.sessionKind === 'race' && $scope.pitStopRule.active > 0;
+      };
+      $scope.pitStopsLabel = function (row) {
+        return 'PIT ' + (row.pitCounted || 0) + '/' + $scope.pitStopRule.active;
+      };
+      $scope.pitStopsDone = function (row) {
+        return (row.pitCounted || 0) >= $scope.pitStopRule.active;
+      };
+      // Start from the pit stalls: 'quali' or 'race', each its own switch.
+      $scope.togglePitStart = function (kind) {
+        var on = kind === 'quali' ? !$scope.qualiFromPits : !$scope.raceFromPits;
+        bngApi.engineLua('raceManager.setPitStart(' + JSON.stringify(kind) + ', ' + on + ')');
       };
       // Qualifying is LAPS or TIMED, never both: the box not shown sends 0. The
       // mode is a display choice, seeded from the server.
@@ -6281,7 +6552,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // 'poles' keeps its old key so an earlier choice carries over.
       $scope.gateKinds = [
         { key: 'poles', pref: 'poles',      label: 'Checkpoints', tip: 'Armed and next checkpoint pillars' },
-        { key: 'pit',   pref: 'pitGates',   label: 'Pit lane',    tip: 'Pit In gate and stalls. Stalls show once you are in the lane.' },
+        { key: 'pit',   pref: 'pitGates',   label: 'Pit lane',    tip: 'The Pit In sign. Stalls still show near your car.' },
         { key: 'joker', pref: 'jokerGates', label: 'Joker gate',  tip: 'The joker route gate' }
       ];
       $scope.gatesShown = {};

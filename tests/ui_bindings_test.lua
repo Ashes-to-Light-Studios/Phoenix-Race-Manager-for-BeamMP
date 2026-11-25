@@ -222,6 +222,10 @@ local function wired(command, handler, msg)
 end
 
 wired('setSpectating',      'setSpectating',      'Sit out / rejoin')
+-- No car, no grid: the driver's Join, and an admin's Place and Add / Remove.
+wired('joinField',          'joinPress',          'Join a grid formed without you')
+wired('placeDriver',        'placeDriver',        'Place a left-off driver')
+wired('addDriver',          'addDriver',          'Add a driver without a car')
 wired('setGridMode',        'setGridMode',        'Grid order')
 wired('setDriverGridSlot',  'pinGridSlot',        'Custom grid slot')
 wired('setGhostQuali',      'toggleGhostQuali',   'Ghost qualifying')

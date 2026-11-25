@@ -359,7 +359,8 @@ local function drawStartPositions()
   local sel = nudge.on and nudge.list == track.startPositions and nudge.sel or nil
   for i, sp in ipairs(track.startPositions) do
     local held = picked and (picked[sp] or sel == i) or false
-    drawStartPosition(sp, i, session.gridSlot == i, held)
+    -- Our slot, unless the field was gridded in the pit stalls (session.gridFromPits).
+    drawStartPosition(sp, i, session.gridSlot == i and not session.gridFromPits, held)
   end
 end
 
@@ -728,43 +729,52 @@ local function drawDriverGate(derbyLive)
         session.jokerTaken and p.jokerUsedFill or p.jokerFill, glyph)
     end
   end
-  -- With an ENTRY GATE only that gate shows while racing; the stalls appear
-  -- once in the lane (a hundred draws down to three). A track without one shows
-  -- every stall, as before.
-  -- The pit switch hides the lane only until the driver crosses Pit In: past
-  -- it they need the stalls. An ungated lane has no Pit In, so stays hidden.
-  -- Drawing only: pit.inLane and the stop run elsewhere.
-  local gated = #track.pitEntry > 0
-  if edit.pitGates == false and not (gated and pit.inLane) then
-    -- Hidden by the player, and not in the lane.
-  elseif gated and not pit.inLane then
-    -- One gate at the mouth: poles, a panel and a big P, no words.
+  -- THE PIT LANE IS DRAWN BY DISTANCE, NOT BY WHAT THE CAR CROSSED. It used to
+  -- appear at the entry gate and go at the exit gate or the next checkpoint,
+  -- which hid the stalls from a driver crossing a checkpoint IN the lane (a
+  -- branch gate, a line spanning the pits). Now every stall and exit gate
+  -- within TUNE.PIT_DRAW_DIST of the car is drawn: the whole lane near the
+  -- pits, nothing on the far side of the track. The entry gate's big P is a
+  -- sign for where the lane is, so it is drawn all race.
+  -- The player's pit switch hides that sign only: stalls and PIT OUT keep the
+  -- distance rule, so a driver in the lane always sees them.
+  if edit.pitGates ~= false then
     for _, wp in ipairs(track.pitEntry) do
       drawPoleGate(wp, p.pit, nil, p.pitFill, 'pit')
     end
-  elseif #track.pitRoute > 0 then
+  end
+  if #track.pitRoute > 0 or #track.pitExit > 0 then
     local _, ppos = sampledVehicle()
+    -- No car to measure from: everything, as a track did before.
+    local r2 = ppos and TUNE.PIT_DRAW_DIST * TUNE.PIT_DRAW_DIST or math.huge
+    local px, py = ppos and ppos.x or 0, ppos and ppos.y or 0
     local best, bestD = 1, math.huge
     if ppos then
       for i, wp in ipairs(track.pitRoute) do
-        local dx, dy = wp.x - ppos.x, wp.y - ppos.y
+        local dx, dy = wp.x - px, wp.y - py
         local d = dx * dx + dy * dy
         if d < bestD then best, bestD = i, d end
       end
     end
-    -- Every stall; the nearest in full, GREEN once the car is in it.
+    -- Every stall in range; the nearest in full, GREEN once the car is in it.
+    -- Distances inline, no table: this runs every frame.
     local sets = p.pitSets
     for i, wp in ipairs(track.pitRoute) do
-      if i ~= best then paint.pitBox(wp, sets.far, false) end
+      if i ~= best then
+        local dx, dy = wp.x - px, wp.y - py
+        if dx * dx + dy * dy <= r2 then paint.pitBox(wp, sets.far, false) end
+      end
     end
     local near = track.pitRoute[best]
-    if near then
+    if near and (not ppos or bestD <= r2) then
       local inBox = pit.active or (ppos ~= nil and pit.inside(near, ppos))
       paint.pitBox(near, inBox and sets.inbox or sets.near, true)
     end
-    -- The way out, drawn only from inside the lane.
-    if gated then
-      for _, wp in ipairs(track.pitExit) do
+    -- The way out: in range, like a stall, so it is not a sign on the racing
+    -- line all lap.
+    for _, wp in ipairs(track.pitExit) do
+      local dx, dy = wp.x - px, wp.y - py
+      if dx * dx + dy * dy <= r2 then
         drawPoleGate(wp, p.pitFar, 'PIT OUT', p.pitFill, nil)
       end
     end

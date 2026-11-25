@@ -176,6 +176,7 @@
   .badge.pit { background: var(--pit); color: var(--on-pit); }
   .badge.fast { background: var(--fastest); color: var(--on-fastest); }
   .badge.out { background: var(--flag-red); color: var(--on-red); }
+  .badge.black { background: #000000; color: #ffffff; box-shadow: inset 0 0 0 1px #ffffff; }
 
   /* Grid */
   .gridbox { background: var(--bg); padding: 0.5em 0.6em 0.7em; }
@@ -696,6 +697,7 @@
         // PIT, not P1: on a broadcast "P1" is a position.
         if (d.pitStops > 0 && L.pit) { bs.appendChild(el('span', 'badge pit', d.pitStops > 1 ? L.pit + '×' + d.pitStops : L.pit)); }
         if (d.penalty > 0) { bs.appendChild(el('span', 'badge out', '+' + d.penalty + 's')); }
+        if (d.blackFlag) { bs.appendChild(el('span', 'badge black', 'BLACK')); }
         r.appendChild(bs);
       }
       rows.appendChild(r);

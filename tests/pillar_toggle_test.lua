@@ -1,10 +1,11 @@
 -- Headless test for the GATE SWITCHES: each player can hide, for themselves,
--- the checkpoint poles, the pit lane and the joker gate, each on its own (one
--- menu on the driver bar and the menu bar, remembered by the app).
+-- the checkpoint poles, the Pit In sign and the joker gate, each on its own
+-- (one menu on the driver bar and the menu bar, remembered by the app).
 --
--- Two properties matter. It is drawing only: a hidden gate still arms, scores,
--- opens the lane and counts the joker, or a driver who hides one loses laps.
--- And each switch hides its own group alone; direction markers have none.
+-- Two properties matter. It is drawing only: a hidden gate still arms, scores
+-- and counts the joker, or a driver who hides one loses laps. And each switch
+-- hides its own group alone: the pit switch never hides a stall or PIT OUT
+-- (a driver must find their stop), and direction markers have no switch.
 --
 -- Run from the repo root: lua5.3 tests/pillar_toggle_test.lua
 
@@ -218,13 +219,13 @@ check(checkpointPoles() == 4, 'the editor toggle leaves the pillar switch alone'
 serverState({ phase = 'racing', totalLaps = 3, maxResets = -1, drivers = {},
   jokerEnabled = true })
 frame()
-check(pitDraws() > 0, 'the pit stall is on by default (got ' .. pitDraws() .. ')')
+check(pitDraws() > 0, 'the pit stall near the car is drawn (got ' .. pitDraws() .. ')')
 check(jokerDraws() > 0, 'and the joker gate')
 
 RM.setShowPitGates(false)
 frame()
-check(pitDraws() == 0, 'pit off hides the stall (got ' .. pitDraws() .. ')')
-check(checkpointPoles() == 4 and jokerPoles() == 2, 'and nothing else')
+check(pitDraws() > 0, 'pit off never hides a stall (got ' .. pitDraws() .. ')')
+check(checkpointPoles() == 4 and jokerPoles() == 2, 'and changes nothing else')
 
 RM.setShowPitGates(true)
 RM.setShowJokerGates(false)
@@ -235,8 +236,9 @@ check(pitDraws() > 0 and checkpointPoles() == 4, 'and nothing else')
 RM.setShowPoles(false)
 RM.setShowPitGates(false)
 frame()
-check(checkpointPoles() + pitDraws() + jokerDraws() == 0, 'all three off hide all three')
-check(#tris > 0, 'and the direction marker still stands: it has no switch')
+check(checkpointPoles() + jokerDraws() == 0, 'all three off hide checkpoints and joker')
+check(pitDraws() > 0, 'and the stall still stands')
+check(#tris > 0, 'and the direction marker: it has no switch')
 
 -- Drawing only. On lap 1 the joker is shut, so crossing it draws a refusal:
 -- proof the hidden gate was still seen.
@@ -265,8 +267,8 @@ check(pitDraws() > 0, 'the editor still draws the pit stall with pit off')
 check(jokerPoles() == 2, 'and the joker gate with joker off')
 RM.setEditorOpen(false)
 
--- A gated lane, with the switch off: crossing the hidden entry gate still puts
--- the driver in the lane, and nothing of it is drawn.
+-- A gated lane: pit off hides the Pit In sign; the stalls and PIT OUT keep the
+-- distance rule, so a driver past Pit In always sees them.
 handlers['RM_ApplyLayout']({
   name = 'gated', width = 20, height = 10,
   checkpoints = {
@@ -278,31 +280,30 @@ handlers['RM_ApplyLayout']({
   pitExit  = { { x = -60, y = 200, z = 0, hx = 0, hy = 1 } },
 })
 serverState({ phase = 'racing', totalLaps = 3, maxResets = -1, drivers = {} })
-RM.setShowPitGates(true)
-moveTo(90, -60)
-check(pitDraws() > 0, 'a gated lane shows its entry gate')
-check(route().pitInLane == false, 'and the driver is not in it yet')
--- Pit off hides the Pit In gate, but past it a driver needs the stalls.
-local function stallDraws()
+-- Draws in the lane at this y: Pit In 100, the stall 150, PIT OUT 200.
+local function laneAt(y)
   local n = 0
+  for _, c in ipairs(cylinders) do
+    if math.abs(c.a.x + 60) < 12 and math.abs(c.a.y - y) < 8 then n = n + 1 end
+  end
   for _, q in ipairs(quads) do
-    if math.abs(q.a.x + 60) < 12 and math.abs(q.a.y - 150) < 8 then n = n + 1 end
+    if math.abs(q.a.x + 60) < 12 and math.abs(q.a.y - y) < 8 then n = n + 1 end
   end
   return n
 end
+RM.setShowPitGates(true)
+moveTo(90, -60)
+check(laneAt(100) > 0, 'the Pit In sign shows')
+check(laneAt(150) > 0 and laneAt(200) > 0, 'and the stall and PIT OUT, near the car')
 RM.setShowPitGates(false)
 frame()
-check(pitDraws() == 0, 'pit off hides the Pit In gate (got ' .. pitDraws() .. ')')
--- One frame more after each crossing: a frame draws before its pit check.
-moveTo(96, -60); moveTo(104, -60); frame()
-check(route().pitInLane == true, 'crossing the hidden Pit In still enters the lane')
-check(stallDraws() > 0, 'and in the lane the stalls show, pit off or not')
-moveTo(196, -60); moveTo(204, -60); frame()
-check(route().pitInLane == false, 'the exit gate takes them out')
-check(pitDraws() == 0, 'and out of the lane it is hidden again')
+check(laneAt(100) == 0, 'pit off hides the Pit In sign (got ' .. laneAt(100) .. ')')
+check(laneAt(150) > 0 and laneAt(200) > 0, 'but not the stall or PIT OUT')
+moveTo(96, -60); moveTo(104, -60)
+check(laneAt(150) > 0, 'past Pit In the stall still shows, pit off')
 RM.setShowPitGates(true)
 frame()
-check(pitDraws() > 0, 'back on, the Pit In gate shows')
+check(laneAt(100) > 0, 'back on, the Pit In sign shows again')
 
 -- This client's view only: no switch sends anything.
 local sentBefore = #sent

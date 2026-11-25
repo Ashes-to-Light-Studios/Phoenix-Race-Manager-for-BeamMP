@@ -303,6 +303,11 @@ function M.build.race(data)
   for _, rec in ipairs(final) do leaderLaps = math.max(leaderLaps, lapsRun(rec)) end
 
   local winner = final[1].finishTime and final[1].status ~= 'dsq' and final[1] or nil
+  -- The classified time: the flag plus every penalty on it, checkpoint skips
+  -- and missed pit stops, which is what put the order in this order.
+  local function flagTime(rec)
+    return rec.finishTime + (rec.penaltySeconds or 0) + (rec.pitStopPenalty or 0)
+  end
   local rows = {}
   -- Room for a penalty note when one is shown (the cell is cut at its width).
   local timeW = 10
@@ -316,17 +321,22 @@ function M.build.race(data)
       if down > 0 then
         time = '+' .. down .. (down == 1 and ' lap' or ' laps')
       elseif winner and rec ~= winner then
-        -- On the classified time: the flag plus any checkpoint-skip penalty,
-        -- which is what put the order in this order.
-        local gap = (rec.finishTime + (rec.penaltySeconds or 0))
-          - (winner.finishTime + (winner.penaltySeconds or 0))
+        local gap = flagTime(rec) - flagTime(winner)
         time = '+' .. (gap >= 60 and host.fmtLap(gap) or string.format('%.3f', gap))
       else
-        time = host.fmtLap(rec.finishTime + (rec.penaltySeconds or 0))
+        time = host.fmtLap(flagTime(rec))
       end
+      -- Said as the results file says it.
+      local notes = {}
       if (rec.penaltySeconds or 0) > 0 then
-        time = time .. string.format(' (+%.1fs pen)', rec.penaltySeconds)
-        timeW = 22
+        notes[#notes + 1] = string.format('+%.1fs pen', rec.penaltySeconds)
+      end
+      if (rec.pitStopPenalty or 0) > 0 then
+        notes[#notes + 1] = string.format('+%.1fs pit', rec.pitStopPenalty)
+      end
+      if #notes > 0 then
+        time = time .. ' (' .. table.concat(notes, ', ') .. ')'
+        timeW = math.max(timeW, #notes == 2 and 34 or 22)
       end
     else
       pos, time = 'DNF', 'DNF'

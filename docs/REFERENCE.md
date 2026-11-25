@@ -116,13 +116,14 @@ they are performing.
 | | Admin | Moderator |
 |---|---|---|
 | Run sessions, grids, flags, cautions | ✅ | ✅ |
+| Black flags and disqualifications ([Race control](#race-control)) | ✅ | ✅ |
 | Race, quali, reset and garage settings | ✅ | ✅ |
 | Build, save and load track layouts | ✅ | ✅ |
 | Cup, derby and drag ladder | ✅ | ✅ |
 | Clear **your own** copies of the results | ✅ | ✅ |
 | Change either password | ✅ | ❌ |
 | **Clear Results Cache** (the server's files) | ✅ | ❌ |
-| **Delete** a track layout, derby arena or garage set | ✅ | ❌ |
+| **Delete** a track layout, derby arena, garage set or ruleset | ✅ | ❌ |
 | **Clear** a lap records board, or take a time off it | ✅ | ❌ |
 | Choose where results are saved (**Save results**) | ✅ | ❌ |
 
@@ -382,15 +383,53 @@ as one. Every stop is logged server-side with the driver, the stall and the lap.
 They are **not** respawn points. A stall repairs a car where it stands and does
 nothing else - a later reset still goes wherever the reset ruleset says.
 
+Qualifying and the race can each start **from** the stalls, with stall 1 as
+pole: see [Starting from the pit stalls](#starting-from-the-pit-stalls).
+
 With **Serve in pits** on, a stop also serves any checkpoint-skip penalty
 seconds the driver owes, holding the car that much longer (see
 [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)).
 
-Every stall in the lane is drawn as a box; only the nearest gets the stop bar,
-the chevron and the two-band walls. With a **Pit In** gate placed, the stalls
-appear only once a driver has crossed it. That gate carries a large white **P**
-across its face and no text; the exit gate is labeled **PIT OUT**. The editor
-still labels both, numbered.
+#### Mandatory pit stops
+
+**Pit stops** in the Race settings makes every driver stop a set number of
+times in the race (0, the default, turns it off). **If missed** decides what
+happens to a driver who takes the flag short of the number:
+
+| If missed | What happens |
+|-----------|--------------|
+| **Disqualify** (default) | `Disqualified - Pit Stop Not Made` at the flag, ruled like a missed joker lap |
+| **Time** | The seconds you set (30 by default) go on the race time for **each** stop missed, in the final classification |
+
+- **One stop counts per lap.** Driving out of one stall and straight into
+  another is one stop. The driver is told after each one: `Pit stop 1 of 2
+  done`, or `Same lap as your last stop: not counted`.
+- Any stop in a stall counts, including one that serves penalty seconds.
+  Standing in your stall at the green after a
+  [start from the pits](#starting-from-the-pit-stalls) is not a stop.
+- **Races only.** Qualifying and practice ignore it.
+- **It needs stalls.** On a layout with no pit stalls the rule does not run,
+  and the panel says so, so nobody is ruled out for having nowhere to stop.
+- The rule is announced in chat at GO, every row of the timing table shows
+  `PIT 1/2` (green once done), and it is locked once the race starts.
+- A driver classified where they stood when the race closed is ruled the same
+  way as one who took the flag. A retirement is already out.
+
+The results file states the rule under the header, adds a **Pits** column
+(`1/2`), and shows a time penalty beside the race time as `(+30.0s pit)`.
+
+Every stall within **200 m** of your car is drawn as a box; only the nearest
+gets the stop bar, the chevron and the two-band walls. That depends only on
+where your car is, not on which gates you have crossed, so nothing hides a stall
+from a driver on the way to one, whatever shape the pit lane is. On the far side
+of the track the lane is not drawn at all.
+
+**In** and **Out** are optional signs. They do not show or hide anything. The
+**Pit In** gate carries a large white **P** across its face and no text, and is
+drawn all race so drivers can see where the pits are (a player can hide it for
+themselves, see [Seeing the checkpoints](#seeing-the-checkpoints)). The exit gate is labeled
+**PIT OUT** and is drawn within 200 m, like the stalls. The editor still labels
+both, numbered.
 
 #### Placing the starting grid
 
@@ -429,9 +468,9 @@ across server restarts:
 
 ### Step 4 - Who is actually in the race
 
-**Everyone races.** Every connected player is in the field, so a server nobody
-has configured grids the people who turned up. The **Race Entry** bar shows how
-many that is.
+**Everyone races.** Every connected player in a car is in the field, so a server
+nobody has configured grids the people who turned up. The **Race Entry** bar
+shows how many that is.
 
 A driver who does not want to race presses **Spectate** and the session runs
 without them. Their car stays exactly where it is and becomes a ghost: nothing
@@ -454,6 +493,46 @@ entry mode, a per-driver **Join Race**, and spectating. They could disagree, and
 the failure that made the case for cutting them down to one was a driver who sat
 out and then had no way back in.
 
+#### No car, no grid
+
+**A player with no car spawned is not in the field.** When a grid forms (Generate
+Grid, Start Quali, Restart From Grid), a heat draw is made, a derby forms up or
+a drag ladder is drawn, everyone in a car is in, and anyone without one is left
+off. They get a chat message saying so, and the admins are told who was left off.
+The server asks BeamMP which cars each player has, so nothing is needed from the
+player's game. Walking (BeamMP's unicycle) does not count as a car.
+
+**A car spawned later does not put them in.** Once the grid has formed without
+them, nothing happens on its own:
+
+- **Join.** As soon as they are in a car, a **JOIN** banner appears where the
+  Ready button does, with a HUD notice. Pressing it puts them on the back of the
+  grid, placed and held like everyone else. It is offered while the grid is
+  forming, before the start, with or without the ready check.
+- **Never pressed, never listed.** A driver who does not join is on no board:
+  not the driver tables, the broadcast board, the overlay feed, or the results
+  file (the qualifying table included). Until then they have no place, so
+  nobody else's place number moves for them.
+
+**For an admin**, **Not in the field** (under Race Entry) lists everyone the
+board leaves out:
+
+| Tag | Means | Button |
+|---|---|---|
+| **NO CAR** | No car spawned | **Add**: in the field with or without a car, until they leave the server. On a grid being formed they are called to the back and press Ready once they are in a car. If they never do, the start goes without them, as for anyone not ready |
+| **LEFT OFF** | The grid formed while they had no car; they have one now | **Place** (while the grid forms): onto the back of the grid now |
+| **ADDED** | An admin added them | **Remove**: the no-car rule applies to them again. Still car-less and not yet placed, they come off the grid |
+
+An added driver shows **ADDED** in the driver table too, with **Remove**. An Add
+lasts until the player disconnects and survives Start Quali and Reset.
+
+**A slot once given is kept.** Deleting your car on the grid and spawning another,
+to change cars, does not take you off it. The rule decides who is picked, never
+who is dropped.
+
+If BeamMP cannot say which cars a player has (a server build without the call),
+everyone counts as in a car, which is how the mod behaved before this rule.
+
 ### Step 5 - Qualifying
 
 Press **Start Quali**, then **Start Countdown**. Start Quali forms a
@@ -461,6 +540,9 @@ qualifying grid exactly the way Generate Grid forms a race one - every
 entrant is called to the grid, and stood on a start position and held once
 they press Ready (see [The ready check](#the-ready-check)) - and the countdown
 releases the field.
+
+Qualifying can also line up in the pit stalls: see
+[Starting from the pit stalls](#starting-from-the-pit-stalls).
 
 **The out lap.** The field starts from a standing grid, so the first lap is
 the lap you spent getting off the line. It is given away: **not timed, not
@@ -696,6 +778,40 @@ the stragglers are taken where they stand and the session closes normally.
    staggered, the same as a grid forming - and each driver's camera is put
    explicitly back on their *own* car rather than on whichever vehicle the
    game happens to pick.
+
+#### Starting from the pit stalls
+
+Qualifying and the race can each line up in the [pit stalls](#pit-stalls)
+instead of on the grid: **Start in pits** in the Qualifying settings, and again
+in the Race settings. Both are off by default and, like every rule in those
+tabs, are kept over a server restart and in [rulesets](#rulesets). A common
+setup is qualifying from the pits and the race from the grid.
+
+- **Stall 1 is pole**, stall 2 is P2, and so on, in the usual grid order. So
+  number the stalls from the pit exit back. Cars are placed and held exactly as
+  on the grid, facing the way each stall was placed.
+- **The first lap is an out lap.** Every car is sent to the same checkpoint
+  first (CP 1, unless you set **Pit start** in the editor's Stalls tab), round
+  the lap and over the line. It is not timed. In qualifying it is extra, as
+  qualifying's out lap always is; in a race it counts as lap 1, as it does for
+  any [grid away from the line](#the-out-lap).
+- **Standing in your stall at the green is not a pit stop.** The stall only
+  works again once you have driven out of it.
+
+**The whole field starts behind the same checkpoint.** A car standing past the
+checkpoint the field is sent to would never cross it on the way out, and its
+out lap would be a lap longer than everyone else's. So before the field is
+placed in the stalls, the server checks that no gate of that checkpoint (main
+or branch) runs between two of the stalls in use. If one does, that session
+lines up on the grid instead and chat says why, for example: *Race from the
+track grid: CP 1 runs between pit stalls 3 and 4*. Move that gate, or set **Pit
+start** to a checkpoint ahead of every stall. The Stalls tab shows the same
+warning while you build the layout. The check follows the lane from stall to
+stall by number, which is one more reason to number them in order.
+
+The grid is also used when the layout has **fewer stalls than drivers** (per
+heat, with heats) or no stalls at all, again with a chat line saying so. The
+**Pit start** checkpoint is saved with the layout.
 
 ### Step 7 - Results
 
@@ -1195,7 +1311,11 @@ crossed, so it is not left stuck, and the skip costs a **warning**, then the
 | Serve within (s) | `checkpointSkipLiftWindow` | `30` | 5-300 seconds of green-flag running |
 | Serve in pits | `checkpointSkipPitServe` | `"off"` | `"off"`, `"optional"`, `"required"` (see [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)) |
 | within (laps) | `checkpointSkipPitLaps` | `3` | 1-20: laps to serve them in, when required |
+| Unserved | `checkpointSkipLiftUnserved` | `"time"` | `"time"` (the seconds), `"black"` (a [black flag](#black-flags)) |
 | (not in the panel) | `checkpointSkipMaxGates` | `2` | 1-5: how far ahead, in gates, a crossing still counts as a skip |
+| Pit stops | `pitStopsRequired` | `0` | 0-10 mandatory stops in a race, 0 off (see [Mandatory pit stops](#mandatory-pit-stops)) |
+| If missed | `pitStopMissed` | `"dsq"` | `"dsq"` (disqualified at the flag) or `"time"` |
+| + s per stop | `pitStopPenaltySeconds` | `30` | 1-600, in steps of 0.5, per missing stop under `"time"` |
 
 The `config.json` values are what the server starts with; the panel changes
 them for the night. Like every regulation they are locked once a countdown or
@@ -1251,9 +1371,10 @@ warning 1/2`, `... +5.0s`, `... lift 3.0s owed`, `Alice lift served`,
 `Alice lift converted to +5.0s`.
 
 **Serving a lift.** While a lift is owed the HUD holds
-`LIFT OFF THE THROTTLE: 3.0s`, counting down while it is being served. It does
-not time out like the other HUD lines: it stays until the lift is served or
-turned into time.
+`LIFT OFF THE THROTTLE: 3.0s - 22s to serve`, counting down while it is being
+served, with the green-flag running left to serve it in. It does not time out
+like the other HUD lines: it stays until the lift is served or turned into
+time. [Race Lights (PRM)](#race-lights-prm) shows the same as a meter.
 
 - The countdown runs while the throttle is off (5% or less), the car is doing
   at least 5 m/s, the race is green, and the car is not held (a pit stop, the
@@ -1271,7 +1392,10 @@ watched, not enforced: nothing cuts the throttle for the driver.
 
 The serve window counts green-flag running only: it pauses under a caution, a
 caution called, a red flag and the pace lap. Each new penalty starts the window
-again. When it runs out, every lift still owed becomes `penalty seconds` each.
+again. When it runs out, every lift still owed becomes `penalty seconds` each,
+or, with **Unserved** set to **Black flag**, one [black flag](#black-flags).
+A black flag needs a stall to be served in, so on a layout with none it is the
+seconds, and the panel says so.
 A lift still owed when the car takes the flag is turned into time at once,
 before its place is worked out. A car that retires (DNF or DSQ) has its owed
 lift dropped; its warnings and seconds stay in the results.
@@ -1351,6 +1475,71 @@ column: skips, warnings used, penalty seconds, lifts served, converted or owed,
 and cut laps. Qualifying's lines note laps that were cut. The Discord post uses
 the corrected times too.
 
+### Black flags
+
+A black flag tells one driver to **stop in a pit stall**. It is raised by race
+control (see [Race control](#race-control)), or by a lift not served in its
+window when **Unserved** is **Black flag**. Black flags are for races only.
+
+| Setting | `config.json` key | Default | Range |
+|---------|-------------------|---------|-------|
+| Stop (s) | `blackFlagSeconds` | `10` | 0-120: seconds held on top of the usual 5 s stop. `0` is the usual stop alone |
+| within (laps) | `blackFlagLaps` | `3` | 1-20: laps to make the stop in |
+
+They are under **Race ▾ → Rules**, locked once a session starts like every rule,
+and kept in [rulesets](#rulesets).
+
+**Serving it.** Stop in a stall as usual. The car is held for the usual 5 s, plus
+the penalty seconds it owes if [Serve in pits](#serving-penalty-seconds-in-the-pits)
+is on, plus the black flag's seconds: `PIT STOP: 5s + BLACK FLAG 10s`, then
+`BLACK FLAG SERVED - GO!`. The car is repaired as at any stop. A stop cut short
+serves nothing, and one raised while the car is held waits for the next stop.
+
+**The window.** A flag raised on lap 4 with 3 laps can be served on laps 4 to 7.
+A second flag adds its seconds to the one out, so one stop serves both, and
+starts the window again. Past it, the driver is **disqualified at once**
+(`Disqualified - Black Flag Ignored`) and goes to spectate. A car that takes the
+checkered flag with its window still open has the stop it did not make put on
+its race time: the flag's seconds plus 5.
+
+**It needs stalls.** With no saved layout with pit stalls loaded, race control's
+Black flag button is off and says why, and an unserved lift is the seconds.
+
+**What the driver sees.** A black `BLACK FLAG` flash saying what to do, by when
+and why, the same line on the HUD until the flag is served or withdrawn, a black
+flag in the header, `BLACK FLAG` in the driver bar, and black lamps in
+[Race Lights (PRM)](#race-lights-prm). The board shows `BLACK` beside the name,
+and the [broadcast feed](#broadcast-feed) has `blackFlag`.
+
+### Race control
+
+During a race, admins and moderators get a **Race control** strip under the
+session controls: pick a driver, then
+
+- **Black flag** raises one, with the seconds typed beside it (empty: the rule's).
+- **Clear** withdraws one. The driver is told `Black flag withdrawn`.
+- **Disqualify**, then **Yes, disqualify**: nothing undoes it. A car on track is
+  ruled out and goes to spectate, told `DISQUALIFIED` rather than shown the
+  checkered flag. A car already home is ruled out where it stands. The last car
+  on track out ends the race.
+
+An optional **reason** (40 characters, plain text) goes to the field in chat and
+into the results: `Disqualified - Avoidable contact`. Without one it is
+`Race Control`. Each ruling is told to the field and to race control, and the
+results file lists them under the header:
+
+```
+ Race control (black flags: stop 10s, within 3 laps):
+   Lap 4: Alice black flag, 10s (Avoidable contact)
+   Lap 5: Alice black flag served
+   Lap 7: Dan disqualified: Black Flag Ignored
+```
+
+A disqualified driver is classified `DSQ`, scores nothing in the cup, sets no lap
+record and never transfers from a heat, as any other disqualification. The
+server checks every ruling again, and a refusal (no stalls, a driver not on
+track) is answered in chat.
+
 ### Fastest lap
 
 The quickest lap set by anyone in the session is shown **in gold** in the Best
@@ -1386,7 +1575,10 @@ menu, halfway across the map. Now it **calls** them to the grid instead.
   recorded against you; you never started.
 - Joining the server, or pressing Race after Spectate, while the grid is being
   called puts you at the **back** of it with a Ready button of your own, until
-  the start positions run out.
+  the start positions run out. **You need a car for that**: a player who joins
+  with no car, or was left off for having none, is not called when they spawn
+  one. They press **JOIN** instead, which places them at the back in one press
+  (see [No car, no grid](#no-car-no-grid)).
 
 **For an admin or moderator**, beside Start Countdown:
 
@@ -1600,7 +1792,9 @@ point-to-point layout in every other way.
 
 Connecting mid-race does not put you in it. A driver who arrives has no grid
 slot, no laps and no out lap behind them, so they are held as a **spectator until
-the next grid forms** - which is where entry is decided for everybody.
+the next grid forms** - which is where entry is decided for everybody. They
+arrive with no car, so they are on no board for this session either (see
+[No car, no grid](#no-car-no-grid)).
 
 **Their car is a ghost to everyone still racing.** They arrive with a vehicle, a
 spawn point and no idea a session is running, and without this they can put a
@@ -1901,6 +2095,7 @@ Resources/Server/PhoenixRM Server/
         discord.json             the Discord webhook and what it posts
         cup.json                 the championship
         teams.json               teams and car numbers
+        rules.json               the race rules in force, and saved rulesets
         roster.json              display names
         garage.json              the allowed vehicles
         results/                 one .txt per session, while Save results is on the server
@@ -2488,19 +2683,19 @@ ticks, each on its own:
 | Tick | Hides |
 |---|---|
 | **Checkpoints** | the armed and next checkpoint poles |
-| **Pit lane** | the Pit In gate, and the stalls until you cross it |
+| **Pit lane** | the Pit In sign (its big **P**) |
 | **Joker gate** | the joker gate, its fill and its symbol |
 
 Each one changes your screen only, never the server or anyone else's, and is
 remembered like the sound setting. The button's posts turn grey with a slash
 while anything is hidden, and its tooltip names what. Hiding changes nothing
 else: a hidden checkpoint still has to be driven through, still counts the lap
-and still catches a track cut; a hidden Pit In gate still puts you in the pit
-lane, and once you are in it the stalls and the exit show again so you can find
-your stop; a hidden joker gate still counts the joker, or refuses it on lap 1.
-A lane with no Pit In gate has nothing to cross, so its stalls stay hidden. Direction markers have no tick and always
-stay. The ticks are separate from the editor's **Hide/Show Gates**, so hiding
-gates to race never hides a track you are building.
+and still catches a track cut; a hidden joker gate still counts the joker, or
+refuses it on lap 1. **Pit lane** never hides the stalls or PIT OUT: they keep
+the 200 m rule (see [Pit stalls](#pit-stalls)), so you can always find your
+stop. Direction markers have no tick and always stay. The ticks are separate
+from the editor's **Hide/Show Gates**, so hiding gates to race never hides a
+track you are building.
 
 Two gates ahead and nothing else - a whole lap's worth of numbered rectangles
 across the racing line is clutter, but a checkpoint nobody can see is worse.
@@ -2910,10 +3105,55 @@ Two consequences worth knowing:
 - **Settings stay put for the whole event.** They live on the server, not in
   the app, and nothing but changing them again moves them: they survive Start
   Quali, Generate Grid, a countdown and **Reset**, and every admin's panel
-  shows the same values because all of them are reading the server's. (They are
-  *not* written to disk - restarting the server returns them to their
-  defaults. Track layouts, the garage, the roster and the cup are the things
-  that survive that.)
+  shows the same values because all of them are reading the server's. They are
+  written to `Data/rules.json` too, so a map switch that restarts the server, a
+  crash or a restart by hand comes back on the same rules. See
+  [Rulesets](#rulesets).
+
+### Rulesets
+
+**The rules in force survive a restart.** Every rule in the Race, Quali and
+Grid tabs is written to `Data/rules.json` as it changes and put back when the
+server starts. A map switch to a map the server did not have loaded used to
+restart it on `config.json`'s rules.
+
+Three things do not come back, because what they need is gone:
+
+- **The heat draw.** The heat program (heats, transfers, heat laps, the draw's
+  seeding) comes back; which driver is in which heat does not, since the drivers
+  left with the restart. Press **Draw heats** again.
+- **Custom grid order.** Its slots belong to the drivers connected when they
+  were typed, so it comes back as Quali order.
+- **A joker lap with no Joker Route.** The track is not loaded after a restart,
+  so the joker lap is off until a track with a route is, the same refusal its
+  switch gives.
+
+**`config.json` still wins where you edit it.** The file keeps the defaults it
+was written against. Change `totalLaps` in `config.json` and restart, and the
+race runs to the new number; every rule you did not touch there comes back from
+`rules.json`.
+
+**A ruleset is every one of those rules under a name**, so a night that runs a
+sprint, then a heat program, then an endurance recalls each in one click. The
+**Rulesets** row is the first line of the Race tab:
+
+- **Save** stores the rules in force under the name you type. A name already
+  kept (in any case) says **Update** and replaces that set.
+- Pick a set, then **Load**: every rule in Race, Quali and Grid is replaced and
+  the field is told in chat. Refused while a session is running, as each rule's
+  own switch is. A set that arms the joker lap or the pace lap leaves it off on
+  a track that cannot run it, and says so.
+- **Server defaults**, picked and loaded the same way, puts `config.json`'s
+  rules back.
+- The set the rules in force match is ticked. Change one rule by hand and no
+  set is ticked until you save or load one.
+- **Delete** is **admin only**, like a garage set: nothing puts a deleted one
+  back. Saving and loading are open to a moderator.
+
+Up to 30 rulesets, names up to 32 characters. They live in `rules.json` beside
+the rules in force. A `rules.json` that does not parse is never written over:
+the rules still change for the night, but are not kept over a restart, and
+rulesets cannot be changed until the file is fixed or removed.
 
 ### What a checkpoint looks like
 
@@ -3419,7 +3659,9 @@ server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
 | `entrants`, `spectators` | Drivers in the session, and players watching (counted, never listed). |
 | `gridSource` | `locked` once the grid is called, `quali` for a provisional grid from qualifying times, otherwise `null`. |
 
-**`drivers`**, in running order (qualifying: by best lap). Spectators are left out.
+**`drivers`**, in running order (qualifying: by best lap). Spectators are left
+out, and so is anyone not in the field for want of a car
+([No car, no grid](#no-car-no-grid)).
 
 | Field | Meaning |
 |---|---|
@@ -3443,6 +3685,7 @@ server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
 | `pitStops` | Pit stops this session. |
 | `finishTime`, `finishText` | Race time at the flag. |
 | `penalty` | Time penalties, in seconds. |
+| `blackFlag` | A black flag is out for this driver (see [Black flags](#black-flags)). |
 | `resets` | Resets used. |
 | `number` | The car number, as text (`"07"` is not `"7"`), or `null`. |
 | `team`, `teamName`, `teamShort`, `teamColor`, `teamLogo` | The driver's team: its id, name, short code (`PHX`), color (`#ff7a1a`) and logo link; `null` with no team. |
@@ -3911,10 +4154,36 @@ drag tree, flag and status lights use the same colors.
 | Yellow, flashing | YELLOW FLAG | An advisory yellow (qualifying) |
 | Red | RED FLAG | A red flag |
 | White / checkered / blue | LAST LAP / CHECKERED FLAG / BLUE FLAG | Your own white, checkered and blue flags |
+| The lift meter (see below) | LIFT 1.8s · 22s | A [lift](#checkpoint-skips-track-cuts) owed: served so far, and the time left to serve it |
+| Green | LIFT SERVED | The lift is served |
+| Black, white rims | BLACK FLAG · PIT BY LAP 7 | Your own [black flag](#black-flags) |
+| Green | SERVED · GO | The black flag is served |
+| Black | DISQUALIFIED | Race control ruled you out |
 
 GO, the green and your own flags show for a few seconds and go out; the rest stay
 up for as long as they are true. A red flag or a caution always wins over a flag
 of your own.
+
+**The lift meter.** While a lift is owed, the five lamps are a meter that fills
+green as it is served, the lamp being filled blinking, and unlit lamps wear a
+white rim. The caption says what is left and how long you have:
+
+| Caption | You are |
+|---|---|
+| `LIFT OFF 3.0s · 22s` | Still on the throttle, nothing served yet |
+| `LIFT 1.8s · 22s` | Off the throttle: 1.8 s to go, 22 s to serve it in |
+| `THROTTLE ON · 3.0s · 19s` | Back on the throttle: it starts again |
+| `LIFT PAUSED · 1.8s · 22s` | Paused: too slow, held, or the race neutralised |
+
+` · +1` is a second lift owed after this one. The window counts green-flag
+running, as the server's does, so it stops under a caution. There is no red or
+amber in the meter: red is the red flag and amber the drag tree. In a tall box
+it fills from the bottom.
+
+Every light about the whole field (a red, a caution, the pace lap, a restart, a
+hazard yellow) takes the box over from the meter and from a black flag, and the
+green that ends it shows, with its tone, before they come back. The HUD line
+keeps counting a lift down under a hazard yellow.
 
 **Drag racing.** During a pass the box becomes the tree: PRE and STAGE bulbs,
 three ambers, green and red. Unlit lenses keep a tint and a rim of their own
@@ -3934,7 +4203,9 @@ remembered.
 
 **Cost.** The app binds nothing: the client pushes one small event when the
 light changes, a handful of times a race, and the app sets classes on its lamps.
-It adds nothing to the work the main panel does on each timing update.
+The lift meter is the exception, pushed up to ten times a second while a lift
+is being served and only when what it shows moved. It adds nothing to the work
+the main panel does on each timing update.
 
 ## Radar (PRM)
 
@@ -4927,8 +5198,10 @@ derby mode, and derby controls are not shown anywhere else - see
    is. Closing the Derby panel is enough to get the driving view: you do not
    have to start a derby to see what your drivers will see.
 3. **Entry** is the same one switch the circuit races use: every connected
-   player is in the field unless they have pressed **Spectate**, which is how
-   the derby has always behaved by default. Somebody who only wants to watch
+   player in a car is in the field unless they have pressed **Spectate**, which
+   is how the derby has always behaved by default. A player with no car spawned
+   at Form Up is left out, unless an admin added them (see
+   [No car, no grid](#no-car-no-grid)). Somebody who only wants to watch
    sits out both modes with one press - worth knowing that being entered means
    losing your car to freecam the moment you are eliminated. The counter shows
    how many would be in a derby started right now, and the field is locked from

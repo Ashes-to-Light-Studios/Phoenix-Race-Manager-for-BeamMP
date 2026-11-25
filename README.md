@@ -170,13 +170,19 @@ and loading selects it, so putting an edited track back takes no retyping. Both 
 layout; if the client sending it isn't holding a section the saved copy has, the
 server refuses and says exactly what would have gone.
 
-**4. Decide who's racing.** **Everyone on the server is in the field**, so
-there's nothing to do. A driver who'd rather watch presses **Spectate** and the
-session runs without them; their car stays put as a ghost, and **Race**, beside
-it, puts them back. That's the whole entry system, and it's the driver's own
-call, not an admin setting. A one on one is two people racing and everybody else
-spectating. Once a session is running the field is fixed: the way out from there
-is **Retire**, which keeps a classified position and scores like any other DNF.
+**4. Decide who's racing.** **Everyone on the server who is in a car is in the
+field**, so there's nothing to do. A driver who'd rather watch presses
+**Spectate** and the session runs without them; their car stays put as a ghost,
+and **Race**, beside it, puts them back. That's the whole entry system, and it's
+the driver's own call, not an admin setting. A one on one is two people racing
+and everybody else spectating. Once a session is running the field is fixed: the
+way out from there is **Retire**, which keeps a classified position and scores
+like any other DNF.
+
+A player with **no car spawned** is left off the grid and off the leaderboard.
+Spawning a car afterwards does not put them in. They press **Join** to start
+from the back, or an admin uses **Place** or **Add** under **Not in the field**.
+See [No car, no grid](docs/REFERENCE.md#no-car-no-grid).
 
 **5. Qualifying.** Press **Start Quali**, then **Start Countdown**. The field
 starts from the grid, so the first lap is an **out lap**: not timed, not scored,
@@ -240,6 +246,7 @@ expect without touching any of it.
 |---|---|
 | **[Vehicle reset limits](docs/REFERENCE.md#vehicle-reset-limits)** | Cap resets per driver per session. Past the allowance the reset key genuinely stops working. Can respawn at the last checkpoint instead of in place. |
 | **[Checkpoint skips](docs/REFERENCE.md#checkpoint-skips-track-cuts)** | Optional track-cut rule. A driver who crosses a checkpoint ahead of the one they are due is moved on instead of left stuck, gets a set number of warnings, then a penalty: seconds on their race time, a lift off the throttle for a few seconds, or both. Penalties count in the final classification and the results file; a cut lap sets no time. |
+| **[Black flags](docs/REFERENCE.md#black-flags) and [race control](docs/REFERENCE.md#race-control)** | Race control can black flag a driver, served by a stop in a pit stall within a set number of laps or they are disqualified, withdraw it, or disqualify a driver outright, with a reason that goes into the results. An unserved lift can be a black flag too. |
 | **[Reset ghosting](docs/REFERENCE.md#reset-ghosting)** | A driver who resets is intangible for a few seconds rather than reappearing solid in the racing line. Collisions return only once the space around them is provably clear. |
 | **[Branch gates](docs/REFERENCE.md#branch-gates-two-ways-through-a-checkpoint)** | Give a checkpoint a second gate and either one clears it. Split lanes and head-on "suicide" ovals, scored together on one leaderboard, with nothing to assign anyone to. |
 | **[Sectors](docs/REFERENCE.md#sectors)** | Define a track's sectors, such as S1 from the line to CP 3 and S2 from CP 3 to CP 6, and drivers are timed on those instead of on every checkpoint. Each sector time shows against the driver's own best for it. |
@@ -269,12 +276,13 @@ expect without touching any of it.
 | **[Drag racing](docs/REFERENCE.md#drag-racing-parallel-game-mode)** | A tournament ladder down a drag strip: single or double elimination, or a points shootout. Two to eight cars a pass with any number going through, a christmas tree with real red lights, reaction times, elapsed times and trap speeds, and dial-in bracket racing. Scores into the cup on a table of its own. The strip is an ordinary point-to-point layout saved with the type Drag, so the track editor already builds one, and a practice pass lets one driver try it before a field turns up. |
 | **[Broadcast board](docs/REFERENCE.md#broadcast-board-spectators)** | A spectator's board for streaming: the whole field, the drivers who are out and why, cup standings, and click a name to put the camera on that car in orbit. |
 | **[Broadcast feed](docs/REFERENCE.md#broadcast-feed)** | Live race data for your stream's overlay software: positions, the starting grid, laps and last laps, gaps, who has taken the joker, pit stops, flags and a feed of what just happened, as JSON and a live stream on `http://127.0.0.1:8128`, plus a ready-made overlay for an OBS Browser Source, styled in your browser with your league's colors, logos and fonts, and team colors and car numbers from the server's [Teams](docs/REFERENCE.md#teams-and-car-numbers) list. Served by your own game, so it works on a rented server: nothing runs on the server for it. |
-| **[Race Lights (PRM)](docs/REFERENCE.md#race-lights-prm)** | An optional second app with the start lights, the flags and the drag tree in a box you place anywhere on screen. GET READY is a steady caption, so the green is the first thing that changes. Start sounds for the countdown, the green and the tree, mutable from the panel. |
+| **[Race Lights (PRM)](docs/REFERENCE.md#race-lights-prm)** | An optional second app with the start lights, the flags and the drag tree in a box you place anywhere on screen. GET READY is a steady caption, so the green is the first thing that changes. While a lift is owed it is a meter of how much is left and how long you have, and it shows your black flag. Start sounds for the countdown, the green and the tree, mutable from the panel. |
 | **[Radar (PRM)](docs/REFERENCE.md#radar-prm)** | An optional third app: the cars around you out to 25 m, at their real size and angle, red under 2 m and amber under 6 m with the gap shown, side-by-side spotter bars, ghosts as outlines, and in a race each car's position with lapped cars in blue. Fades away when nobody is near. |
 | **[Menu bar](docs/REFERENCE.md#the-menu-bar)** | Practice, records, the garage, the cup and every admin panel open from one row under the title and step out of the way when closed, so the board keeps the room. |
 | **[Driver UI](docs/REFERENCE.md#driver-ui-non-admins)** | Non-admins see just the leaderboard. Resizable, fades so it doesn't block the view, and collapses to a single status line. Alerts still get through. |
-| **[Admin and moderator](docs/REFERENCE.md#two-tiers-admin-and-moderator)** | Two passwords into one login box. A moderator runs the whole night; changing passwords, clearing the server's results or lap records and deleting a layout, arena or garage set stay with the admin, because none of those can be undone. The moderator tier ships off, so nothing changes on a server that never asks for it. |
+| **[Admin and moderator](docs/REFERENCE.md#two-tiers-admin-and-moderator)** | Two passwords into one login box. A moderator runs the whole night; changing passwords, clearing the server's results or lap records and deleting a layout, arena, garage set or ruleset stay with the admin, because none of those can be undone. The moderator tier ships off, so nothing changes on a server that never asks for it. |
 | **[Garage sets](docs/REFERENCE.md#garage-sets)** | Save the approved car list under a name and load it back in a click. **+ Add Set** merges instead of replacing, so a multi-class field is built from the per-class sets you already keep rather than whitelisted again car by car. |
+| **[Rulesets](docs/REFERENCE.md#rulesets)** | The race rules stay as you set them through a map switch and a server restart. Save every rule in Race, Quali and Grid under a name (a sprint, a heat night, an endurance) and load it back in a click between sessions. **Server defaults** puts config.json's rules back. |
 
 ## Troubleshooting
 
