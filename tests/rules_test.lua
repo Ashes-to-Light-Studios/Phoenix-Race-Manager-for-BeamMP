@@ -137,7 +137,8 @@ RM_onSetFinishRule(0, '{"after":2,"seconds":90}')
 RM_onSetMaxResets(0, '{"maxResets":3}')
 RM_onSetResetMode(0, '{"mode":"checkpoint"}')
 RM_onSetCheckpointSkip(0, '{"enabled":true,"warnings":2,"type":"lift","penaltySec":7.5,'
-  .. '"liftSec":4,"liftWindow":40,"pitServe":"optional","pitLaps":4}')
+  .. '"liftSec":4,"liftWindow":40,"pitServe":"optional","pitLaps":4,"liftUnserved":"black"}')
+RM_onSetBlackFlag(0, '{"seconds":25,"laps":5}')
 RM_onSetPitStopRule(0, '{"required":2,"missed":"time","seconds":45}')
 RM_onSetPitStart(0, '{"session":"quali","enabled":true}')
 RM_onSetPitStart(0, '{"session":"race","enabled":true}')
@@ -162,6 +163,8 @@ local function sameRules(s, what)
   check(cs.enabled == true and cs.warnings == 2 and cs.type == 'lift' and cs.penaltySec == 7.5
     and cs.liftSec == 4 and cs.liftWindow == 40 and cs.pitServe == 'optional' and cs.pitLaps == 4,
     what .. ': checkpoint skips')
+  check(cs.liftUnserved == 'black' and s.bf and s.bf.seconds == 25 and s.bf.laps == 5,
+    what .. ': black flags')
   local pr = s.pitStopRule or {}
   check(pr.required == 2 and pr.missed == 'time' and pr.seconds == 45,
     what .. ': mandatory pit stops')

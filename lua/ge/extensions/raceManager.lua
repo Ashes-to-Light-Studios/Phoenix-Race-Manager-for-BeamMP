@@ -160,6 +160,9 @@ local TUNE = {
   -- A lift reported served that the server has not taken off our row within
   -- this many seconds was refused: count it owed again.
   LIFT_ACK_WAIT     = 5.0,
+  -- A black flag reported served: a row cleared within this is that serve,
+  -- not race control withdrawing it.
+  BLACK_ACK_WAIT    = 5.0,
   -- Meters before the S/F line the white flag shows: waved on the approach. Not
   -- off the progress report, which is 12 m between samples at 90 mph.
   WHITE_FLAG_AT = 50,
@@ -290,6 +293,10 @@ local session = {
     throttle = nil, speed = 0, at = -1, pollLeft = 0, paused = false,
     sent = 0, sentAge = 0,
   },
+  -- A BLACK FLAG out for us, off our row: { sec, by, why }, or nil. And the
+  -- rule (RM_Update bf): the stop's seconds, the laps, the stalls loaded.
+  black = nil,
+  bf    = { seconds = 10, laps = 3, stalls = 0 },
   -- A restart is called and the green falls as the leader reaches the line.
   restartPending = false,
   -- The heat program: a heat can run its own distance (effectiveLapTarget).
@@ -689,6 +696,12 @@ local pit = {
   -- Penalty seconds this stop is serving on top of the service hold; reported
   -- only when the stop runs to the end.
   serving = 0,
+  -- A black flag's seconds this stop is serving too (nil: none), and when one
+  -- was reported served (localTime), so the row clearing just after is not
+  -- told as withdrawn. Only just after: a flag raised during the stop stays
+  -- out, and a later withdrawal of it is told.
+  black = nil,
+  blackSentAt = nil,
 }
 
 -- The list THIS session's grid slot indexes: the pit stalls when the server
@@ -1194,6 +1207,8 @@ local function driverFlag()
   -- RED: held on the grid or called by an admin. A condition, not a phase.
   if session.raceFlag == 'red' or session.phase == 'grid' or session.gridFrozen then return 'red' end
   if session.raceFlag == 'yellow' then return 'yellow' end
+  -- BLACK: this driver's own, over the last lap and the blue flag.
+  if session.black and session.phase == 'racing' then return 'black' end
   local target = effectiveLapTarget()
   if session.phase == 'racing' and not track.pointToPoint and target
      and session.localLap >= target then
@@ -1518,6 +1533,8 @@ local function stickyMessage()
   -- only served under green anyway). It counts down, so stickyUpdate builds
   -- its text when it redraws it, not here every frame.
   if session.lift.active then return 'lift', nil end
+  -- A BLACK FLAG, until it is served or withdrawn. Built when redrawn.
+  if session.black then return 'black', nil end
   return nil
 end
 
@@ -1541,6 +1558,13 @@ local function stickyUpdate(dt)
     if sticky.due > 0 then return end
     sticky.due = TUNE.LIFT_HUD_EVERY
     hudMessage('lift', session.lift.hudText(), TUNE.LIFT_HUD_EVERY + 0.75)
+    return
+  end
+  -- Nor does a black flag: it lasts until it is served, withdrawn or a DQ.
+  if key == 'black' then
+    if sticky.due > 0 then return end
+    sticky.due = sticky.REFRESH
+    hudMessage('black', session.blackLine(), sticky.REFRESH + 2)
     return
   end
   if sticky.left <= 0 or lapsShown > sticky.LAPS then return end
@@ -2140,6 +2164,7 @@ function session.lift.update(dt)
         TriggerServerEvent('RM_LiftServed', jsonEncode({ lap = session.localLap }))
       end
       pushNotice('penalty', 'LIFT SERVED - carry on')
+      if M.lightsMoment then M.lightsMoment('liftServed') end
       log('I', 'raceManager', 'Lift-off penalty served')
     end
   else
@@ -2152,16 +2177,29 @@ function session.lift.update(dt)
   end
 end
 
--- The HUD line (stickyUpdate), built only when it is redrawn.
+-- What the driver is doing about it, for the HUD line and the lights' meter.
+-- Paused first: a car held or crawling is not serving it, whatever the pedal.
+function session.lift.state()
+  local L = session.lift
+  if L.paused then return 'paused' end
+  if L.throttle and L.throttle <= TUNE.LIFT_MAX_THROTTLE then return 'lifting' end
+  if L.restarted then return 'restart' end
+  return 'wait'
+end
+
+-- The HUD line (stickyUpdate), built only when it is redrawn. The window is
+-- the server's, three times a second: whole seconds are all a line can show.
 function session.lift.hudText()
   local L = session.lift
   local more = L.owed() - 1
   local tail = more > 0 and string.format(' (%d more after this)', more) or ''
+  local win = session.cpRow.window
+  local within = win and string.format(' - %ds to serve', math.ceil(win)) or ''
   if L.restarted then
-    return string.format('THROTTLE ON - lift restarted (%.1fs)%s', L.left, tail)
+    return string.format('THROTTLE ON - lift restarted (%.1fs)%s%s', L.left, within, tail)
   end
-  return string.format('LIFT OFF THE THROTTLE: %.1fs%s%s', math.max(L.left, 0),
-    L.paused and ' (paused)' or '', tail)
+  return string.format('LIFT OFF THE THROTTLE: %.1fs%s%s%s', math.max(L.left, 0),
+    L.paused and ' (paused)' or '', within, tail)
 end
 
 -- What `n` penalised skips cost, as the server says it ('+5.0s', 'lift 3.0s').
@@ -2226,6 +2264,14 @@ function session.cpRow.pitHint()
       cs.pitLaps == 1 and '' or 's')
   end
   return cs.pitMode == 'optional' and ' - serve it in the pits to clear it' or ''
+end
+
+-- The black flag's HUD line.
+function session.blackLine()
+  local b = session.black
+  if not b then return '' end
+  return string.format('BLACK FLAG - stop in a pit stall for %ds by lap %d, or you are disqualified',
+    b.sec, b.by or 0)
 end
 
 -- The vehicle VM's answer to the poll: throttle input 0..1, or -1 unknown.
@@ -4234,10 +4280,11 @@ function pit.release(reason)
   pit.left     = 0
   pit.settleLeft = 0
   -- Served only by a stop held to the end; any other release serves nothing.
-  local served = pit.serving
-  pit.serving = 0
-  if served > 0 and reason == 'complete' and inMultiplayer() and sessionRunning() then
-    TriggerServerEvent('RM_PenaltyServed', jsonEncode({ seconds = served }))
+  local served, black = pit.serving, pit.black
+  pit.serving, pit.black = 0, nil
+  if (served > 0 or black) and reason == 'complete' and inMultiplayer() and sessionRunning() then
+    TriggerServerEvent('RM_PenaltyServed', jsonEncode({ seconds = served, black = black ~= nil or nil }))
+    if black then pit.blackSentAt = localTime end
   end
   pit.cooldown = TUNE.PIT_COOLDOWN
   -- It may not stop in this box again until it has driven out of it.
@@ -4264,6 +4311,21 @@ function pit.owed()
   if session.sessionKind ~= 'race' or not sessionRunning() then return 0 end
   if session.cpRow.missed then return 0 end
   return session.cpRow.pen or 0
+end
+
+-- A black flag's seconds a stop starting now serves, or nil. Served whatever
+-- the pit rule, in a race only.
+function pit.blackOwed()
+  if practice.on or session.sessionKind ~= 'race' or not sessionRunning() then return nil end
+  return session.black and session.black.sec or nil
+end
+
+-- What the stop is holding for, as the driver is told it.
+function pit.stopText()
+  local t = string.format('PIT STOP: %.0fs', TUNE.PIT_HOLD_SEC)
+  if pit.serving > 0 then t = t .. string.format(' + PENALTY %.1fs', pit.serving) end
+  if pit.black then t = t .. string.format(' + BLACK FLAG %ds', pit.black) end
+  return t
 end
 
 -- The pit stop: hold, repair in place, hand back. Never a respawn anchor.
@@ -4294,9 +4356,14 @@ function pit.update(dt)
       end
     end
     if pit.left <= 0 then
-      local served = pit.serving
+      local served, black = pit.serving, pit.black
       pit.release('complete')
-      pushNotice('pit', served > 0 and string.format('PENALTY SERVED (%.1fs) - GO!', served) or 'GO!')
+      if black then
+        pushNotice('pit', 'BLACK FLAG SERVED - GO!')
+        if M.lightsMoment then M.lightsMoment('blackServed') end
+      else
+        pushNotice('pit', served > 0 and string.format('PENALTY SERVED (%.1fs) - GO!', served) or 'GO!')
+      end
     end
     return
   end
@@ -4339,7 +4406,8 @@ function pit.update(dt)
   -- Penalty seconds go ON TOP of the service hold, so serving costs exactly
   -- what keeping them would.
   pit.serving  = pit.owed()
-  pit.left     = TUNE.PIT_HOLD_SEC + pit.serving
+  pit.black    = pit.blackOwed()
+  pit.left     = TUNE.PIT_HOLD_SEC + pit.serving + (pit.black or 0)
   pit.stops    = pit.stops + 1
   pit.promptLeft = 0
   pit.settleLeft = TUNE.PIT_SETTLE_SEC
@@ -4365,15 +4433,15 @@ function pit.update(dt)
   pcall(function () veh:queueLuaCommand('recovery.recoverInPlace()') end)
   setLocalVehicleFrozen(true, 'pit')
   pit.setGhost(true)
-  pushNotice('pit', pit.serving > 0
-    and string.format('PIT STOP: %.0fs + PENALTY %.1fs', TUNE.PIT_HOLD_SEC, pit.serving)
-    or string.format('PIT STOP: %.0fs', TUNE.PIT_HOLD_SEC))
+  pushNotice('pit', pit.stopText())
   pushRouteState()
   log('I', 'raceManager', string.format(
-    'Pit stop %d started in stall %d%s', pit.stops, inStall,
-    pit.serving > 0 and string.format(', serving %.1fs', pit.serving) or ''))
+    'Pit stop %d started in stall %d%s%s', pit.stops, inStall,
+    pit.serving > 0 and string.format(', serving %.1fs', pit.serving) or '',
+    pit.black and string.format(', black flag %ds', pit.black) or ''))
   if inMultiplayer() and sessionRunning() then
-    TriggerServerEvent('RM_PitStop', jsonEncode({ stall = inStall, serving = pit.serving }))
+    TriggerServerEvent('RM_PitStop', jsonEncode({ stall = inStall, serving = pit.serving,
+      black = pit.black }))
   end
 end
 
@@ -6473,7 +6541,7 @@ do
   })
   for _, name in ipairs({
     'lightsSync', 'lightsCountdown', 'lightsMoment', 'lightsTree',
-    'lightsResend', 'lightsSetSound',
+    'lightsResend', 'lightsSetSound', 'lightsUpdate',
   }) do
     M[name] = lights[name]
   end
@@ -6612,6 +6680,8 @@ function M.onUpdate(dt)
   drag.dragUpdate(dt)
   -- The Radar app: a scan four times a second alone, twenty with a car near.
   if M.radarUpdate then M.radarUpdate(dt) end
+  -- The Lights app's lift meter: one comparison unless a lift is being served.
+  if M.lightsUpdate then M.lightsUpdate(dt) end
   M.splashUpdate(dt)        -- the welcome splash, only while it is up
   M.feedUpdate(dt)          -- the broadcast feed: one comparison while it is off
   M.uploadUpdate(dt)        -- Install from this PC: one comparison unless sending
@@ -8194,6 +8264,34 @@ function M.readyAll()
   if inMultiplayer() then TriggerServerEvent('RM_ReadyAll', '') end
 end
 
+-- Race control on one driver: 'black' (seconds, or nil for the rule's),
+-- 'clear' or 'dq', with an optional reason. The server checks it all.
+function M.steward(pid, action, seconds, reason)
+  pid = tonumber(pid)
+  if not pid or not inMultiplayer() then return end
+  if action ~= 'black' and action ~= 'clear' and action ~= 'dq' then return end
+  TriggerServerEvent('RM_Steward', jsonEncode({
+    pid = pid, action = action, seconds = tonumber(seconds),
+    reason = type(reason) == 'string' and reason:sub(1, 60) or nil,
+  }))
+end
+
+-- The black flag rule: the stop's seconds and the laps to serve it in.
+function M.setBlackFlag(seconds, laps)
+  local bf = session.bf
+  local payload = {
+    seconds = math.floor(tonumber(seconds) or bf.seconds),
+    laps    = math.floor(tonumber(laps) or bf.laps),
+  }
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetBlackFlag', jsonEncode(payload))
+  else
+    bf.seconds = math.min(math.max(payload.seconds, 0), 120)
+    bf.laps    = math.min(math.max(payload.laps, 1), 20)
+    pushRouteState()
+  end
+end
+
 -- Join: the grid formed without us (no car then), and we are in one now. The
 -- back of the grid, placed at once. Refused here with no car, as Ready is.
 function M.joinField()
@@ -8692,9 +8790,16 @@ local function onServerUpdate(rawData)
       -- when the layout has no stalls. Missing is an older server: off.
       cs.pitMode = (r.pitMode == 'optional' or r.pitMode == 'required') and r.pitMode or 'off'
       cs.pitLaps = math.max(1, math.floor(tonumber(r.pitLaps) or cs.pitLaps))
+      cs.liftUnserved = r.liftUnserved == 'black' and 'black' or 'time'
     else
       cs.enabled = false
     end
+  end
+  -- Black flags: the rule, for the panel and the notices.
+  if type(data.bf) == 'table' then
+    session.bf.seconds = math.max(0, math.floor(tonumber(data.bf.seconds) or session.bf.seconds))
+    session.bf.laps    = math.max(1, math.floor(tonumber(data.bf.laps) or session.bf.laps))
+    session.bf.stalls  = math.max(0, math.floor(tonumber(data.bf.stalls) or 0))
   end
   if type(data.cautionLaps) == 'number' then session.cautionLaps = data.cautionLaps end
   -- The heat program: only what the lap target needs.
@@ -8848,6 +8953,8 @@ local function onServerUpdate(rawData)
   local cpr = session.cpRow
   local wasMissed = cpr.missed
   cpr.serveBy, cpr.missed = nil, false
+  local wasBlack = session.black
+  session.black = nil
   if myId and type(data.drivers) == 'table' then
     for _, d in ipairs(data.drivers) do
       if tonumber(d.id) == myId then
@@ -8867,6 +8974,11 @@ local function onServerUpdate(rawData)
         session.lappingAhead = d.lapping == true
         session.ucPassed     = type(d.ucPassed) == 'string' and d.ucPassed or nil
         session.myHeat       = tonumber(d.heat)
+        -- A black flag: its seconds may be 0, which is still a flag.
+        if d.blackFlag ~= nil then
+          session.black = { sec = tonumber(d.blackFlag) or 0, by = tonumber(d.blackBy),
+            why = type(d.blackWhy) == 'string' and d.blackWhy or nil }
+        end
         break
       end
     end
@@ -8875,6 +8987,20 @@ local function onServerUpdate(rawData)
   session.cpRow.apply(rowWarn, rowPen, rowLift, rowWindow)
   if cpr.missed and not wasMissed and sessionRunning() then
     pushNotice('penalty', 'PENALTY NOT SERVED IN THE PITS: disqualified at the flag')
+  end
+  -- A black flag: told as it is raised, and again when one is added to it.
+  -- Gone without our stop reporting it served, it was withdrawn.
+  if session.black and sessionRunning() and (not wasBlack or session.black.sec > wasBlack.sec) then
+    local b = session.black
+    pushNotice('flag', 'BLACK FLAG', { color = 'black',
+      sub = string.format('Stop in a pit stall: %ds, by lap %d%s', b.sec, b.by or 0,
+        b.why and (' (' .. b.why .. ')') or '') })
+  elseif wasBlack and not session.black then
+    local justServed = pit.blackSentAt and localTime - pit.blackSentAt < TUNE.BLACK_ACK_WAIT
+    if not justServed and sessionRunning() and not session.spectatorLock then
+      pushNotice('penalty', 'Black flag withdrawn')
+    end
+    pit.blackSentAt = nil
   end
   -- Told on the edge: the header shows it, but a driver about to be caught is
   -- watching the road.
@@ -8976,6 +9102,7 @@ local function onServerUpdate(rawData)
       liftLeft = L.active and math.max(L.left, 0) or nil,
       pitMode = session.cpSkip.pitMode, serveBy = cr.serveBy, missed = cr.missed or nil,
     } or nil
+    data.myBlack = session.black
   end
   guihooks.trigger('RaceManagerUpdate', data)
   if M.lightsSync then M.lightsSync() end
@@ -9131,6 +9258,15 @@ local function onForceSpectate(rawData)
   if not ok or type(data) ~= 'table' then data = {} end
   local source = data.source and tostring(data.source) or 'race'
   enterSpectator(data.reason and tostring(data.reason) or nil, source)
+  -- RULED OUT by race control: no checkered flag, now or at the session's end.
+  if data.out == 'dsq' and source ~= 'derby' then
+    flags.checkered = true
+    session.black = nil
+    pushNotice('flag', 'DISQUALIFIED', { sub = data.reason and tostring(data.reason) or nil,
+      color = 'black' })
+    if M.lightsMoment then M.lightsMoment('dsq') end
+    return
+  end
   -- THE CHECKERED FLAG for this driver, once, as they leave the session (a
   -- backmarker too). Not for a derby. The placing rides as the second line.
   if source ~= 'derby' and not flags.checkered then
@@ -9770,7 +9906,7 @@ end
 -- penalty, the penalty ('time' | 'lift' | 'liftAndTime'), its seconds, the
 -- lift's length and the window to serve it in. The server clamps them all.
 function M.setCheckpointSkip(enabled, warnings, ptype, penaltySec, liftSec, liftWindow,
-                             pitServe, pitLaps)
+                             pitServe, pitLaps, liftUnserved)
   local cs = session.cpSkip
   local payload = {
     enabled    = enabled == true,
@@ -9783,6 +9919,7 @@ function M.setCheckpointSkip(enabled, warnings, ptype, penaltySec, liftSec, lift
     pitServe   = (pitServe == 'off' or pitServe == 'optional' or pitServe == 'required')
                  and pitServe or nil,
     pitLaps    = tonumber(pitLaps) and math.floor(tonumber(pitLaps)) or nil,
+    liftUnserved = (liftUnserved == 'time' or liftUnserved == 'black') and liftUnserved or nil,
   }
   if inMultiplayer() then
     TriggerServerEvent('RM_SetCheckpointSkip', jsonEncode(payload))
@@ -9791,6 +9928,7 @@ function M.setCheckpointSkip(enabled, warnings, ptype, penaltySec, liftSec, lift
     cs.penaltySec, cs.liftSec, cs.liftWindow = payload.penaltySec, payload.liftSec, payload.liftWindow
     cs.pitMode = payload.pitServe or cs.pitMode
     cs.pitLaps = payload.pitLaps or cs.pitLaps
+    cs.liftUnserved = payload.liftUnserved or cs.liftUnserved
     pushRouteState()
   end
 end
@@ -10410,6 +10548,8 @@ local function resetToIdle(reason)
   session.cpRow.warn, session.cpRow.pen, session.cpRow.lift, session.cpRow.window = 0, 0, 0, nil
   session.lift.active     = false
   session.lift.sent, session.lift.sentAge = 0, 0
+  session.black           = nil
+  pit.blackSentAt         = nil
   session.heatCount       = 0
   session.heatCurrent     = 0
   session.heatLaps        = 0

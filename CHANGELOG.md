@@ -6,9 +6,25 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
-## 0.30.0 - Pit stops, rulesets and no-car grids
+## 0.30.0 - Black flags, pit stops and rulesets
 
 #### Added
+
+- **Lift meter in Race Lights.** While a lift is owed, the lamps fill green as it
+  is served and the caption says how much is left and how long you have to
+  serve it (`LIFT 1.8s · 22s`), when the throttle is back on, and when it is
+  paused. The HUD line gives the time left too. See
+  [Race Lights (PRM)](docs/REFERENCE.md#race-lights-prm).
+- **Black flags.** A black flag is served by stopping in a pit stall for the
+  usual stop plus its seconds (10 by default) within its laps (3), or the driver
+  is disqualified. Still open at the flag, the stop goes on the race time. A
+  lift not served in its window can be a black flag instead of seconds
+  (**Unserved**). Needs a layout with pit stalls. See
+  [Black flags](docs/REFERENCE.md#black-flags).
+- **Race control.** Admins and moderators can black flag a driver, withdraw it,
+  or disqualify a driver from the race, with an optional reason that goes to the
+  field and into the results file's new race control block. See
+  [Race control](docs/REFERENCE.md#race-control).
 
 - **Mandatory pit stops.** **Pit stops** in the Race settings requires every
   driver to make that many stops, and only one counts per lap. A driver who

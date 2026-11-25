@@ -199,6 +199,10 @@
           title="Your checkpoint skips: warnings used, the time penalty on your race time, and a lift-off to serve">
       CUTS <b class="rm-cp-mine">{{ myCpLabel() }}</b>
     </span>
+    <span class="rm-driverbar-label" ng-if="myBlack"
+          title="Your black flag: stop in a pit stall by this lap, or you are disqualified">
+      BLACK FLAG <b class="rm-cp-black">{{ myBlackLabel() }}</b>
+    </span>
     <span class="rm-driverbar-label" ng-if="resetsLimited()">
       RESETS <b ng-class="{'rm-reset-low': myResetsLow()}">{{ resetsUsed }}/{{ maxResets }}</b>
       <!-- OUT, said in words and kept on screen.
@@ -1001,6 +1005,44 @@
       {{ p.passer }} on {{ p.passed }} &middot; lap {{ p.lap }}<span ng-if="p.underRed"> &middot; under red</span> &middot; {{ p.restored ? 'given back' : 'not given back' }}
     </span>
   </div>
+  <!-- RACE CONTROL on one driver: a black flag (served in a pit stall), its
+       withdrawal, or a disqualification. DQ asks twice: nothing undoes it. -->
+  <div class="rm-steward" ng-if="stewardShown()">
+    <span class="rm-steward-title">Race control</span>
+    <!-- The app's own dropdown: a native select's popup never draws over the game. -->
+    <div class="rm-layout-dropdown rm-steward-pick" ng-class="{'rm-layout-dropdown-open': stewardUi.menu}">
+      <button type="button" class="rm-layout-trigger"
+              ng-class="{'rm-layout-trigger-empty': !stewardRow()}"
+              ng-click="stewardUi.menu = !stewardUi.menu">
+        <span class="rm-layout-trigger-label">{{ stewardRow() ? driverName(stewardRow()) : 'Pick a driver…' }}</span>
+        <span class="rm-layout-caret">&#9662;</span>
+      </button>
+      <div class="rm-layout-menu" ng-if="stewardUi.menu">
+        <div class="rm-layout-option"
+             ng-repeat="d in stewardDrivers() track by d.id"
+             ng-class="{'rm-layout-option-active': d.id === stewardUi.pid}"
+             ng-click="stewardPick(d)">
+          {{ driverName(d) }}<span ng-if="d.status === 'finished'"> (home)</span><span ng-if="d.blackFlag != null"> &middot; black flag</span>
+        </div>
+      </div>
+    </div>
+    <input type="number" class="rm-width-num" min="0" max="120" step="1" ng-model="stewardUi.seconds"
+           placeholder="{{ bf.seconds }}" title="Seconds the stop holds on top of the usual one. Empty: the rule's.">
+    <input type="text" class="rm-steward-reason" maxlength="40" ng-model="stewardUi.reason"
+           placeholder="Reason (optional)" title="Told to the field and written in the results">
+    <button class="rm-btn rm-btn-mini rm-btn-black" ng-click="steward('black')"
+            ng-disabled="!stewardCan('black')" title="{{ stewardBlackTitle() }}">Black flag</button>
+    <button class="rm-btn rm-btn-mini" ng-click="steward('clear')"
+            ng-disabled="!stewardCan('clear')" title="Withdraw this driver's black flag">Clear</button>
+    <button class="rm-btn rm-btn-mini rm-btn-end" ng-click="stewardUi.confirm = true"
+            ng-if="!stewardUi.confirm" ng-disabled="!stewardCan('dq')"
+            title="Disqualify this driver from the race. A car on track goes to spectate.">Disqualify</button>
+    <span class="rm-race-pending" ng-if="stewardUi.confirm">
+      Disqualify {{ stewardRow() ? driverName(stewardRow()) : 'this driver' }}?
+      <button class="rm-btn rm-btn-mini rm-btn-end" ng-click="steward('dq')">Yes, disqualify</button>
+      <button class="rm-btn rm-btn-mini" ng-click="stewardUi.confirm = false">Cancel</button>
+    </span>
+  </div>
 
   <!-- ================= Derby controls (derby mode, admin only) ===========
        The derby's equivalent of the race session controls above, and here for
@@ -1331,6 +1373,17 @@
                ng-change="applyCpSkip()"
                ng-disabled="!canSetRules() || !cpSkipEnabled">
       </span>
+      <span class="rm-setting-sub" ng-if="cpSkipHasLift()" title="What a lift not served in its window becomes.">
+        <label>Unserved</label>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipLiftUnserved === 'time'}"
+                ng-click="setCpSkipLiftUnserved('time')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="The seconds go on the race time.">Time</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': cpSkipLiftUnserved === 'black'}"
+                ng-click="setCpSkipLiftUnserved('black')"
+                ng-disabled="!canSetRules() || !cpSkipEnabled"
+                title="A black flag: stop in a pit stall, or be disqualified. Needs pit stalls.">Black flag</button>
+      </span>
       <!-- Penalty SECONDS served in a pit stall. Off as shipped. -->
       <span class="rm-setting-sub" title="Whether penalty seconds can be served by stopping in a pit stall, on top of the usual stop.">
         <label>Serve in pits</label>
@@ -1360,6 +1413,31 @@
       </span>
       <span class="rm-setting-warn" ng-if="cpSkipPitNoStalls()">
         No saved layout with pit stalls is loaded, so Required runs as Optional. Serving needs a stall to stop in.
+      </span>
+      <span class="rm-setting-warn" ng-if="cpSkipLiftNoStalls()">
+        No saved layout with pit stalls is loaded, so an unserved lift becomes time. A black flag needs a stall.
+      </span>
+    </span>
+    <!-- BLACK FLAGS, raised by race control or an unserved lift, served by a
+         stop in a pit stall. Locked once a session is under way, like every
+         rule (the server refuses it too). -->
+    <span class="rm-setting rm-setting-wrap" title="A black flag is served by stopping in a pit stall. Not served in time, the driver is disqualified.">
+      <label>Black flags</label>
+      <span class="rm-setting-sub" title="Seconds held on top of the usual stop (0: the usual stop alone), and the laps to make it in.">
+        <label>Stop (s)</label>
+        <input type="number" class="rm-width-num" min="0" max="120" step="1" ng-model="settingsUi.bfSeconds"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyBlackFlag()"
+               ng-disabled="!canSetRules()">
+        <label>within (laps)</label>
+        <input type="number" class="rm-width-num" min="1" max="20" step="1" ng-model="settingsUi.bfLaps"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyBlackFlag()"
+               ng-disabled="!canSetRules()">
+      </span>
+      <span class="rm-setting-val">{{ bfLabel() }}</span>
+      <span class="rm-setting-warn" ng-if="!bf.stalls">
+        No saved layout with pit stalls is loaded, so no black flag can be raised.
       </span>
     </span>
     <!-- Module 5: the pace lap -->
@@ -4973,6 +5051,10 @@
           title="Your checkpoint skips: warnings used, the time penalty on your race time, and a lift-off to serve">
       CUTS <b class="rm-cp-mine">{{ myCpLabel() }}</b>
     </span>
+    <span class="rm-driverbar-label" ng-if="myBlack"
+          title="Your black flag: stop in a pit stall by this lap, or you are disqualified">
+      BLACK FLAG <b class="rm-cp-black">{{ myBlackLabel() }}</b>
+    </span>
     <span class="rm-driverbar-label" ng-if="resetsLimited()">
       RESETS <b ng-class="{'rm-reset-low': myResetsLow()}">{{ resetsUsed }}/{{ maxResets }}</b>
       <!-- OUT, said in words and kept on screen.
@@ -5583,6 +5665,8 @@
               title="Owes a lift-off for a skipped checkpoint. Not served in time, or still owed at the flag, it becomes a time penalty.">LIFT</span><span
               class="rm-ucpass rm-cp-pen" ng-if="row.pitMissed"
               title="Did not serve the penalty in the pits in time: disqualified at the flag.">PIT &#10005;</span><span
+              class="rm-ucpass rm-cp-black" ng-if="row.blackFlag != null"
+              title="{{ blackTitle(row) }}">BLACK</span><span
               class="rm-ucpass" ng-if="pitStopsShown()"
               ng-class="pitStopsDone(row) ? 'rm-pit-done' : 'rm-cp-lift'"
               title="Mandatory pit stops made of those required. One counts per lap.">{{ pitStopsLabel(row) }}</span><span
@@ -7076,6 +7160,8 @@
      nearly black on a dark panel. */
   .rm-flag-blue   { color: #2f7dff; }
   .rm-flag-red    { color: #ff2b1c; }
+  /* Black: a glyph that would vanish on the panel, so it carries a white edge. */
+  .rm-flag-black  { color: #000000; text-shadow: 0 0 2px #ffffff, 0 0 2px #ffffff; }
   /* Checkered: the flag glyph is monochrome, so it takes the plain foreground
      rather than a color of its own. It is the one flag that is about THIS
      driver rather than the session, which is why it outranks the rest. */
@@ -7110,6 +7196,7 @@
      penalty in red, a lift owed in amber, warnings used as a quiet tag. */
   .rm-cp-pen { color: #fff; background: #d93025; }
   .rm-cp-lift { color: #1a1a1a; background: #fbbc05; }
+  .rm-cp-black { color: #ffffff; background: #000000; box-shadow: inset 0 0 0 1px #ffffff; }
   /* Mandatory pit stops all made. */
   .rm-pit-done { color: #1a1a1a; background: #81c995; }
   .rm-cp-warn {
@@ -7129,6 +7216,20 @@
     border-top: 1px solid rgba(251, 188, 5, 0.35);
   }
   .rm-uc-title { font-weight: 700; color: #fdd663; }
+  /* Race control's strip: the same shape, in black and white. */
+  .rm-steward {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-top: 1px solid rgba(255, 255, 255, 0.3);
+  }
+  .rm-steward-title { font-weight: 700; color: #ffffff; }
+  .rm-steward-pick { min-width: 140px; max-width: 180px; }
+  .rm-steward-reason { width: 150px; }
+  .rm-btn-black { background: #000000; border-color: #ffffff; color: #ffffff; font-weight: 700; }
   .rm-uc-pass { color: #ff8a65; }
   .rm-uc-restored { color: var(--rm-muted, #9aa0a6); }
   /* The full-course yellow and the restart out of it. Heavier than the advisory
@@ -8470,6 +8571,8 @@
   .rm-flash-white  { background: rgba(235, 235, 235, 0.5); box-shadow: inset 0 0 0 3px #f5f5f5; }
   .rm-flash-gold   { background: rgba(150, 110, 0, 0.6); }
   .rm-flash-blue   { background: rgba(20, 70, 165, 0.6); box-shadow: inset 0 0 0 3px #2f7dff; }
+  /* Black on a dark panel needs its white rim, as the Lights app's lamps do. */
+  .rm-flash-black  { background: rgba(0, 0, 0, 0.82); box-shadow: inset 0 0 0 3px #ffffff; }
   .rm-flash-amber  { background: rgba(175, 85, 0, 0.6); box-shadow: inset 0 0 0 3px #ff8a00; }
   .rm-flash-gray   { background: rgba(40, 44, 52, 0.72); }
   /* An actual checkered flag rather than a word on a gray wash. Two offset
