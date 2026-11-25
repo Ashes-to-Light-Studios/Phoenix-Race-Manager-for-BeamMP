@@ -9,7 +9,7 @@
 -- (cleared in place, never replaced) or a plain function. The cup hooks arrive
 -- later through setCupHooks; nil means no cup, so their guards are
 -- load-bearing. Back out go getDerbyLayouts and two functions the host installs
--- (entryListChanged, underWay); the RM_Derby* handlers are globals, registered
+-- (entryListChanged, underWay, lateEntry); the RM_Derby* handlers are globals, registered
 -- by NAME. This module writes no host state.
 
 local D = {}
@@ -1076,11 +1076,11 @@ function RM_onDerbyFormUp(pid)
   -- Belt and braces on the leak above: a derby being formed is not a derby that
   -- has been decided, whatever the last one left behind.
   derby.endsAt, derby.endReason = nil, nil
+  -- Same entry rule as a race: everyone in a car takes part unless they are
+  -- spectating (race.inField: no car is out unless an admin added them).
+  race.refreshCars()
   for id in pairs(onlinePlayers()) do
-    -- Same entry rule as a race: everyone takes part unless they are spectating.
-    -- A player with no racing record has never pressed anything, so they are in.
-    local rec = players[id]
-    if (not rec) or isEntrant(rec) then
+    if race.inField(id) then
       derbyPlayers[id] = {
         id       = id,
         name     = MP.GetPlayerName(id) or ('Player ' .. id),
@@ -1098,10 +1098,10 @@ function RM_onDerbyFormUp(pid)
   if count == 0 then
     -- Two different reasons, and telling them apart matters: an empty server is
     -- obvious, an empty entry list looks like a broken button.
-    if optIn then
-      print('[RaceManager] Derby form-up ignored: nobody has joined (opt-in entry is on)')
-      MP.SendChatMessage(pid, '[RaceManager] Nobody has joined: press Join Race, '
-        .. 'or switch derby entry to Everyone.')
+    if next(onlinePlayers()) ~= nil then
+      print('[RaceManager] Derby form-up ignored: nobody connected is in a car and entered')
+      MP.SendChatMessage(pid, '[RaceManager] Nobody to form up: everyone connected is '
+        .. 'spectating or has no car spawned. Spawn a vehicle, or Add a driver.')
     else
       print('[RaceManager] Derby form-up ignored: no players connected')
     end
@@ -1371,12 +1371,13 @@ end
 
 -- Registered as an ADDITIONAL handler on onPlayerJoin/onPlayerDisconnect so
 -- the circuit-racing handlers above stay untouched.
-function RM_Derby_onPlayerJoin(pid)
-  -- Arriving while the field is being called: a place in it and a Ready
-  -- button, behind the last slot handed out.
-  local rec = players[pid]
+-- A late entry while the field is being called: a place in it and a Ready
+-- button, behind the last slot handed out. On joining the server (in a car,
+-- which a fresh connection never is) and on an admin's Add (main.lua's
+-- race.derbyLateEntry). True when they were added.
+local function lateEntry(pid)
   if derby.phase == 'forming' and race.readyCheck and not derbyPlayers[pid]
-      and ((not rec) or isEntrant(rec)) then
+      and race.inField(pid) then
     local top = 0
     for _, r in pairs(derbyPlayers) do
       if r.slot and r.slot > top then top = r.slot end
@@ -1388,8 +1389,13 @@ function RM_Derby_onPlayerJoin(pid)
       slot = (slot <= #derby.startPositions) and slot or nil,
     }
     broadcastDerbyState()
-    return
+    return true
   end
+  return false
+end
+
+function RM_Derby_onPlayerJoin(pid)
+  if lateEntry(pid) then return end
   broadcastDerbyState(pid)  -- late joiners spectate the running derby
 end
 
@@ -1429,5 +1435,6 @@ end
 D.getDerbyLayouts  = getDerbyLayouts
 D.entryListChanged = derbyEntryListChanged
 D.underWay         = derbyUnderWay
+D.lateEntry        = lateEntry
 
 return D
