@@ -3619,6 +3619,14 @@ function M.deleteGarageSet(name)
   end
 end
 
+-- Saved rulesets: op is save, load, delete or defaults. The server owns the
+-- names and every refusal.
+function M.rulesetAction(op, name)
+  if inMultiplayer() then
+    TriggerServerEvent('RM_Rules', jsonEncode({ op = tostring(op or ''), name = tostring(name or '') }))
+  end
+end
+
 -- The server ordered this client to drop a refused car. The server cannot:
 -- MP.RemoveVehicle wants BeamMP's own vehicle id, not veh:getID(). Not
 -- removeLocalVehicle(), which would respawn the car at session end.
