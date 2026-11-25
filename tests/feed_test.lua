@@ -1035,6 +1035,41 @@ do
     check(docs:find('| `' .. k .. '` |', 1, true) ~= nil, 'the docs describe the banner item ' .. k)
   end
 end
+-- The tower's columns: names, each once, no pages.
+check(styleNow().towerColumns == 'gap,badges', 'the tower shows the gap and the badges until told otherwise')
+r, res = postStyle('{"towerColumns":" Gap, last,best,,last,pits,badges "}')
+check(res.ok and #res.rejected == 0 and styleNow().towerColumns == 'gap,last,best,pits,badges',
+  'columns kept tidy: case and spaces dropped, a repeat kept once')
+postStyle('{"towerColumns":"gap,lastlap"}')
+check(styleNow().towerColumns == 'gap,last,best,pits,badges', 'a name it does not know refuses the columns')
+postStyle('{"towerColumns":"gap|last"}')
+check(styleNow().towerColumns == 'gap,last,best,pits,badges', 'and so does a page: the tower has none')
+postStyle('{"towerColumns":","}')
+check(styleNow().towerColumns == 'gap,last,best,pits,badges', 'and no column at all')
+local allCols = table.concat(feed.style.TOWER_COLUMNS, ',')
+postStyle('{"towerColumns":"' .. allCols .. '"}')
+check(styleNow().towerColumns == allCols, 'every column there is')
+do
+  local function slurp(p)
+    local fh = io.open(p, 'r')
+    local t = fh and fh:read('*a') or ''
+    if fh then fh:close() end
+    return t
+  end
+  local overlay = slurp('ui/modules/apps/RaceManager/overlay.html')
+  local editor = slurp('ui/modules/apps/RaceManager/style.html')
+  local docs = slurp('docs/REFERENCE.md')
+  local from = docs:find('\n#### Tower columns', 1, true)
+  docs = from and docs:sub(from, (docs:find('\n###', from + 5, true) or #docs)) or ''
+  check(docs ~= '', 'docs/REFERENCE.md has a "Tower columns" section')
+  local listed = overlay:match('var TOWER_COLUMNS = (%b[])') or ''
+  local offered = editor:match('var TOWER_COLUMNS = (%b[])') or ''
+  for _, k in ipairs(feed.style.TOWER_COLUMNS) do
+    check(listed:find("'" .. k .. "'", 1, true) ~= nil, 'the overlay draws the tower column ' .. k)
+    check(offered:find("['" .. k .. "', '", 1, true) ~= nil, 'the style editor offers the tower column ' .. k)
+    check(docs:find('| `' .. k .. '` |', 1, true) ~= nil, 'the docs describe the tower column ' .. k)
+  end
+end
 postStyle('{"reset":true,"title":"Fresh"}')
 got = styleNow()
 check(got.colors.accent == '#ff7a1a' and got.title == 'Fresh' and got.subtitle == '', 'reset starts from the defaults')

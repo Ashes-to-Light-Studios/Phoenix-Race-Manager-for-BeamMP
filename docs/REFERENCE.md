@@ -3515,7 +3515,7 @@ falls back to polling `/live.json`. Pick what it shows with the address:
 
 | Address | Shows |
 |---|---|
-| `?view=tower` | The running order: position, name, gap, and badges for the fastest lap (**FL**), the joker (**J**, **J×2**), pit stops (**PIT**, **PIT×2**) and penalties. With [mandatory pit stops](#mandatory-pit-stops) every car carries **PIT 1/2**, outlined until all its stops are made. Rows flash green or red when they move. |
+| `?view=tower` | The running order: position, name, gap, and badges for the fastest lap (**FL**), the joker (**J**, **J×2**), pit stops (**PIT**, **PIT×2**) and penalties. With [mandatory pit stops](#mandatory-pit-stops) every car carries **PIT 1/2**, outlined until all its stops are made. Rows flash green or red when they move. Add last lap, best lap, places gained and more: see [tower columns](#tower-columns). |
 | `?view=grid` | The starting grid, two by two. Before a grid is called, the provisional grid from qualifying. |
 | `?view=banner` | One line: flag, session, lap, clock or time left, fastest lap. Or what you choose, a page at a time: see [the banner](#the-banner). |
 | `?view=results` | The classification: gap, best lap and places gained. |
@@ -3531,6 +3531,44 @@ A driver's **team** colors the bar beside their name and the chip with their
 **car number**, and the team's logo sits next to it (see
 [Teams and car numbers](#teams-and-car-numbers)). The colors, logos, font and
 words are yours to change: next.
+
+#### Tower columns
+
+The tower always shows each driver's place, color bar, car number, team logo
+and name. What comes right of the name is yours to choose: name the columns in
+the order you want them, with a comma between them.
+
+- **In the style editor**, the **Tower columns** card: click a column to add it,
+  or type the names. That sets every tower you have open.
+- **In the link**, `&cols=` does the same for that one browser source, so a
+  second tower can show something else:
+  `/overlay?view=tower&cols=gap,last,best,pits,badges`. A name the link does not
+  know is left out.
+
+| Column | Shows |
+|---|---|
+| `gap` | The gap to the leader, or to the car ahead with `&gap=interval`. LEADER on the top row (its time once home), the best lap in qualifying, and DNF or DSQ for a car out. |
+| `interval` | The gap to the car ahead, whatever `&gap=` says. |
+| `last` | The last lap time. Blank for a lap that set none (a standing start, a cut lap). |
+| `best` | The best lap time, in the fastest-lap color for the session's fastest. |
+| `lap` | The lap each driver is on: `3/10`, `PACE`, `OUT`. |
+| `gained` | Places gained since the start, `+2` in the gained color, `-1` in the lost color. Races only. |
+| `led` | Laps led. |
+| `pits` | Pit stops made, or `1/2` with [mandatory pit stops](#mandatory-pit-stops). |
+| `joker` | The joker lap, `L4`, or `×2!` when taken twice. |
+| `resets` | Resets used. |
+| `status` | Finished, DNF, DSQ, Waiting... Blank while a driver is simply racing. |
+| `team` | The team's name. |
+| `class` | The class. |
+| `badges` | The badges: fastest lap, joker, pit stops, penalty, black flag. Off everywhere with the `badges` setting. |
+
+Shipped, it is `gap,badges`: the tower as it always was. With any column other
+than those two, each column's name shows above it (the `labels.col...` words in
+the **Words** card; an empty one leaves that name out). Every column is as wide
+as its widest cell, so the columns line up down the tower however long a team
+name or how many badges a row has. For a stylesheet of your own, each column is
+`.col` with `data-col` (`gap`, `last`...), and the names above them are
+`.colheads`.
 
 #### The banner
 
@@ -3651,6 +3689,7 @@ refused, named in the answer, and keeps its old value.
 | `gained` | Places gained, in the results | `true` |
 | `flash` | A row flashes when it moves | `true` |
 | `flagStripe` | The flag-colored stripe | `true` |
+| `towerColumns` | What [the tower](#tower-columns) shows right of each name: columns by name, `,` between them, each once. A name it does not know refuses the whole value | `gap,badges` |
 | `logo` | The league's logo: above the tower, grid and results, and first on the banner | none |
 | `sponsor` | Under them, and last on the banner | none |
 | `title`, `subtitle` | Beside the logo; up to 40 and 60 characters | none |
@@ -3668,7 +3707,11 @@ when the layout has no name), `labels.qualifying`, `labels.qualiResult`,
 `labels.order` (Running order), `labels.onBoard` (On board), `labels.heat`
 (Heat), `labels.field` (Field), `labels.latest` (Latest), `labels.jokers`
 (Jokers taken), `labels.pits` (Pit stops) and `labels.pitsDone` (All stops
-made), the
+made), the tower's column names `labels.colGap` (Gap), `labels.colInterval`
+(Int.), `labels.colLast` (Last), `labels.colBest` (Best), `labels.colLap` (Lap),
+`labels.colGained` (Gained), `labels.colLed` (Led), `labels.colPits` (Pits),
+`labels.colJoker` (Joker), `labels.colResets` (Resets), `labels.colStatus`
+(Status), `labels.colTeam` (Team) and `labels.colClass` (Class), the
 badges' `labels.pit` (PIT), `labels.fl` (FL) and `labels.joker` (J), and
 `labels.waiting` (60 characters), shown while there is no session. An empty
 badge word hides that badge.
@@ -3691,7 +3734,8 @@ taken one at a time, and must say their length; a style is 64 KB at most.
 `data-view` (`tower`, `grid`...); tower, grid and results rows have `data-pos`,
 `data-class` and `data-team` (the short code); the parts are `.panel`, `.brand`,
 `.head`, `.rows`, `.row`, `.pos`, `.bar`, `.carno`, `.tlogo`, `.name`, `.gap`,
-`.badge`, `.slot`, `.banner`, `.results` and `.toast`. The editor's colors are
+`.badge`, `.slot`, `.banner`, `.results` and `.toast`; the tower's columns are
+`.col` with `data-col`, under `.colheads`. The editor's colors are
 set on the page itself, so a stylesheet's own wins over them only with
 `!important`.
 

@@ -24,6 +24,14 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   ready-made **banner ticker** link. As shipped, the banner looks as it did. See
   [The banner](docs/REFERENCE.md#the-banner).
 
+- **Choose the overlay tower's columns.** Right of each driver's name, any of:
+  gap, interval to the car ahead, last lap, best lap, the driver's lap, places
+  gained, laps led, pit stops, the joker lap, resets, status, team, class and
+  the badges, in the order you name them. Their names show above them, and
+  every column lines up down the tower. Set it in the style editor's new
+  **Tower columns** card, or per browser source with `&cols=`, for example
+  `?view=tower&cols=gap,last,best,pits,badges`. As shipped, the tower looks as
+  it did. See [Tower columns](docs/REFERENCE.md#tower-columns).
 - **Mandatory pit stops on the broadcast.** With stops required, every car on
   the overlay's tower carries `PIT 1/2`, outlined until all its stops are made,
   as in the timing table. The feed has the number required

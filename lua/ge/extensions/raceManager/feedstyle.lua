@@ -168,6 +168,35 @@ function C.banner(v)
   return table.concat(pages, '|')
 end
 
+-- THE TOWER'S COLUMNS (?view=tower), right of each driver's name, in order.
+-- Place, color bar, number, team logo and name are always there. The
+-- overlay's TOWER_COLUMNS is this list; docs/REFERENCE.md describes each.
+D.TOWER_COLUMNS = {
+  'gap', 'interval', 'last', 'best', 'lap', 'gained', 'led', 'pits', 'joker',
+  'resets', 'status', 'team', 'class', 'badges',
+}
+local COLUMN_SET = {}
+for _, k in ipairs(D.TOWER_COLUMNS) do COLUMN_SET[k] = true end
+
+-- "gap,last,best,badges": known names only, each once, at least one. A name
+-- it does not know refuses the whole value, as C.banner does.
+function C.columns(v)
+  if type(v) ~= 'string' or #v > 200 then return nil end
+  v = (v:lower():gsub('%s', ''))
+  local out, seen = {}, {}
+  for item in (v .. ','):gmatch('([^,]*),') do
+    if item ~= '' then
+      if not COLUMN_SET[item] then return nil end
+      if not seen[item] then
+        seen[item] = true
+        out[#out + 1] = item
+      end
+    end
+  end
+  if #out == 0 then return nil end
+  return table.concat(out, ',')
+end
+
 local function shortCode(k)
   if type(k) == 'string' and k:match('^[A-Z0-9][A-Z0-9][A-Z0-9]?[A-Z0-9]?$') then return k end
   return nil
@@ -213,6 +242,7 @@ D.SPEC = {
   { 'gained', C.bool, true },
   { 'flash', C.bool, true },
   { 'flagStripe', C.bool, true },
+  { 'towerColumns', C.columns, 'gap,badges' },
   { 'logo', C.image, '' },
   { 'sponsor', C.image, '' },
   { 'title', C.text(40), '' },
@@ -234,6 +264,13 @@ D.SPEC = {
     { 'field', text24, 'Field' }, { 'latest', text24, 'Latest' },
     { 'jokers', text24, 'Jokers taken' }, { 'pits', text24, 'Pit stops' },
     { 'pitsDone', text24, 'All stops made' },
+    { 'colGap', text24, 'Gap' }, { 'colInterval', text24, 'Int.' },
+    { 'colLast', text24, 'Last' }, { 'colBest', text24, 'Best' },
+    { 'colLap', text24, 'Lap' }, { 'colGained', text24, 'Gained' },
+    { 'colLed', text24, 'Led' }, { 'colPits', text24, 'Pits' },
+    { 'colJoker', text24, 'Joker' }, { 'colResets', text24, 'Resets' },
+    { 'colStatus', text24, 'Status' }, { 'colTeam', text24, 'Team' },
+    { 'colClass', text24, 'Class' },
     { 'waiting', C.text(60), 'Waiting for Phoenix Race Manager…' },
     { 'pit', text24, 'PIT' }, { 'fl', text24, 'FL' }, { 'joker', text24, 'J' },
   } },

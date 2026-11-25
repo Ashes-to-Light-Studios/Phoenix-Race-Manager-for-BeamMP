@@ -9,6 +9,7 @@
 
   Views, by query string:
     ?view=tower    running order (default)     &rows=N  &gap=leader|interval
+                   &cols=gap,last,best,pits,badges  (the columns, in order)
     ?view=grid     the starting grid
     ?view=banner   one line: flag, lap or clock, fastest lap; or what you choose
                    &show=session,lap,time|leader,margin|order  (`|` = a new page)
@@ -36,7 +37,8 @@
   are .panel .brand .head .flag .title .meta .rows .row .pos .bar .carno .tlogo
   .name .gap .badges .badge .slot .banner .results .toast .sponsor.
   The banner's root has data-page, each of its cells data-item (lap, order...),
-  and the turning part is .page.
+  and the turning part is .page. The tower's columns are .col with data-col
+  (gap, last...), and their names are in .colheads.
 -->
 <html lang="en">
 <head>
@@ -169,9 +171,24 @@
     flex: 1; padding: 0 0.55em; font-weight: var(--w); white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; min-width: 6em; max-width: var(--name-w); text-transform: var(--case);
   }
-  .gap { width: 5.2em; text-align: right; padding-right: 0.55em; color: var(--muted); font-weight: var(--w); font-size: 0.9em; white-space: nowrap; }
+  /* The tower's columns: right of the name, pushed to the panel's right edge
+     (margin-left: auto on the first), and made one width down the tower once
+     drawn (alignColumns). */
+  .col { flex: none; box-sizing: border-box; text-align: right; padding-right: 0.55em; color: var(--muted); font-weight: var(--w); font-size: 0.9em; white-space: nowrap; }
+  .col.first { margin-left: auto; }
+  .gap, .c-interval { width: 5.75em; }
+  .c-last, .c-best { min-width: 4.9em; }
+  .c-lap, .c-class { min-width: 3.3em; }
+  .c-gained, .c-led, .c-pits, .c-joker, .c-resets { min-width: 2.6em; }
+  .c-team { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+  .c-best.fast { color: var(--fastest); }
+  .c-gained.gain { color: var(--gain); }
+  .c-gained.loss { color: var(--loss); }
   .row:first-child .gap { color: var(--fg); }
   .badges { display: flex; gap: 0.25em; padding-right: 0.45em; flex: none; min-width: 1.6em; justify-content: flex-end; }
+  .col.badges { font-size: 1em; color: inherit; }
+  .colheads { display: flex; align-items: flex-end; background: var(--bg); padding: 0.2em 0 0.15em; }
+  .colheads .col span { font-size: 0.72em; letter-spacing: 0.08em; text-transform: uppercase; }
   .badge {
     font-size: 0.68em; font-weight: var(--w-strong); padding: 0.08em 0.35em; border-radius: calc(var(--radius) * 0.6);
     background: var(--line); color: var(--fg); white-space: nowrap;
@@ -273,6 +290,8 @@
   // The banner: what it shows (else the style's `banner`), the seconds a page
   // (else the style's `bannerCycle`; 0 puts every page on one line), and the
   // drivers a page of the running order.
+  // The tower's columns (else the style's `towerColumns`).
+  var COLS = q.get('cols');
   var SHOW = q.get('show');
   var URL_CYCLE = parseFloat(q.get('cycle'));
   if (!(URL_CYCLE === 0 || (URL_CYCLE >= 1 && URL_CYCLE <= 600))) { URL_CYCLE = NaN; }
@@ -304,6 +323,7 @@
     font: 'system', weight: 'bold', uppercase: false,
     bar: 'team', nameFormat: 'full', numbers: 'chip', teamLogos: true,
     badges: true, gained: true, flash: true, flagStripe: true,
+    towerColumns: 'gap,badges',
     logo: '', sponsor: '', title: '', subtitle: '',
     banner: 'logo,flag,session,lap,time,countdown,fastest,sponsor', bannerCycle: 8,
     labels: {
@@ -314,6 +334,9 @@
       fastestLap: 'Fastest lap', track: 'Track', toGo: 'To go', margin: 'Margin',
       order: 'Running order', onBoard: 'On board', heat: 'Heat', field: 'Field', latest: 'Latest',
       jokers: 'Jokers taken', pits: 'Pit stops', pitsDone: 'All stops made',
+      colGap: 'Gap', colInterval: 'Int.', colLast: 'Last', colBest: 'Best', colLap: 'Lap',
+      colGained: 'Gained', colLed: 'Led', colPits: 'Pits', colJoker: 'Joker', colResets: 'Resets',
+      colStatus: 'Status', colTeam: 'Team', colClass: 'Class',
       waiting: 'Waiting for Phoenix Race Manager…',
       pit: 'PIT', fl: 'FL', joker: 'J'
     },
@@ -325,6 +348,24 @@
     'left', 'countdown', 'fastest', 'leader', 'margin', 'order', 'onboard', 'heat', 'field',
     'joker', 'pits', 'latest', 'sponsor'];
   var BANNER_FRAME = { logo: true, flag: true, sponsor: true };
+  // The tower's columns (feedstyle.lua D.TOWER_COLUMNS), and the word above each.
+  var TOWER_COLUMNS = ['gap', 'interval', 'last', 'best', 'lap', 'gained', 'led', 'pits', 'joker',
+    'resets', 'status', 'team', 'class', 'badges'];
+  var COLUMN_HEADS = { gap: 'colGap', interval: 'colInterval', last: 'colLast', best: 'colBest',
+    lap: 'colLap', gained: 'colGained', led: 'colLed', pits: 'colPits', joker: 'colJoker',
+    resets: 'colResets', status: 'colStatus', team: 'colTeam', 'class': 'colClass' };
+  // "gap,last,badges" -> ['gap', 'last', 'badges'], each once, or null. strict:
+  // a name it does not know makes it null (a saved style); else it is dropped.
+  function towerColumns(v, strict) {
+    if (typeof v !== 'string' || v.length > 200) { return null; }
+    var out = [], bad = false;
+    v.toLowerCase().replace(/\s+/g, '').split(',').forEach(function (it) {
+      if (!it) { return; }
+      if (TOWER_COLUMNS.indexOf(it) < 0) { bad = true; return; }
+      if (out.indexOf(it) < 0) { out.push(it); }
+    });
+    return (strict && bad) || !out.length ? null : out;
+  }
   // "session,lap|order" -> [['session', 'lap'], ['order']], or null. strict: a
   // name it does not know makes the whole value null, as the feed refuses it
   // (a saved style); otherwise that name is dropped (a link's &show=).
@@ -432,6 +473,7 @@
     o.sponsor = image(s.sponsor, rev);
     o.title = text(s.title, 40, d.title);
     o.subtitle = text(s.subtitle, 60, d.subtitle);
+    o.towerColumns = towerColumns(s.towerColumns, true) ? s.towerColumns : d.towerColumns;
     o.banner = bannerPages(s.banner, true) ? s.banner : d.banner;
     o.bannerCycle = num(s.bannerCycle, 2, 60, d.bannerCycle);
     var l = isObj(s.labels) ? s.labels : {};
@@ -736,6 +778,22 @@
     var title = s.kind === 'quali' ? L.qualifying : (s.phase === 'finished' ? L.result : (s.layout || L.race));
     p.appendChild(header(title, sessionMeta(s), s.flag));
     if (s.flagText && s.flag !== 'green') { p.appendChild(el('div', 'flagtext ' + s.flag, s.flagText)); }
+    var cols = (COLS !== null && towerColumns(COLS, false)) || towerColumns(ST.towerColumns, true)
+      || towerColumns(DEFAULTS.towerColumns, true);
+    if (!ST.badges) { cols = cols.filter(function (c) { return c !== 'badges'; }); }
+    // Names above the columns once there is more than the plain gap to read.
+    var named = cols.some(function (c) { return c !== 'gap' && c !== 'badges'; });
+    if (named && cols.some(function (c) { return COLUMN_HEADS[c] && L[COLUMN_HEADS[c]]; })) {
+      var heads = el('div', 'colheads');
+      cols.forEach(function (c, ci) {
+        var hc = el('div', 'col c-' + c + (c === 'gap' ? ' gap' : '') + (ci === 0 ? ' first' : ''));
+        hc.setAttribute('data-col', c);
+        if (c === 'badges') { hc.classList.add('badges'); }
+        hc.appendChild(el('span', null, COLUMN_HEADS[c] ? L[COLUMN_HEADS[c]] : ''));
+        heads.appendChild(hc);
+      });
+      p.appendChild(heads);
+    }
     var rows = el('div', 'rows');
     var list = doc.drivers.filter(inClass).slice(0, ROWS);
     list.forEach(function (d, i) {
@@ -756,18 +814,60 @@
       }
       identity(r, d);
       r.appendChild(el('div', 'name', nameOf(d.name)));
-      var gap;
-      if (d.out) { gap = d.statusText; }
-      else if (s.kind === 'quali') { gap = (i === 0 || !d.gapText) ? (d.bestLapText || L.noTime) : d.gapText; }
-      else if (i === 0) { gap = d.status === 'finished' ? d.finishText : (s.phase === 'finished' ? d.finishText : L.leader); }
-      else { gap = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText || ''; }
-      r.appendChild(el('div', 'gap', gap));
-      if (ST.badges) { r.appendChild(badges(d, s)); }
+      cols.forEach(function (c, ci) {
+        var cell = c === 'badges' ? badges(d, s) : towerCell(c, d, i, s);
+        cell.classList.add('col', 'c-' + c);
+        if (ci === 0) { cell.classList.add('first'); }
+        cell.setAttribute('data-col', c);
+        r.appendChild(cell);
+      });
       rows.appendChild(r);
     });
     doc.drivers.forEach(function (d) { lastPos[d.id] = d.position; });
     p.appendChild(rows);
     return finish(p);
+  }
+
+  // One of the tower's columns for one driver (`i`: their row, 0 for the top).
+  function towerCell(c, d, i, s) {
+    var v = '', cls = '';
+    if (c === 'gap') {
+      cls = 'gap';
+      if (d.out) { v = d.statusText; }
+      else if (s.kind === 'quali') { v = (i === 0 || !d.gapText) ? (d.bestLapText || L.noTime) : d.gapText; }
+      else if (i === 0) { v = d.status === 'finished' ? d.finishText : (s.phase === 'finished' ? d.finishText : L.leader); }
+      else { v = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText || ''; }
+    } else if (c === 'interval') { v = (i === 0 || d.out) ? '' : d.intervalText; }
+    else if (c === 'last') { v = d.lastLapText; }
+    else if (c === 'best') { v = d.bestLapText; if (d.fastest) { cls = 'fast'; } }
+    else if (c === 'lap') { v = d.lapText; }
+    else if (c === 'gained') {
+      if (s.kind !== 'quali') { v = d.gainedText; cls = d.gained > 0 ? 'gain' : (d.gained < 0 ? 'loss' : ''); }
+    }
+    else if (c === 'led') { v = d.lapsLed > 0 ? String(d.lapsLed) : ''; }
+    else if (c === 'pits') { v = d.pitStopsText; }
+    else if (c === 'joker') { v = d.jokerText; }
+    else if (c === 'resets') { v = d.resets > 0 ? String(d.resets) : ''; }
+    // Blank while simply circulating: a column of "Racing" says nothing.
+    else if (c === 'status') { v = (d.status === 'racing' || d.status === 'qualifying') ? '' : d.statusText; }
+    else if (c === 'team') { v = d.teamName || ''; }
+    else if (c === 'class') { v = d['class'] || ''; }
+    return el('div', cls, v || '');
+  }
+
+  // One width per column down the tower: the widest cell's, so a badge or a
+  // team name in one row does not push that row's other columns out of line.
+  function alignColumns(root) {
+    var cells = root.querySelectorAll('.colheads .col, .rows .col');
+    var widest = {}, i, c, k, w;
+    for (i = 0; i < cells.length; i += 1) {
+      c = cells[i]; k = c.getAttribute('data-col'); w = c.getBoundingClientRect().width;
+      if (!(widest[k] >= w)) { widest[k] = w; }
+    }
+    for (i = 0; i < cells.length; i += 1) {
+      c = cells[i];
+      c.style.minWidth = Math.ceil(widest[c.getAttribute('data-col')]) + 'px';
+    }
   }
 
   function grid(doc) {
@@ -1106,6 +1206,7 @@
       clear(viewEl);
       viewEl.appendChild(out);
     }
+    if (render === tower) { alignColumns(out); }
   }
   function rerender() { if (lastDoc) { draw(lastDoc); } }
   function show(doc) {
@@ -1196,7 +1297,8 @@
         var cls = i < 4 ? 0 : 1;
         return { id: i + 1, name: p[0], number: p[1], team: i % 4, cls: cls, grid: i + 1,
           pace: 101.8 + cls * 3.2 + i * 0.12, dist: -i * 0.011, lapStart: 0, last: null, best: null,
-          quali: 100.9 + cls * 3.1 + i * 0.137, pits: 0, joker: 0 };
+          quali: 100.9 + cls * 3.1 + i * 0.137, pits: 0, joker: 0, jokerLap: null, led: 0,
+          resets: i === 5 ? 1 : 0 };
       });
       events = []; clock = 0; fastest = null; leaderId = 1; yellowUntil = -1;
     }
@@ -1222,8 +1324,9 @@
             fastest = { id: c.id, name: c.name, time: t, text: fmt(t) };
             if (lap > 1) { add('fastest', c, 'Fastest lap: ' + c.name + ' ' + fmt(t)); }
           }
-          if (c.id === 2 && lap === 3) { c.joker = 1; add('joker', c, c.name + ' takes the joker on lap 3'); }
-          if (c.id === 6 && lap === 4) { c.joker = 1; add('joker', c, c.name + ' takes the joker on lap 4'); }
+          if (c.id === 2 && lap === 3) { c.joker = 1; c.jokerLap = 3; add('joker', c, c.name + ' takes the joker on lap 3'); }
+          if (c.id === 6 && lap === 4) { c.joker = 1; c.jokerLap = 4; add('joker', c, c.name + ' takes the joker on lap 4'); }
+          if (c.id === leaderId) { c.led += 1; }
           if ((c.id === 3 && lap === 5) || (c.id === 7 && lap === 6)) {
             c.pits += 1; c.pitNow = true; c.dist -= 0.2;
             add('pit', c, c.name + ' pits (stop ' + c.pits + ')');
@@ -1261,7 +1364,8 @@
           fastest: !!(fastest && fastest.id === c.id),
           gapText: i === 0 ? '' : (down >= 1 ? '+' + down + ' LAP' + (down > 1 ? 'S' : '') : '+' + (behind * c.pace).toFixed(3)),
           intervalText: i === 0 ? '' : '+' + (iv * c.pace).toFixed(3),
-          jokerTaken: c.joker, pitStops: c.pits, pitStopsCounted: c.pits,
+          jokerTaken: c.joker, jokerText: c.joker ? 'L' + c.jokerLap : '', lapsLed: c.led, resets: c.resets,
+          pitStops: c.pits, pitStopsCounted: c.pits,
           pitStopsText: c.pits > 0 ? String(c.pits) : '', penalty: 0, finishText: '',
           number: c.number, team: c.team + 1, teamName: team.name, teamShort: team.short,
           teamColor: team.color, teamLogo: team.logo
