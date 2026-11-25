@@ -340,6 +340,18 @@
               title="Off your place again, to fix something. Press Ready again before the start or you sit it out.">Not ready</button>
     </span>
   </div>
+  <!-- JOIN: the grid formed without this driver (no car spawned then) and they
+       are in one now. NOTHING PUTS THEM IN ON ITS OWN - not spawning, not
+       waiting - so this is the way in: the back of the grid, placed at once.
+       Not pressed, they stay off every board for this session. An admin can
+       Place them instead (Not in the field). -->
+  <div class="rm-readybar" ng-if="myJoinable && !broadcastMode()">
+    <span class="rm-ready">
+      <button class="rm-btn rm-btn-start rm-btn-ready" ng-click="joinPress()"
+              title="Start from the back of the grid: your car goes on the slot and is held there until the start">JOIN</button>
+      {{ sessionKind === 'quali' ? 'The qualifying grid' : 'The grid' }} formed without you: press Join to start from the back.
+    </span>
+  </div>
 
   <div class="rm-entry" ng-if="!minimalMode()">
     <span class="rm-entry-label">Race Entry</span>
@@ -350,8 +362,12 @@
          itself. Spectating covers what opt-in was for: a one on one is two
          drivers racing and everybody else pressing Spectate, with no mode to
          set first. -->
-    <span class="rm-entry-state rm-entry-in" ng-if="!spectating">
+    <span class="rm-entry-state rm-entry-in" ng-if="!spectating && !myNoCar">
       ✓ You are in the field.
+    </span>
+    <!-- No car, no grid: a field forms without a driver who has no car spawned. -->
+    <span class="rm-entry-state rm-entry-out" ng-if="!spectating && myNoCar">
+      🚗 No car spawned: you are left off grids until you spawn one.
     </span>
     <span class="rm-entry-state rm-entry-out" ng-if="spectating">
       👁 You are SPECTATING: sessions run without you. Tab between cars to watch.
@@ -402,6 +418,31 @@
       <button class="rm-btn rm-btn-mini" ng-click="retireUi.confirm = false">Cancel</button>
     </span>
     <span class="rm-entry-count">{{ entrants }} racing</span>
+  </div>
+
+  <!-- NOT IN THE FIELD (admins): who the board leaves out for want of a car,
+       left off a grid and never joined, or with no car at all. They are on no
+       table, board or overlay; this is where an admin finds them. Place puts a
+       driver who has a car now on the back of the grid; Add puts one in, car or
+       not, until they leave the server; Remove takes an Add back. -->
+  <div class="rm-entry rm-nofield" ng-if="isAdmin && notInField.length && !minimalMode() && !broadcastMode()">
+    <span class="rm-entry-label">Not in the field</span>
+    <span class="rm-nofield-row" ng-repeat="row in notInField track by row.id">
+      <span class="rm-nofield-name" title="{{ row.name }}">{{ driverName(row) }}</span>
+      <span class="rm-nofield-tag rm-added-tag" ng-if="row.adminEntry"
+            title="Added by an admin: in the next field, with or without a car, until they leave the server">ADDED</span>
+      <span class="rm-nofield-tag" ng-if="!row.adminEntry && row.noCar"
+            title="No car spawned: left out of every field until they spawn one, or you Add them">NO CAR</span>
+      <span class="rm-nofield-tag" ng-if="!row.adminEntry && !row.noCar"
+            title="The grid formed while they had no car. They have one now and can press Join; nothing puts them in on its own">LEFT OFF</span>
+      <button class="rm-btn rm-btn-mini" ng-if="!row.noCar && phase === 'grid'"
+              ng-click="placeDriver(row)" title="Put this driver on the back of the grid now">Place</button>
+      <button class="rm-btn rm-btn-mini" ng-if="row.noCar && !row.adminEntry"
+              ng-click="addDriver(row, true)"
+              title="Put this driver in the field without a car, until they leave the server. On a grid being formed they are called to the back and press Ready once they are in a car.">Add</button>
+      <button class="rm-btn rm-btn-mini" ng-if="row.adminEntry"
+              ng-click="addDriver(row, false)" title="Take back the Add: with no car, they are left out again">Remove</button>
+    </span>
   </div>
 
   <!-- ================= Cup standings (drivers) ===========================
@@ -1418,6 +1459,47 @@
         A sprint stage is driven once: there is no lap to form up on.
       </span>
     </span>
+    <!-- Start from the pit stalls: the race's own switch (qualifying has one). -->
+    <span class="rm-setting" title="Line the race up in the pit stalls instead of on the grid: stall 1 is pole. The first lap is an untimed out lap that counts as lap 1. Uses the track grid if there are fewer stalls than drivers.">
+      <label>Start in pits</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': raceFromPits}"
+              ng-click="togglePitStart('race')"
+              ng-disabled="!canSetRules() || (!raceFromPits &amp;&amp; !pitRoute.length)">
+        {{ raceFromPits ? '✓ Enabled' : 'Disabled' }}
+      </button>
+      <span class="rm-setting-val" ng-if="raceFromPits">Stall 1 is pole &middot; lap 1 is an untimed out lap</span>
+      <span class="rm-setting-warn" ng-if="!pitRoute.length">No pit stalls on this layout.</span>
+    </span>
+    <!-- MANDATORY PIT STOPS. One per lap counts; a finisher short of them is
+         disqualified or given seconds per missing stop. Needs stalls, like
+         Required serving: with none it does not run. -->
+    <span class="rm-setting" title="Every driver must make this many pit stops in the race, at most one counted per lap. 0 turns it off.">
+      <label>Pit stops</label>
+      <input type="number" class="rm-width-num" min="0" max="10" step="1" ng-model="settingsUi.pitStopsRequired"
+             ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+             ng-change="applyPitStopRule()"
+             ng-disabled="!canSetRules()">
+      <span ng-if="pitStopRule.required > 0">
+        <label>If missed</label>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStopRule.missed === 'dsq'}"
+                ng-click="setPitStopMissed('dsq')" ng-disabled="!canSetRules()"
+                title="A driver who finishes short of the required stops is disqualified at the flag.">Disqualify</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStopRule.missed === 'time'}"
+                ng-click="setPitStopMissed('time')" ng-disabled="!canSetRules()"
+                title="A driver who finishes short gets the seconds below added to their race time for each stop missed.">Time</button>
+        <span ng-if="pitStopRule.missed === 'time'">
+          <label>+ s per stop</label>
+          <input type="number" class="rm-width-num" min="1" max="600" step="0.5" ng-model="settingsUi.pitStopSecs"
+                 ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+                 ng-change="applyPitStopRule()"
+                 ng-disabled="!canSetRules()">
+        </span>
+      </span>
+      <span class="rm-setting-val" ng-if="pitStopRule.required > 0">One stop counted per lap</span>
+      <span class="rm-setting-warn" ng-if="pitStopRule.required > 0 &amp;&amp; !pitRoute.length">
+        No pit stalls on this layout: the rule does not run.
+      </span>
+    </span>
     <!-- THE FREE PASS. Not idle-locked, unlike the pace lap above it: this one
          changes nothing until a yellow is actually called, and a marshal
          deciding mid-race that an incident does or does not deserve one is
@@ -1502,6 +1584,19 @@
               ng-click="toggleGhostQuali()">
         {{ ghostQuali ? '✓ Enabled' : 'Disabled' }}
       </button>
+    </span>
+    <!-- START FROM THE PIT STALLS. The server decides at the grid whether the
+         stalls can take the field (a stall each, and the pit start's first
+         checkpoint running between none of them) and says so in chat if not. -->
+    <span class="rm-setting" title="Line qualifying up in the pit stalls instead of on the grid: stall 1 is P1. Uses the track grid if there are fewer stalls than drivers.">
+      <label>Start in pits</label>
+      <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': qualiFromPits}"
+              ng-click="togglePitStart('quali')"
+              ng-disabled="!canSetRules() || (!qualiFromPits &amp;&amp; !pitRoute.length)">
+        {{ qualiFromPits ? '✓ Enabled' : 'Disabled' }}
+      </button>
+      <span class="rm-setting-val" ng-if="qualiFromPits">Stall 1 is P1</span>
+      <span class="rm-setting-warn" ng-if="!pitRoute.length">No pit stalls on this layout.</span>
     </span>
     <!-- A qualifying session is run to a LAP ALLOWANCE or to a CLOCK, not both.
          The server takes both numbers and treats 0 as unlimited, so both at
@@ -2617,20 +2712,20 @@
                 title="Drive into a stall and press the button. A stall stops, repairs and releases the car. Not a checkpoint.">
           Stalls ({{ pitRoute.length }})
         </button>
-      <!-- THE LANE'S MOUTH AND ITS EXIT. Optional: a track with no entry gate
-           keeps every stall on screen the way it always did. With one, the
-           stalls are hidden until a driver crosses it, which takes a
-           twelve-stall lane from thirty-six draws a frame to three. -->
+      <!-- THE LANE'S MOUTH AND ITS EXIT. Optional signs: neither shows or
+           hides anything. The stalls (and PIT OUT) are drawn whenever a car
+           is within 200 m of them, so a lane far away costs nothing and no
+           gate a driver crosses can hide a stall from them. -->
         <button class="rm-btn rm-btn-mini rm-route-tab-pit"
                 ng-class="{'rm-route-tab-pit-active': editorTarget === 'pitEntry'}"
                 ng-click="setEditorTarget('pitEntry')"
-                title="The way into the pit lane. Drawn while racing with an arrow through it; crossing it is what brings the stalls on screen.">
+                title="The way into the pit lane: a sign with a big P, drawn all race. Optional.">
           In ({{ pitEntry.length }})
         </button>
         <button class="rm-btn rm-btn-mini rm-route-tab-pit"
                 ng-class="{'rm-route-tab-pit-active': editorTarget === 'pitExit'}"
                 ng-click="setEditorTarget('pitExit')"
-                title="The way out. Drawn only from inside the lane. Missing it is harmless: clearing any checkpoint also leaves the lane.">
+                title="The way out: a gate labeled PIT OUT, drawn when you are near it. Optional.">
           Out ({{ pitExit.length }})
         </button>
       </span>
@@ -2684,15 +2779,21 @@
       <span class="rm-route-tab-note" ng-if="editorTarget === 'pit'">
         Stalls are amber boxes on the ground. A driver stops inside, nose to the white line, and
         the box turns green while they are in it. Click a stall to set its width and length.
-        <b ng-if="!pitEntry.length">No entry gate, so every stall is drawn for the whole race.</b>
+        Stalls are drawn for any driver within 200 m of them.
+        For a start from the pits, stall 1 is pole: number them from the pit exit back.
+        <b ng-if="pitStartSplit">{{ checkpointName(pitFirstCheckpoint) }} runs between stalls
+          {{ pitStartSplit[0] }} and {{ pitStartSplit[1] }}: with more than {{ pitStartSplit[0] }}
+          cars, a start from the pits would put them on both sides of it, so the server uses the
+          track grid instead. Move that gate, or set <b>Pit start</b> below to a checkpoint ahead
+          of every stall.</b>
       </span>
       <span class="rm-route-tab-note" ng-if="editorTarget === 'pitEntry'">
-        Place this where the lane leaves the track. While racing a driver sees only this gate;
-        crossing it brings the stalls on screen. Without one, every stall is drawn all race.
+        Place this where the lane leaves the track. A sign with a big P, drawn all race so
+        drivers can see where the pits are. It does not show or hide the stalls.
       </span>
       <span class="rm-route-tab-note" ng-if="editorTarget === 'pitExit'">
-        Place this where the lane rejoins. Optional: clearing any checkpoint also
-        leaves the lane, so missing the exit never strands the markers on screen.
+        Place this where the lane rejoins. A sign labeled PIT OUT, drawn when a driver is
+        within 200 m of it, like the stalls.
       </span>
       <span class="rm-route-tab-note" ng-if="editorTarget === 'start'">
         Slot 1 is pole. Drivers are placed here and held until the countdown ends.
@@ -2997,6 +3098,33 @@
         <span class="rm-route-tab-note" ng-if="firstCheckpoint > 1">
           The out lap runs from the grid through <b>{{ checkpointName(firstCheckpoint) }}</b> to the line.
           It is not timed; in a race it counts as lap 1.
+        </span>
+      </div>
+    </div>
+
+    <!-- WHERE AN OUT LAP FROM THE PITS STARTS: the Grid tab's First checkpoint,
+         for a field started in the stalls. Every car is sent to it, so the
+         server only grids a field there when it runs between none of them. -->
+    <div class="rm-lanes" ng-if="editorTarget === 'pit' && pitRoute.length && routeWaypoints.length > 1 && !pointToPoint">
+      <div class="rm-lanes-row">
+        <label class="rm-lane-label">Pit start</label>
+        <div class="rm-layout-dropdown rm-lane-picker"
+             ng-class="{'rm-layout-dropdown-open': laneMenuOpen('pitFirstCp')}">
+          <button type="button" class="rm-layout-trigger" ng-click="laneToggleMenu('pitFirstCp')"
+                  ng-disabled="!canEdit()"
+                  title="The first gate drivers are sent to when a session starts from the pit stalls. It must be ahead of every stall.">
+            <span class="rm-layout-trigger-label">{{ checkpointName(pitFirstCheckpoint) }}</span>
+            <span class="rm-layout-caret">▾</span>
+          </button>
+          <div class="rm-layout-menu" ng-if="laneMenuOpen('pitFirstCp')">
+            <div class="rm-layout-option" ng-repeat="s in routeSlots() track by s"
+                 ng-class="{'rm-layout-option-active': s === pitFirstCheckpoint}"
+                 ng-click="pickPitFirstCheckpoint(s)">{{ checkpointName(s) }}</div>
+          </div>
+        </div>
+        <span class="rm-route-tab-note">
+          A start from the pits sends every car to <b>{{ checkpointName(pitFirstCheckpoint) }}</b> first,
+          then round to the line: an untimed out lap.
         </span>
       </div>
     </div>
@@ -3443,7 +3571,7 @@
                ng-change="derbyApplyConfig()"
                ng-disabled="derbyActive()">
       </span>
-      <span class="rm-setting" title="Everyone: all connected players take part. Opt-in: only those who pressed Join Race, so spectators are left alone.">
+      <span class="rm-setting" title="Everyone connected who is in a car and not spectating takes part, plus anyone an admin added. A player with no car spawned is left out.">
         <label>Entry</label>
         <span class="rm-setting-val">{{ derby.entrants }} in</span>
       </span>
@@ -4291,7 +4419,7 @@
         <span class="rm-alias-real">Show display names on nametags</span>
         <span class="rm-alias-current" ng-if="nametags">guest1234 <b>(Name)</b></span>
       </div>
-      <div class="rm-alias-row" ng-repeat="row in drivers track by row.id">
+      <div class="rm-alias-row" ng-repeat="row in everyDriver track by row.id">
         <span class="rm-alias-real" title="Real BeamMP name for this session">{{ row.name }}</span>
         <input type="text" class="rm-alias-input" maxlength="20"
                placeholder="Display name…"
@@ -5441,6 +5569,10 @@
             <span class="rm-status-text">{{ row.spectating ? 'Spectating' : statusLabel(row.status) }}</span>
             <button class="rm-btn rm-btn-mini" ng-if="isAdmin && phase === 'grid' && row.status === 'called'"
                     ng-click="readyDriver(row)" title="Put this driver on their slot now">Place</button>
+            <span class="rm-nofield-tag rm-added-tag" ng-if="row.adminEntry"
+                  title="Added by an admin: in the field with or without a car, until they leave the server">ADDED</span>
+            <button class="rm-btn rm-btn-mini" ng-if="isAdmin && row.adminEntry"
+                    ng-click="addDriver(row, false)" title="Take back the Add: with no car, they are left out again">Remove</button>
           </td>
         </tr>
         <tr ng-if="!drivers.length">
@@ -5535,6 +5667,11 @@
               title="Did not serve the penalty in the pits in time: disqualified at the flag.">PIT &#10005;</span><span
               class="rm-ucpass rm-cp-black" ng-if="row.blackFlag != null"
               title="{{ blackTitle(row) }}">BLACK</span><span
+              class="rm-ucpass" ng-if="pitStopsShown()"
+              ng-class="pitStopsDone(row) ? 'rm-pit-done' : 'rm-cp-lift'"
+              title="Mandatory pit stops made of those required. One counts per lap.">{{ pitStopsLabel(row) }}</span><span
+              class="rm-ucpass rm-cp-pen" ng-if="row.pitStopPenalty"
+              title="Mandatory pit stops not made: added to the race time in the final classification.">+{{ row.pitStopPenalty | number:1 }}s PIT</span><span
               class="rm-cp-warn" ng-if="cpWarnShown(row)"
               title="Checkpoint-skip warnings used">{{ cpWarnLabel(row) }}</span></td>
           <td class="rm-col-lap" ng-if="!pointToPoint" title="{{ (row.outLap && sessionKind === 'quali') ? 'Out lap: not timed, not counted' : (row.cpCleared ? row.cpCleared + ' checkpoint(s) cleared this lap' : '') }}">{{ lapLabel(row) }}</td>
@@ -5565,6 +5702,10 @@
             <span class="rm-status-text" title="{{ row.outReason }}">{{ (row.finishTime != null && row.status !== 'dsq') ? formatLap(row.finishTime) : outcomeLabel(row) }}</span>
             <button class="rm-btn rm-btn-mini" ng-if="isAdmin && phase === 'grid' && row.status === 'called'"
                     ng-click="readyDriver(row)" title="Put this driver on their slot now">Place</button>
+            <span class="rm-nofield-tag rm-added-tag" ng-if="row.adminEntry"
+                  title="Added by an admin: in the field with or without a car, until they leave the server">ADDED</span>
+            <button class="rm-btn rm-btn-mini" ng-if="isAdmin && row.adminEntry"
+                    ng-click="addDriver(row, false)" title="Take back the Add: with no car, they are left out again">Remove</button>
           </td>
         </tr>
         <tr ng-if="!drivers.length">
@@ -6537,6 +6678,20 @@
   .rm-entry-state { font-size: 11px; color: var(--rm-muted, #9aa0a6); }
   .rm-entry-in { color: #7ee2a8; font-weight: 600; }
   .rm-entry-count { margin-left: auto; font-size: 10px; color: var(--rm-soft, #bdc1c6); }
+  /* Not in the field (admins): one chip per driver the board leaves out. */
+  .rm-nofield { background: rgba(154, 160, 166, 0.08); }
+  .rm-nofield-row { display: inline-flex; align-items: center; gap: 4px; }
+  .rm-nofield-name { font-size: 11px; color: #e8eaed; }
+  .rm-nofield-tag {
+    margin-left: 4px;
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    color: #1a1a1a;
+    background: #9aa0a6;
+  }
+  .rm-added-tag { background: #7ee2a8; }
   .rm-row-out td { opacity: 0.5; }
 
   /* Header badges for the new session state */
@@ -7042,6 +7197,8 @@
   .rm-cp-pen { color: #fff; background: #d93025; }
   .rm-cp-lift { color: #1a1a1a; background: #fbbc05; }
   .rm-cp-black { color: #ffffff; background: #000000; box-shadow: inset 0 0 0 1px #ffffff; }
+  /* Mandatory pit stops all made. */
+  .rm-pit-done { color: #1a1a1a; background: #81c995; }
   .rm-cp-warn {
     margin-left: 6px;
     font-size: 10px;

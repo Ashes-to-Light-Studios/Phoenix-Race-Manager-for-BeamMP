@@ -102,6 +102,12 @@ local CFG = {
   -- What a lift not served in its window becomes: 'time' (the seconds above)
   -- or 'black' (a black flag; the seconds where the layout has no stalls).
   checkpointSkipLiftUnserved    = 'time',
+  -- MANDATORY PIT STOPS in a race: how many (0 = off), at most one per lap,
+  -- and what a finisher short of them gets: 'dsq' (disqualified at the flag)
+  -- or 'time' (pitStopPenaltySeconds per missing stop). Needs stalls.
+  pitStopsRequired      = 0,
+  pitStopMissed         = 'dsq',
+  pitStopPenaltySeconds = 30,
   -- Furthest ahead (gates) a crossing still counts as a skip; further is
   -- ignored, as it always was. config.json only, never the panel.
   checkpointSkipMaxGates        = 2,
@@ -257,6 +263,13 @@ local race = {
   -- Black flags and disqualifications this session, for the results file:
   -- { lap, name, what }. Cleared with the grid.
   stewardLog = {},
+  pitStopsRequired      = CFG.pitStopsRequired,
+  pitStopMissed         = CFG.pitStopMissed,
+  pitStopPenaltySeconds = CFG.pitStopPenaltySeconds,
+  -- The mandatory pit stop rule as the race started under it (set at GO):
+  -- { required, missed, seconds }. required 0 is no rule. Counting, the
+  -- ruling at the flag and the results file read this, not the settings.
+  pitStopRun = { required = 0, missed = 'dsq', seconds = 30 },
   -- The rules this race's cautions ran under ({ line = true, call = true }),
   -- for the results file: the setting may have changed between them.
   cautionRulesUsed = {},
@@ -358,6 +371,16 @@ local race = {
   -- Where the start positions are, { x, y, z, hx, hy } per slot: reported by a
   -- client or set from a loaded layout. Policing the hold needs coordinates.
   startPositions = {},
+  -- START FROM THE PIT STALLS, per session kind: stall n is Pn. Only when the
+  -- loaded layout has a stall for every driver and the pit start's first
+  -- checkpoint runs between none of them (race.pitGridProblem); otherwise
+  -- the track grid, and chat says why. Not saved: off after a restart, as the
+  -- other session switches are.
+  qualiFromPits  = false,
+  raceFromPits   = false,
+  -- Which grid the field was formed on: 'grid' (the start positions) or
+  -- 'pits' (the stalls). Decided by formGrid, read by the hold and late calls.
+  gridKind       = 'grid',
   -- Qualifying session rules.
   ghostQuali     = false,    -- rivals are ghosts during qualifying
   -- qualiLapLimit counts TIMED laps: the out lap is extra.
@@ -457,11 +480,14 @@ end
 
 -- Does this session open with an OUT LAP (untimed, unscored, outside the
 -- allowance)? Qualifying from a standing grid, a race gridded away from the
--- line (race.gridOffLine, from the layout), and a pace lap. Never a sprint.
+-- line (race.gridOffLine, from the layout), a field started in the pit
+-- stalls (a grid away from the line by definition), and a pace lap. Never a
+-- sprint.
 local function outLapOwed()
   if race.pointToPoint then return false end
   -- A pace lap IS an out lap: driven, not scored, ending at the line per driver.
-  return race.sessionKind == 'quali' or race.gridOffLine == true or paceLapArmed()
+  return race.sessionKind == 'quali' or race.gridOffLine == true
+    or race.gridKind == 'pits' or paceLapArmed()
 end
 
 
@@ -568,6 +594,13 @@ local function newRecord(pid)
     resetsBlocked = 0,       -- resets refused after the allowance ran out
     ghosts     = 0,          -- reset ghosts armed this session (audit trail)
     pitStops   = 0,          -- pit stalls used this session
+    -- Mandatory pit stops: stops counted (one per lap), the lap of the last
+    -- counted one, seconds added at the flag for missing ones (the 'time'
+    -- rule), and short of them at the flag (the 'dsq' rule).
+    pitCounted = 0,
+    pitLastLap = nil,
+    pitStopPenalty = 0,
+    pitStopsShort = nil,
     holdCorrections = 0,     -- times this car was pulled back onto its grid slot
     holdCorrectedAt = nil,   -- race.time of the last correction (rate limiting)
     jokerTaken = 0,          -- completed runs of the joker route this race
@@ -724,7 +757,7 @@ end
 -- penalty. Finishers only (raceOrderLess, the results file, Discord); never
 -- the on-road order, the gaps or the blue flag.
 function progress.flagTime(rec)
-  return rec.finishTime + (rec.penaltySeconds or 0)
+  return rec.finishTime + (rec.penaltySeconds or 0) + (rec.pitStopPenalty or 0)
 end
 
 -- A new session's checkpoint-skip tallies: Generate Grid (both kinds of
@@ -842,6 +875,64 @@ local function onlinePlayers()
   return out
 end
 
+-- ---------------------------------------------------------------------------
+-- NO CAR, NO GRID
+-- ---------------------------------------------------------------------------
+-- A player with no car spawned is left out of every field that forms (grid,
+-- qualifying, derby, drag, heat draw) unless an admin added them. Three flags
+-- on the record, none of which makes isEntrant ask BeamMP (it runs per
+-- broadcast):
+--   noCar       no car right now: set on a new record, refreshed by every
+--               selection (race.refreshCars), kept current by the spawn and
+--               delete events
+--   adminEntry  an admin's Add: in the field with or without a car, until they
+--               leave (in the identity registry, so a wipe keeps it)
+--   leftOff     the grid or session in hand formed without them. A car
+--               spawned later does NOT put them in: they press Join, or an
+--               admin places them. Until then they are on no board
+-- A slot already handed out is never taken back over a car: deleting and
+-- respawning on the grid keeps it. On `race`: the locals ceiling.
+
+-- Does this connection have a car spawned? BeamMP's own list, so it needs
+-- nothing from the client. A unicycle (BeamMP's walking mode) is not a car.
+-- FAILS OPEN: a server build without the call, or one that errors, counts
+-- everyone as in a car, as before the rule existed. `ignoreVid`: a car being
+-- deleted, which the list may still hold.
+race.hasCar = function (pid, ignoreVid)
+  if type(MP.GetPlayerVehicles) ~= 'function' then return true end
+  local ok, cars = pcall(MP.GetPlayerVehicles, pid)
+  if not ok then return true end
+  if type(cars) ~= 'table' then return false end
+  local skip = tonumber(ignoreVid)
+  for vid, data in pairs(cars) do
+    if skip == nil or tonumber(vid) ~= skip then
+      local model = type(data) == 'string' and data:match('"jbm"%s*:%s*"([^"]*)"') or nil
+      if model ~= 'unicycle' then return true end
+    end
+  end
+  return false
+end
+
+-- Out of the field for want of a car: none, and no admin put them in.
+race.carOut = function (rec)
+  return rec ~= nil and rec.noCar == true and not rec.adminEntry
+end
+
+-- On no board: not in this field and never joined it (left off for want of a
+-- car, or car-less). A spectator keeps its own label. The row still goes out,
+-- after the board and with no place: each client reads its own.
+race.unlisted = function (rec)
+  return rec.status == 'waiting' and not rec.spectating
+    and (rec.leftOff == true or race.carOut(rec))
+end
+
+-- The car of every record, from BeamMP, before a field is picked.
+race.refreshCars = function ()
+  for id, rec in pairs(players) do
+    rec.noCar = (not race.hasCar(id)) or nil
+  end
+end
+
 -- The stored identity for this connection, cleared when the name no longer
 -- matches (somebody else holds the id).
 local function identityFor(pid, name)
@@ -876,6 +967,9 @@ local function rememberIdentity(rec)
     car         = rec.carLabel,
     -- BeamMP account (nil for a guest), read once at join.
     account     = rec.account,
+    -- An admin's Add (race.carOut): kept across a wipe of `players`, dropped
+    -- when they disconnect (RM_onPlayerDisconnect).
+    adminEntry  = rec.adminEntry,
   }
 end
 
@@ -906,7 +1000,10 @@ local function ensurePlayer(pid)
       rec.transferred = ident.transferred
       rec.carLabel    = ident.car
       rec.account     = ident.account
+      rec.adminEntry  = ident.adminEntry
     end
+    -- Whether they have a car, from BeamMP: a fresh joiner has none.
+    rec.noCar = (not race.hasCar(pid)) or nil
     players[pid] = rec
     rememberIdentity(rec)
   end
@@ -924,6 +1021,9 @@ race.derbyUnderWay = function () return false end
 --   dragEntryChanged the entry list moved
 --   dragWarm         boot-time load of a half-run ladder
 race.dragUnderWay    = function () return false end
+-- A derby being called takes a late entrant (an admin's Add). Inert until the
+-- derby installs its own.
+race.derbyLateEntry  = function () return false end
 race.dragEntryChanged = function () end
 race.dragWarm        = function () end
 race.dragSetCupHooks = function () end
@@ -951,13 +1051,15 @@ local rosterWarm, cupWarm
 -- ---------------------------------------------------------------------------
 -- Race entry list
 -- ---------------------------------------------------------------------------
--- EVERYONE RACES UNLESS THEY SPECTATE. A heat is an ordinary race run by a
+-- EVERYONE IN A CAR RACES UNLESS THEY SPECTATE. No car spawned is out too,
+-- unless an admin added them (race.carOut). A heat is an ordinary race run by a
 -- subset of the field, and this is the whole of what makes that true: during a
 -- heat (heatCount > 0, heatCurrent > 0) only that heat's drivers are entrants.
 -- QUALIFYING IS NEVER SPLIT: the draw is made from its times.
 local function isEntrant(rec)
   if not rec then return false end
   if rec.spectating then return false end
+  if race.carOut(rec) then return false end
   if race.heatCount > 0 and race.heatCurrent > 0 and race.sessionKind == 'race' then
     return rec.heat == race.heatCurrent
   end
@@ -970,6 +1072,14 @@ local function entrantCount()
     if isEntrant(rec) then n = n + 1 end
   end
   return n
+end
+
+-- In the field now, for the derby and drag: a connection with no record yet
+-- (their join handlers run before ours) is in if it has a car.
+race.inField = function (id)
+  local rec = players[id]
+  if rec then return isEntrant(rec) end
+  return race.hasCar(id)
 end
 
 local function decodeNumber(rawData, field)
@@ -1221,9 +1331,16 @@ local DRIVER_WIRE_FIELDS = {
   -- The broadcast feed (client feed.lua): the last lap, the crossing it was
   -- completed on, and pit stops. Zero stops go out as nil (driverForWire).
   'lastLap', 'lastLapOn', 'pitStops',
+  -- Mandatory pit stops: counted so far, and seconds added at the flag.
+  'pitCounted', 'pitStopPenalty',
   -- Teams and car numbers (teams.lua): resolved per record in driverForWire,
   -- nil when unset, so a league without them sends nothing extra.
   'team', 'number',
+  -- No car, no grid (race.carOut): no car right now, and an admin's Add.
+  -- `unlisted` (on no board: left off, or car-less, and never joined) and
+  -- `joinable` (has a car now and can press Join) are worked out in
+  -- driverForWire. The row still goes out: each client reads its own.
+  'noCar', 'adminEntry', 'unlisted', 'joinable',
 }
 
 -- The projection buffer lives ON the record and is reused: no allocation per
@@ -1248,13 +1365,26 @@ local function driverForWire(rec)
   if wire.liftOwed == 0 then wire.liftOwed = nil end
   if wire.penaltyServed == 0 then wire.penaltyServed = nil end
   if wire.pitStops == 0 then wire.pitStops = nil end
+  if wire.pitCounted == 0 then wire.pitCounted = nil end
+  if wire.pitStopPenalty == 0 then wire.pitStopPenalty = nil end
+  -- Never on a board until they are in, and Join while a grid is called.
+  local unlisted = race.unlisted(rec)
+  wire.unlisted = unlisted or nil
+  wire.joinable = (unlisted and rec.leftOff and not rec.noCar
+    and race.phase == 'grid') or nil
   return wire
 end
 
 local function buildDrivers()
-  local list = {}
+  local list, hidden = {}, nil
   for _, rec in pairs(players) do
-    list[#list + 1] = rec
+    -- On no board (race.unlisted): no place, so the DNFs' numbers stay right.
+    if race.unlisted(rec) then
+      hidden = hidden or {}
+      hidden[#hidden + 1] = rec
+    else
+      list[#list + 1] = rec
+    end
   end
   if race.phase == 'qualifying' or race.phase == 'waiting' then
     -- Provisional grid order: fastest quali Best Lap first, no-time last.
@@ -1275,6 +1405,17 @@ local function buildDrivers()
   assignPositions(list)
   local wire = {}
   for i = 1, #list do wire[i] = driverForWire(list[i]) end
+  -- After the board, placeless: sent because each client reads its own row
+  -- (bystander ghosting, the Join banner).
+  if hidden then
+    table.sort(hidden, function (a, b) return a.id < b.id end)
+    for _, rec in ipairs(hidden) do
+      rec.position, rec.classPos = nil, nil
+      rec.gap, rec.intv, rec.down, rec.idown = nil, nil, nil, nil
+      rec.blue, rec.lapping, rec.blueWas = nil, nil, nil
+      wire[#wire + 1] = driverForWire(rec)
+    end
+  end
   return wire
 end
 
@@ -1310,7 +1451,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.29.1'
+local RM_BUILD = '0.30.0'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -1515,6 +1656,18 @@ local function broadcastState(targetPid)
     ghostPractice = race.practiceRoster(),
     -- Qualifying rules and clock.
     ghostQuali     = race.ghostQuali,
+    -- Start from the pit stalls: the two switches, and the grid in force.
+    qualiFromPits  = race.qualiFromPits,
+    raceFromPits   = race.raceFromPits,
+    gridKind       = race.gridKind,
+    -- Mandatory pit stops: the settings, and `active`, the number in force
+    -- (the race's own once it is under way, 0 with no stalls or no race).
+    pitStopRule    = {
+      required = race.pitStopsRequired,
+      missed   = race.pitStopMissed,
+      seconds  = race.pitStopPenaltySeconds,
+      active   = race.pitStopsActive(),
+    },
     -- Does this session open with an out lap (outLapOwed, races included; the
     -- name is historical). Per-driver owing rides on the rows (`outLap`).
     qualiOutLap    = outLapOwed(),
@@ -1610,9 +1763,12 @@ end
 
 -- The server picks the slot; the client places the car (nil clears).
 -- `order`/`count` stagger the field's placement.
+-- `grid = 'pits'` says the slot is a pit stall (race.gridKind), not a start
+-- position; absent, it is the track grid as it always was.
 local function assignGridSlot(pid, slot, order, count)
   MP.TriggerClientEvent(pid, 'RM_GridAssign', Util.JsonEncode({
     slot = slot, order = order, count = count,
+    grid = (slot ~= nil and race.gridKind == 'pits') and 'pits' or nil,
   }))
 end
 
@@ -1637,9 +1793,32 @@ race.readyUp = function (rec, order, count)
 end
 
 -- A late arrival (or a rejoin from Spectate) goes to the back of the grid, not
--- past the last placed start position.
+-- past the last placed start position. Never a driver left off for want of a
+-- car: a car spawned later is Join's to use (race.joinLate), not this.
 race.callLate = function (rec)
   if race.phase ~= 'grid' or not race.readyCheck or not isEntrant(rec) then return false end
+  if rec.leftOff then return false end
+  if rec.status == 'called' or rec.status == 'gridded' then return false end
+  local nextPos = (race.gridSize or 0) + 1
+  -- A field in the pits is limited by its stalls, not the start positions.
+  local slots = race.gridKind == 'pits' and race.pitStalls() or race.startSlots
+  if slots > 0 and nextPos > slots then
+    MP.SendChatMessage(rec.id, '[RaceManager] The grid is full: every start position '
+      .. 'is taken. You are in the next one.')
+    return false
+  end
+  race.gridSize = nextPos
+  race.callToGrid(rec, nextPos)
+  return true
+end
+
+-- THE ONE LATE ENTRY onto a grid already formed: a left-off driver's Join, an
+-- admin's Place or Add. Never automatic. The back of the grid, as a fresh
+-- session; `placeNow` lands them on the slot (they are in a car and asked),
+-- otherwise they are called and placed on Ready (dropUnready sits them out at
+-- the start if they never are).
+race.joinLate = function (rec, placeNow)
+  if race.phase ~= 'grid' or not rec then return false end
   if rec.status == 'called' or rec.status == 'gridded' then return false end
   local nextPos = (race.gridSize or 0) + 1
   if race.startSlots > 0 and nextPos > race.startSlots then
@@ -1648,7 +1827,15 @@ race.callLate = function (rec)
     return false
   end
   race.gridSize = nextPos
-  race.callToGrid(rec, nextPos)
+  race.freshSession(rec)
+  rec.leftOff = nil
+  rec.gridPos = nextPos
+  if placeNow then
+    race.readyUp(rec)
+  else
+    race.callToGrid(rec, nextPos)
+  end
+  race.announceIfAllReady()
   return true
 end
 
@@ -1986,7 +2173,12 @@ end
 -- independent of the race, so pole and winner stay distinct.
 local function qualiClassification()
   local list = {}
-  for _, rec in pairs(players) do list[#list + 1] = rec end
+  for _, rec in pairs(players) do
+    -- On no board (race.unlisted), so not here either, unless they set a time.
+    if rec.gridPos or rec.qualiBest or not race.unlisted(rec) then
+      list[#list + 1] = rec
+    end
+  end
   table.sort(list, function (a, b)
     if a.gridPos and b.gridPos then return a.gridPos < b.gridPos end
     if (a.gridPos ~= nil) ~= (b.gridPos ~= nil) then return a.gridPos ~= nil end
@@ -2097,8 +2289,11 @@ local function buildResultsText(cupRound)
   -- the winner (a car home a lap down did not race the winner's distance).
   -- A checkpoint-skip penalty is IN the time shown, and said beside it.
   local function finishCell(rec)
-    local pen = rec.penaltySeconds or 0
-    local note = pen > 0 and string.format(' (+%.1fs pen)', pen) or ''
+    local pen, pit = rec.penaltySeconds or 0, rec.pitStopPenalty or 0
+    local notes = {}
+    if pen > 0 then notes[#notes + 1] = string.format('+%.1fs pen', pen) end
+    if pit > 0 then notes[#notes + 1] = string.format('+%.1fs pit', pit) end
+    local note = #notes > 0 and (' (' .. table.concat(notes, ', ') .. ')') or ''
     local down = leaderLaps - lapsRun(rec)
     if down > 0 then return '+' .. down .. (down == 1 and ' lap' or ' laps') .. note end
     return fmtLap(progress.flagTime(rec)) .. note
@@ -2109,7 +2304,10 @@ local function buildResultsText(cupRound)
   local skipsOn = race.enableCheckpointSkipPenalty == true
   local timeW = 10
   for _, rec in ipairs(final) do
-    if (rec.penaltySeconds or 0) > 0 then timeW = 24 break end
+    if (rec.penaltySeconds or 0) > 0 or (rec.pitStopPenalty or 0) > 0 then timeW = 24 break end
+  end
+  for _, rec in ipairs(final) do
+    if (rec.penaltySeconds or 0) > 0 and (rec.pitStopPenalty or 0) > 0 then timeW = 36 break end
   end
   local function skipCell(rec)
     local parts = {}
@@ -2182,6 +2380,13 @@ local function buildResultsText(cupRound)
     race.maxResets < 0 and 'unlimited'
       or (race.maxResets == 0 and 'not allowed' or tostring(race.maxResets) .. ' per driver'),
     race.jokerEnabled and 'required exactly once' or 'disabled'))
+  -- Mandatory pit stops, as the race ran them (race.pitStopRun, set at GO).
+  local pitRule = race.pitStopRun
+  if (pitRule.required or 0) > 0 then
+    add(string.format(' Mandatory pit stops: %d, one per lap; missed: %s', pitRule.required,
+      pitRule.missed == 'time' and string.format('+%.1fs per stop', pitRule.seconds)
+        or 'disqualified'))
+  end
   -- The checkpoint skip rule, when it was on (a plain race exports as always).
   if skipsOn then
     local w = race.checkpointSkipWarningsAllowed
@@ -2242,8 +2447,11 @@ local function buildResultsText(cupRound)
   local classCol = classed and string.format(' %-12s', 'Class') or ''
   -- Last: its cells are as long as there is to say.
   local skipCol = skipsOn and ' Track cuts' or ''
+  -- Counted mandatory stops, while the rule ran: "1/2".
+  local pitsOn  = (pitRule.required or 0) > 0
+  local pitsCol = pitsOn and string.format(' %-6s', 'Pits') or ''
   -- 'Race Time' is padded only when a column follows it.
-  local tail = classCol .. jokerCol .. resetCol .. skipCol
+  local tail = classCol .. jokerCol .. resetCol .. pitsCol .. skipCol
   add(string.format('%-5s %-6s %-22s %-10s %-9s %-5s %s%s',
     'Pos', 'Start', 'Driver', 'Best Lap', 'Laps Led', 'Laps',
     tail ~= '' and string.format('%-' .. timeW .. 's', 'Race Time') or 'Race Time', tail))
@@ -2276,10 +2484,12 @@ local function buildResultsText(cupRound)
       rec.class and (rec.class .. (rec.classPos and (' P' .. rec.classPos) or ''))
         or '-') or ''
     local skipVal = skipsOn and (' ' .. skipCell(rec)) or ''
-    add(string.format('%-5s %-6s %-22s %-10s %-9d %-5d %-' .. timeW .. 's%s%s%s%s%s%s',
+    local pitsVal = pitsOn and string.format(' %-6s',
+      string.format('%d/%d', rec.pitCounted or 0, pitRule.required)) or ''
+    add(string.format('%-5s %-6s %-22s %-10s %-9d %-5d %-' .. timeW .. 's%s%s%s%s%s%s%s',
       pos, rec.gridPos and ('P' .. rec.gridPos) or '-',
       displayName(rec), fmtLap(rec.raceBest), rec.lapsLed or 0, lapsRun(rec), finish,
-      classVal, jokerVal, resetVal, skipVal, aliasNote(rec), tag))
+      classVal, jokerVal, resetVal, pitsVal, skipVal, aliasNote(rec), tag))
   end
   if #final == 0 then add('(no drivers)') end
   -- PER-CLASS RESULTS: a league running two classes publishes two results. The
@@ -2559,6 +2769,9 @@ local function retireDriver(rec, reason, atLine)
   if race.sessionKind == 'race' then race.convertLift(rec, 'at the flag') end
   -- So does a black flag still inside its window: the stop it did not make.
   if race.sessionKind == 'race' then race.convertBlack(rec) end
+  -- Mandatory pit stops short: time on now, for the same reason; or marked
+  -- for the disqualification finishSession rules.
+  if race.sessionKind == 'race' then race.pitStopsAtFlag(rec) end
   -- Their place: in a race, where the classification puts them (laps first,
   -- so not simply how many are home); in qualifying, the count home.
   local place = 0
@@ -2573,7 +2786,8 @@ local function retireDriver(rec, reason, atLine)
   end
   -- With a penalty on this car's time, a car still out can finish inside it.
   forceSpectate(rec.id, reason, 'race', place,
-    race.sessionKind == 'race' and (rec.penaltySeconds or 0) > 0)
+    race.sessionKind == 'race'
+      and ((rec.penaltySeconds or 0) > 0 or (rec.pitStopPenalty or 0) > 0))
   return true
 end
 
@@ -2661,7 +2875,8 @@ local function respawnAll(source)
 
   local participants, bystanders = {}, {}
   for _, rec in ipairs(field) do
-    if rec.gridPos or isEntrant(rec) then
+    -- A driver left off for want of a car never took part: a bystander.
+    if rec.gridPos or (isEntrant(rec) and not rec.leftOff) then
       participants[#participants + 1] = rec
     else
       bystanders[#bystanders + 1] = rec
@@ -2716,6 +2931,8 @@ local function finishSession(reason)
   local excluded = applyJokerRuling()
   -- And a required pit stop not served in its window, ruled the same way.
   local unserved = race.pitRuling()
+  -- And mandatory pit stops not made, under the disqualify rule.
+  race.pitStopRuling()
   race.phase = 'finished'
   -- THE HEAT RESULT, recorded once final (after the joker ruling, so an excluded
   -- driver never transfers), onto the record and the identity registry.
@@ -2913,7 +3130,8 @@ function RM_onSetSpectating(pid, rawData)
     if race.phase == 'grid' then race.announceIfAllReady() end
   else
     rec.bystander = nil
-    MP.SendChatMessage(-1, '[RaceManager] ' .. rec.name .. ' rejoined the field.')
+    MP.SendChatMessage(-1, '[RaceManager] ' .. rec.name .. ' rejoined the field'
+      .. (race.carOut(rec) and ' (no car spawned yet: spawn one to take a slot).' or '.'))
     -- While the grid is being called, rejoining means the back of it.
     race.callLate(rec)
   end
@@ -2941,6 +3159,50 @@ function RM_onSetNametags(pid, rawData)
   print('[RaceManager] Display names on nametags '
     .. (race.nametags and 'ENABLED' or 'disabled')
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
+end
+
+-- Start from the pit stalls, for qualifying or the race (`session`). Takes
+-- effect at the next grid; locked while a session is under way. Whether the
+-- stalls are actually used is decided as the grid forms (race.pitGridProblem).
+function RM_onSetPitStart(pid, rawData)
+  local data = adminPayload(pid, rawData, true)
+  if not data then return end
+  local on = data.enabled == true or data.enabled == 1
+  if data.session == 'quali' then
+    race.qualiFromPits = on
+  elseif data.session == 'race' then
+    race.raceFromPits = on
+  else
+    return
+  end
+  broadcastState()
+  print(string.format('[RaceManager] %s from the pit stalls %s by %s',
+    data.session == 'quali' and 'Qualifying' or 'Race',
+    on and 'ENABLED' or 'disabled', MP.GetPlayerName(pid) or pid))
+end
+
+-- Mandatory pit stops: { required, missed = 'dsq'|'time', seconds }. Locked
+-- while a session is under way, like the checkpoint skip rules.
+function RM_onSetPitStopRule(pid, rawData)
+  if not requireAuth(pid) then return end
+  if sessionUnderWay() then
+    MP.SendChatMessage(pid, '[RaceManager] Mandatory pit stops are locked while a session '
+      .. 'is running. Change them before the next one.')
+    broadcastState(pid)
+    return
+  end
+  local data = adminPayload(pid, rawData, true)
+  if not data then return end
+  local n = tonumber(data.required)
+  if n and n == n then race.pitStopsRequired = math.min(math.max(math.floor(n), 0), 10) end
+  if data.missed == 'dsq' or data.missed == 'time' then race.pitStopMissed = data.missed end
+  n = tonumber(data.seconds)
+  if n and n == n then race.pitStopPenaltySeconds = race.halfStep(n, 1, 600) end
+  broadcastState()
+  print(string.format('[RaceManager] Mandatory pit stops set by %s: %d, missed: %s',
+    MP.GetPlayerName(pid) or pid, race.pitStopsRequired,
+    race.pitStopMissed == 'time' and string.format('+%.1fs per stop', race.pitStopPenaltySeconds)
+      or 'disqualified'))
 end
 
 -- Ghost qualifying: enforced client-side; the server holds the switch.
@@ -3116,6 +3378,51 @@ local function orderForGrid(ordered)
   return ordered
 end
 
+-- A driver taking a slot in a new session: everything off the last one goes.
+-- formGrid's field, and a late Join (race.joinLate), alike.
+race.freshSession = function (rec)
+  rec.raceBest   = nil
+  rec.lastLap, rec.lastLapOn = nil, nil
+  rec.currentLap = 0
+  rec.lapsLed    = 0
+  rec.finishTime = nil
+  rec.lapsDone, rec.atLine = nil, nil
+  -- A new session: allowances and joker credit start over.
+  rec.resets     = 0
+  rec.resetsBlocked = 0
+  rec.jokerTaken = 0
+  rec.jokerLap   = nil
+  rec.outReason  = nil
+  rec.dnfPos     = nil
+  rec.heldPos    = nil
+  -- The clock goes back to zero, so every stamp off the old one goes too: a
+  -- stale holdCorrectedAt reads as "just corrected" and suppressed the grid
+  -- hold for a minute; old splits would read minutes behind.
+  rec.holdCorrectedAt = nil
+  rec.holdCorrections = 0
+  rec.splits   = nil
+  rec.splitLap = nil
+  rec.splitCp  = nil
+  rec.gap, rec.intv = nil, nil
+  -- "This session" counters.
+  rec.pitStops   = 0
+  rec.pitCounted, rec.pitLastLap, rec.pitStopPenalty, rec.pitStopsShort = 0, nil, 0, nil
+  rec.ghosts     = 0
+  -- Checkpoint skips start over: warnings, penalties, lifts, cut laps.
+  race.resetSkips(rec, isQualiSession())
+  -- A qualifying grid clears the times it replaces.
+  if isQualiSession() then
+    rec.qualiBest = nil
+    rec.qualiLaps = 0
+  end
+  -- Set here as well as at GO, so the board says so during the hold.
+  rec.outLap = outLapOwed()
+  -- In the field: not left off, and no longer a bystander.
+  rec.leftOff   = nil
+  rec.bystander = nil
+  progress.clear(rec)
+end
+
 -- Form the grid for a session: THE one path, for Generate Grid and Start
 -- Qualifying alike. Returns true when a grid was formed.
 formGrid = function (kind, byName)
@@ -3146,14 +3453,18 @@ formGrid = function (kind, byName)
   end
   -- Every connected player gets a record, identity restored by ensurePlayer.
   for id in pairs(online) do ensurePlayer(id) end
+  -- Who has a car NOW: no car, no slot (race.carOut).
+  race.refreshCars()
 
-  local ordered, skipped = {}, {}
+  local ordered, skipped, carless = {}, {}, {}
   for _, rec in pairs(players) do
     if isEntrant(rec) then
       ordered[#ordered + 1] = rec
     else
       -- Not entered: off the grid, no stale slot...
       skipped[#skipped + 1] = rec.name
+      rec.leftOff = nil
+      if race.carOut(rec) and not rec.spectating then carless[#carless + 1] = rec end
       rec.gridPos = nil
       rec.status  = 'waiting'
       -- ...and no result from the last race. A finish time kept a driver who
@@ -3164,6 +3475,7 @@ formGrid = function (kind, byName)
       rec.currentLap, rec.lapsLed = 0, 0
       rec.dnfPos, rec.heldPos, rec.outReason = nil, nil, nil
       rec.lastLap, rec.lastLapOn, rec.pitStops = nil, nil, 0
+      rec.pitCounted, rec.pitLastLap, rec.pitStopPenalty, rec.pitStopsShort = 0, nil, 0, nil
       rec.splits, rec.splitLap, rec.splitCp = nil, nil, nil
       -- ...and no penalty or lift from it on the board. (Qualifying's cut
       -- laps stay, with the qualiBest they belong to.)
@@ -3184,12 +3496,27 @@ formGrid = function (kind, byName)
       '[RaceManager] Grid not formed: no entrants (%d connected, %d record(s): %s)',
       connected, #skipped,
       #skipped > 0 and table.concat(skipped, ', ') or 'none'))
-    -- Empty means nobody is here, or everybody pressed Spectate.
-    MP.SendChatMessage(-1, connected > 0
-      and string.format('[RaceManager] Everyone on the server is spectating '
-        .. '(%d connected). Press Race in Phoenix Race Manager (PRM) to take part.', connected)
-      or '[RaceManager] Nobody is on the server to grid.')
+    -- Empty means nobody is here, nobody is in a car, or everybody pressed
+    -- Spectate.
+    if #carless > 0 then
+      MP.SendChatMessage(-1, string.format('[RaceManager] Nobody in the field has a car '
+        .. 'spawned (%d connected). Spawn a vehicle, or an admin can Add a driver.', connected))
+    else
+      MP.SendChatMessage(-1, connected > 0
+        and string.format('[RaceManager] Everyone on the server is spectating '
+          .. '(%d connected). Press Race in Phoenix Race Manager (PRM) to take part.', connected)
+        or '[RaceManager] Nobody is on the server to grid.')
+    end
     return false
+  end
+  -- The grid forms without the car-less: left off, on no board, and a car
+  -- spawned later does not put them in. Join does, or an admin.
+  local carlessNames = {}
+  for _, rec in ipairs(carless) do
+    rec.leftOff = true
+    carlessNames[#carlessNames + 1] = rec.name
+    MP.SendChatMessage(rec.id, '[RaceManager] No car spawned, so you are not on this grid. '
+      .. 'Spawn one and press Join in Phoenix Race Manager (PRM) to start from the back.')
   end
 
   if race.regrid then
@@ -3204,6 +3531,25 @@ formGrid = function (kind, byName)
     -- Any other grid is a new race, not the rerun.
     race.appendTo = nil
   end
+  -- THE PIT STALLS OR THE TRACK GRID. Decided before the slots go out and
+  -- before outLapOwed is read for each driver below: a start from the pits
+  -- owes an out lap.
+  race.gridKind = 'grid'
+  -- An if, not `a and b or c`: a quali switch that is OFF must not fall
+  -- through to the race's.
+  local wantPits
+  if race.sessionKind == 'quali' then wantPits = race.qualiFromPits
+  else wantPits = race.raceFromPits end
+  if wantPits then
+    local problem = race.pitGridProblem(#ordered)
+    if problem then
+      MP.SendChatMessage(-1, string.format('[RaceManager] %s from the track grid: %s.',
+        race.sessionKind == 'quali' and 'Qualifying' or 'Race', problem))
+      print('[RaceManager] Pit start not used: ' .. problem)
+    else
+      race.gridKind = 'pits'
+    end
+  end
   -- Locks come off BEFORE the slots go out (a client with no car would drop
   -- the slot); the client coalesces the two into one ghosted operation. The
   -- count is for spectators: the field is solid on their screens now, so the
@@ -3214,44 +3560,7 @@ formGrid = function (kind, byName)
     local wasReady = reform and rec.status == 'gridded'
     rec.gridPos    = gridPos
     rec.status     = 'gridded'
-    rec.raceBest   = nil
-    rec.lastLap, rec.lastLapOn = nil, nil
-    rec.currentLap = 0
-    rec.lapsLed    = 0
-    rec.finishTime = nil
-    rec.lapsDone, rec.atLine = nil, nil
-    -- A new session: allowances and joker credit start over.
-    rec.resets     = 0
-    rec.resetsBlocked = 0
-    rec.jokerTaken = 0
-    rec.jokerLap   = nil
-    rec.outReason  = nil
-    rec.dnfPos     = nil
-    rec.heldPos    = nil
-    -- The clock goes back to zero, so every stamp off the old one goes too: a
-    -- stale holdCorrectedAt reads as "just corrected" and suppressed the grid
-    -- hold for a minute; old splits would read minutes behind.
-    rec.holdCorrectedAt = nil
-    rec.holdCorrections = 0
-    rec.splits   = nil
-    rec.splitLap = nil
-    rec.splitCp  = nil
-    rec.gap, rec.intv = nil, nil
-    -- "This session" counters.
-    rec.pitStops   = 0
-    rec.ghosts     = 0
-    -- Checkpoint skips start over: warnings, penalties, lifts, cut laps.
-    race.resetSkips(rec, isQualiSession())
-    -- A qualifying grid clears the times it replaces.
-    if isQualiSession() then
-      rec.qualiBest = nil
-      rec.qualiLaps = 0
-    end
-    -- Set here as well as at GO, so the board says so during the hold.
-    rec.outLap = outLapOwed()
-    -- Gridded: no longer a bystander.
-    rec.bystander = nil
-    progress.clear(rec)
+    race.freshSession(rec)
     if race.readyCheck and not wasReady then
       -- Called: placed when they press Ready.
       race.callToGrid(rec, gridPos)
@@ -3269,14 +3578,22 @@ formGrid = function (kind, byName)
   -- Practice ends here too (each client stops its own off the phase change).
   for _, rec in pairs(players) do rec.practicing, rec.practiceGhost = nil, nil end
   broadcastState()
-  if race.startSlots > 0 and #ordered > race.startSlots then
+  if race.gridKind ~= 'pits' and race.startSlots > 0 and #ordered > race.startSlots then
     MP.SendChatMessage(-1, string.format(
       '[RaceManager] Warning: %d drivers but only %d start positions placed: '
         .. 'the back of the grid has nowhere to line up.', #ordered, race.startSlots))
   end
-  print(string.format('[RaceManager] %s grid formed by %s (%d drivers, %s order, pole: %s)',
+  print(string.format('[RaceManager] %s grid formed by %s (%d drivers, %s order, pole: %s)%s',
     isQualiSession() and 'Qualifying' or 'Race', tostring(byName), #ordered, race.gridMode,
-    ordered[1] and ordered[1].name or 'n/a'))
+    ordered[1] and ordered[1].name or 'n/a',
+    race.gridKind == 'pits' and ', from the pit stalls' or ''))
+  if #carlessNames > 0 then
+    table.sort(carlessNames)
+    local list = table.concat(carlessNames, ', ')
+    print('[RaceManager] Left off the grid with no car: ' .. list)
+    race.tellAdmins('Left off the grid with no car: ' .. list .. '. They can press Join '
+      .. 'once they spawn one; Place or Add under Not in the field puts one in.')
+  end
   if race.readyCheck then
     local ready, total = race.readyCounts()
     MP.SendChatMessage(-1, string.format('[RaceManager] Grid called: press Ready in '
@@ -3353,6 +3670,106 @@ function RM_onReadyAll(pid)
   for i, rec in ipairs(called) do race.readyUp(rec, i, #called) end
   print(string.format('[RaceManager] Ready All by %s: %d placed',
     MP.GetPlayerName(pid) or pid, #called))
+  broadcastState()
+end
+
+-- JOIN: a driver the grid formed without (no car then) takes the back of it now
+-- they have one, placed at once. An admin's Place does it for them (`pid` in
+-- the payload). The grid only: a running session is never joined.
+function RM_onJoinField(pid, rawData)
+  local data = {}
+  if type(rawData) == 'string' and rawData ~= '' then
+    local ok, d = pcall(Util.JsonDecode, rawData)
+    if ok and type(d) == 'table' then data = d end
+  end
+  local target, byAdmin = pidKey(pid), false
+  if data.pid ~= nil and pidKey(data.pid) ~= target then
+    if not requireAuth(pid) then return end
+    target, byAdmin = pidKey(data.pid), true
+  end
+  local rec = target and players[target]
+  if not rec or rec.status == 'called' or rec.status == 'gridded' then
+    broadcastState(pid)
+    return
+  end
+  if race.phase ~= 'grid' then
+    MP.SendChatMessage(pid, '[RaceManager] There is no grid to join: you are in the next one '
+      .. 'if you are in a car when it forms.')
+    broadcastState(pid)
+    return
+  end
+  if rec.spectating then
+    MP.SendChatMessage(pid, byAdmin
+      and ('[RaceManager] ' .. rec.name .. ' is spectating: only they can rejoin the field.')
+      or '[RaceManager] You are spectating: press Race first.')
+    return
+  end
+  -- A driver's own Join is for the one the grid left off; anyone else waiting
+  -- (another heat's driver) is not theirs to take a slot for.
+  if not byAdmin and not rec.leftOff then
+    broadcastState(pid)
+    return
+  end
+  if not race.hasCar(rec.id) then
+    rec.noCar = true
+    MP.SendChatMessage(pid, byAdmin
+      and ('[RaceManager] ' .. rec.name .. ' has no car spawned: Add puts them in without one.')
+      or '[RaceManager] Spawn a car first, then press Join.')
+    broadcastState()
+    return
+  end
+  rec.noCar = nil
+  if not race.joinLate(rec, true) then
+    broadcastState()
+    return
+  end
+  local by = byAdmin and (' (placed by ' .. tostring(MP.GetPlayerName(pid) or pid) .. ')') or ''
+  MP.SendChatMessage(-1, string.format('[RaceManager] %s joined the grid at P%d%s.',
+    rec.name, rec.gridPos, by))
+  print(string.format('[RaceManager] %s joined the grid late at P%d%s', rec.name, rec.gridPos, by))
+  broadcastState()
+end
+
+-- ADD: an admin puts a driver in the field with or without a car, until they
+-- leave the server; Remove takes it back. Allowed any time, being a flag: a
+-- grid being formed takes them now (called, and placed on Ready in a car),
+-- anything else at the next field.
+function RM_onSetAdminEntry(pid, rawData)
+  local data = adminPayload(pid, rawData)
+  if not data then return end
+  local target = pidKey(data.pid)
+  local rec = target and players[target]
+  if not rec then return end
+  local on = data.on ~= false
+  if (rec.adminEntry == true) == on then
+    broadcastState(pid)
+    return
+  end
+  rec.adminEntry = on or nil
+  -- Into the registry, or Start Qualifying's wipe would drop it.
+  rememberIdentity(rec)
+  local who = tostring(MP.GetPlayerName(pid) or pid)
+  if on then
+    local called = false
+    if rec.leftOff and not rec.spectating then called = race.joinLate(rec, false) end
+    -- A derby being called takes them too.
+    race.derbyLateEntry(rec.id)
+    MP.SendChatMessage(rec.id, called
+      and string.format('[RaceManager] An admin added you to the grid at P%d: press Ready '
+        .. 'once you are in a car.', rec.gridPos)
+      or '[RaceManager] An admin added you to the field: you are in, with or without a car, '
+        .. 'until you leave the server.')
+  elseif race.carOut(rec) and rec.status == 'called' then
+    -- Still no car and never placed: stood down, and left off again.
+    rec.gridPos, rec.status, rec.bystander = nil, 'waiting', true
+    rec.leftOff = true
+    assignGridSlot(rec.id, nil)
+    race.announceIfAllReady()
+  end
+  print(string.format('[RaceManager] %s %s the field by %s', rec.name,
+    on and 'added to' or 'no longer added to', who))
+  if derbyEntryListChanged then derbyEntryListChanged() end
+  race.dragEntryChanged()
   broadcastState()
 end
 
@@ -3472,6 +3889,7 @@ function RM_onPitStop(pid, rawData)
   end
   rec.pitStops = (rec.pitStops or 0) + 1
   race.pitStopBegan(rec)
+  race.countRequiredStop(rec)
   print(string.format('[RaceManager] %s pitted (stall %s) on lap %s at race time %.1fs: stop #%d%s',
     rec.name, tostring(stall), tostring(rec.currentLap or '?'), race.time, rec.pitStops,
     rec.pitServing and string.format(', serving %.1fs', rec.pitServing) or ''))
@@ -3508,6 +3926,11 @@ end
 -- client guard then enforces alone: police nothing rather than the wrong grid).
 local function slotPosition(rec)
   if not rec or not rec.gridPos then return nil end
+  -- In the pits: the loaded layout's own stall, which is the authority.
+  if race.gridKind == 'pits' then
+    local pits = race.layout and race.layout.pits
+    return type(pits) == 'table' and pits[rec.gridPos] or nil
+  end
   local list = race.startPositions
   if type(list) ~= 'table' then return nil end
   -- Only against the grid the field was gridded on (counts must match).
@@ -4015,6 +4438,7 @@ local function releaseField(pacing)
       rec.raceBest   = nil
       rec.lastLap, rec.lastLapOn = nil, nil
       rec.pitStops   = 0
+      rec.pitCounted, rec.pitLastLap, rec.pitStopPenalty, rec.pitStopsShort = 0, nil, 0, nil
       rec.lapsLed    = 0
       rec.finishTime = nil
       rec.lapsDone, rec.atLine = nil, nil
@@ -4043,7 +4467,16 @@ local function releaseField(pacing)
     race.raceOutLapRun  = outLapOwed()
     race.racePaceLapRun = race.pacing
   end
+  -- The mandatory pit stop rule this race runs under, fixed from here.
+  race.pitStopRun = {
+    required = isQualiSession() and 0 or race.pitStopsRequiredNow(),
+    missed   = race.pitStopMissed,
+    seconds  = race.pitStopPenaltySeconds,
+  }
   broadcastState()
+  if race.pitStopRun.required > 0 then
+    MP.SendChatMessage(-1, '[RaceManager] ' .. race.pitStopRuleText() .. '.')
+  end
   -- The pace lap gets the first word: it is an instruction (both speed units:
   -- drivers on both sides of the Atlantic).
   if race.pacing then
@@ -4272,13 +4705,16 @@ function RM_onDrawHeats(pid)
     MP.SendChatMessage(pid, '[RaceManager] Set the number of heats to 2 or more first.')
     return
   end
-  -- The whole field: the draw creates the heats (isEntrant would filter).
+  -- The whole field: the draw creates the heats (isEntrant would filter). No
+  -- car is no place in a heat either, unless an admin added them.
+  race.refreshCars()
   local field = {}
   for _, rec in pairs(players) do
-    if not rec.spectating then field[#field + 1] = rec end
+    if not rec.spectating and not race.carOut(rec) then field[#field + 1] = rec end
   end
   if #field == 0 then
-    MP.SendChatMessage(pid, '[RaceManager] Nobody to draw: every connected driver is sitting out.')
+    MP.SendChatMessage(pid, '[RaceManager] Nobody to draw: every connected driver is '
+      .. 'sitting out or has no car spawned.')
     return
   end
   -- What the draw is seeded on; the serpentine is the same either way.
@@ -4849,6 +5285,7 @@ function RM_onEndRace(pid)
     -- Before the lights: no result, just stand the field down.
     broadcastCountdown(-1)
     race.phase = 'waiting'
+    race.gridKind = 'grid'
     for _, rec in pairs(players) do
       if rec.status == 'gridded' then rec.status = 'waiting' end
       -- Called and never placed: the ghost was only for the call.
@@ -4923,6 +5360,7 @@ function RM_onResetLeaderboard(pid)
   race.bestLapTime, race.bestLapPid = nil, nil
   race.phase = 'waiting'
   race.sessionKind = 'race'
+  race.gridKind = 'grid'
   race.time = 0.0
   race.endsAt, race.endReason = nil, nil
   race.qualiTime = 0.0
@@ -5317,6 +5755,93 @@ function race.pitStalls()
   return (l and type(l.pits) == 'table') and #l.pits or 0
 end
 
+-- ---------------------------------------------------------------------------
+-- STARTING FROM THE PIT STALLS (race.qualiFromPits / race.raceFromPits)
+-- ---------------------------------------------------------------------------
+-- Stall n is Pn. The field opens with an out lap (outLapOwed) that arms the
+-- pit start's first checkpoint for EVERY car, so no car may stand past that
+-- checkpoint: it would never cross it on the way out, and its out lap would be
+-- a lap longer than the rest of the field's.
+
+-- The checkpoint a pit start arms first: the layout's pitFirstCheckpoint, or
+-- CP 1. A sprint has no out lap and always arms CP 1.
+function race.pitFirstGate()
+  local l = race.layout
+  local n = (l and type(l.checkpoints) == 'table') and #l.checkpoints or 0
+  local k = math.floor(tonumber(l and l.pitFirstCheckpoint) or 1)
+  if race.pointToPoint or k < 1 or k > n then return 1 end
+  return k
+end
+
+-- Does the straight line from stall a to stall b pass through gate g? The
+-- client's rectCrossesGate on the server's copy of the layout: the gate's
+-- plane, its width across, its height above and depth below. Either direction.
+local function lineCrossesGate(g, a, b, l)
+  local fx, fy = tonumber(g.hx) or 0, tonumber(g.hy) or 1
+  local da = (a.x - g.x) * fx + (a.y - g.y) * fy
+  local db = (b.x - g.x) * fx + (b.y - g.y) * fy
+  if not ((da < 0 and db >= 0) or (da > 0 and db <= 0)) then return false end
+  local t  = da / (da - db)
+  local ix = a.x + (b.x - a.x) * t
+  local iy = a.y + (b.y - a.y) * t
+  local iz = (a.z or 0) + ((b.z or 0) - (a.z or 0)) * t
+  local w = tonumber(g.width) or tonumber(l.width) or 20
+  if math.abs((ix - g.x) * fy - (iy - g.y) * fx) > w * 0.5 then return false end
+  -- A legacy gate with a height and no depth meant the full span, centered.
+  local h, d
+  if g.depth == nil and g.height ~= nil then
+    h = (tonumber(g.height) or 0) * 0.5
+    d = h
+  else
+    h = tonumber(g.height) or tonumber(l.height) or 8
+    d = tonumber(g.depth) or tonumber(l.depth) or 2
+  end
+  local dz = iz - (g.z or 0)
+  return dz <= h and dz >= -d
+end
+
+-- The first pair of neighbouring stalls in use (1-2, 2-3, ... up to `count`)
+-- that a gate of the pit start's first checkpoint runs between, as
+-- (checkpoint, stall), or nil. Main gate and branch gates alike.
+function race.pitStartSplit(count)
+  local l = race.layout
+  if not l or type(l.pits) ~= 'table' or type(l.checkpoints) ~= 'table' then return nil end
+  local k = race.pitFirstGate()
+  local gates = { l.checkpoints[k] }
+  for _, g in ipairs(race.branches or {}) do
+    if g.slot == k then gates[#gates + 1] = g end
+  end
+  local n = math.min(count, #l.pits)
+  for i = 1, n - 1 do
+    local a, b = l.pits[i], l.pits[i + 1]
+    if a and b and a.x and b.x then
+      for _, g in ipairs(gates) do
+        if g.x and lineCrossesGate(g, a, b, l) then return k, i end
+      end
+    end
+  end
+  return nil
+end
+
+-- Can a field of `count` start from the stalls? nil if so, else the reason,
+-- worded for chat.
+function race.pitGridProblem(count)
+  if race.dragStrip then return 'a drag strip starts from its lanes' end
+  if not race.layout then return 'no layout is loaded from this server' end
+  local stalls = race.pitStalls()
+  if stalls == 0 then return 'this layout has no pit stalls' end
+  if stalls < count then
+    return string.format('%d drivers, %d pit stalls', count, stalls)
+  end
+  local k, i = race.pitStartSplit(count)
+  if k then
+    return string.format('CP %d runs between pit stalls %d and %d, so cars '
+      .. 'would start on both sides of it. Move that gate or set the pit '
+      .. "start's first checkpoint", k, i, i + 1)
+  end
+  return nil
+end
+
 -- The rule in force. 'required' needs stalls on a loaded layout: without them
 -- it would disqualify cars that had nowhere to stop, so it runs as 'optional'.
 function race.pitServeMode()
@@ -5353,6 +5878,95 @@ function race.missPit(rec)
     race.checkpointSkipPitLaps == 1 and '' or 's'))
   race.tellRaceControl(string.format('[RaceManager] Race control: %s did not serve %.1fs in '
     .. 'the pits in time: disqualified at the flag', displayName(rec), rec.penaltySeconds or 0))
+end
+
+-- ---------------------------------------------------------------------------
+-- MANDATORY PIT STOPS (race.pitStopsRequired)
+-- ---------------------------------------------------------------------------
+-- A race may require N stops, at most one counted per lap: two stalls on one
+-- visit is one stop. A finisher short of N is disqualified at the flag, or
+-- given pitStopPenaltySeconds per missing stop, as the admin chose. Like
+-- Required serving, it needs stalls: with none it does not run, so nobody is
+-- ruled out for having nowhere to stop.
+
+-- The number a race starting now would require: 0 for qualifying, a drag
+-- strip, or a layout with no stalls.
+function race.pitStopsRequiredNow()
+  if race.sessionKind ~= 'race' or race.dragStrip then return 0 end
+  if race.pitStalls() == 0 then return 0 end
+  return race.pitStopsRequired or 0
+end
+
+-- The number in force: the race's own once it has started, else the preview.
+function race.pitStopsActive()
+  if sessionUnderWay() or race.phase == 'finished' then
+    return race.pitStopRun.required or 0
+  end
+  return race.pitStopsRequiredNow()
+end
+
+-- "2 pit stops required, one per lap: missing one disqualifies at the flag"
+function race.pitStopRuleText()
+  local r = race.pitStopRun
+  return string.format('%d pit stop%s required, one per lap: %s', r.required,
+    r.required == 1 and '' or 's',
+    r.missed == 'time' and string.format('each one missed adds %.1fs', r.seconds)
+      or 'missing one disqualifies at the flag')
+end
+
+-- A stop began (RM_onPitStop). It counts if the rule is running and this car
+-- has not already had one counted on this lap.
+function race.countRequiredStop(rec)
+  local need = race.pitStopRun.required or 0
+  if race.sessionKind ~= 'race' or need <= 0 then return end
+  local lap = rec.currentLap or 0
+  if rec.pitLastLap == lap then
+    MP.SendChatMessage(rec.id, string.format('[RaceManager] Same lap as your last stop: '
+      .. 'not counted (%d of %d required stops made)', rec.pitCounted or 0, need))
+    return
+  end
+  rec.pitLastLap = lap
+  rec.pitCounted = (rec.pitCounted or 0) + 1
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Pit stop %d of %d done%s',
+    rec.pitCounted, need, rec.pitCounted >= need and ': all required stops made' or ''))
+end
+
+-- A car took the flag (retireDriver). Short of the stops: time on now, before
+-- its place is worked out, or marked for race.pitStopRuling.
+function race.pitStopsAtFlag(rec)
+  local r = race.pitStopRun
+  local need = r.required or 0
+  if need <= 0 then return end
+  local missing = need - (rec.pitCounted or 0)
+  if missing <= 0 then return end
+  local what = string.format('%d required pit stop%s not made', missing, missing == 1 and '' or 's')
+  if r.missed == 'time' then
+    rec.pitStopPenalty = missing * r.seconds
+    MP.SendChatMessage(rec.id, string.format('[RaceManager] %s: +%.1fs on your race time',
+      what, rec.pitStopPenalty))
+    race.tellRaceControl(string.format('[RaceManager] Race control: %s finished with %s: +%.1fs',
+      displayName(rec), what, rec.pitStopPenalty))
+  else
+    rec.pitStopsShort = true
+    MP.SendChatMessage(rec.id, '[RaceManager] ' .. what .. ': disqualified at the flag')
+    race.tellRaceControl(string.format('[RaceManager] Race control: %s finished with %s: '
+      .. 'disqualified', displayName(rec), what))
+  end
+end
+
+-- finishSession, beside race.pitRuling. Returns how many were ruled out.
+function race.pitStopRuling()
+  local n = 0
+  for _, rec in pairs(players) do
+    if rec.status == 'finished' and rec.pitStopsShort then
+      rec.status = 'dsq'
+      rec.outReason = 'Disqualified - Pit Stop Not Made'
+      n = n + 1
+      print(string.format('[RaceManager] Pit stop ruling: %s %s (%d of %d)', rec.name,
+        rec.outReason, rec.pitCounted or 0, race.pitStopRun.required or 0))
+    end
+  end
+  return n
 end
 
 -- finishSession, after the joker ruling. Returns how many were ruled out.
@@ -6394,6 +7008,11 @@ local function applyConfigTable(data)
   str('checkpointSkipLiftUnserved', { time = true, black = true })
   num('blackFlagSeconds', 0, 120)
   num('blackFlagLaps', 1, 20)
+  num('pitStopsRequired', 0, 10)
+  str('pitStopMissed', { dsq = true, time = true })
+  num('pitStopPenaltySeconds', 1, 600)
+  CFG.pitStopsRequired      = math.floor(CFG.pitStopsRequired)
+  CFG.pitStopPenaltySeconds = race.halfStep(CFG.pitStopPenaltySeconds, 1, 600)
   -- Whole numbers where a count is meant, and half seconds where a time is.
   CFG.blackFlagSeconds              = math.floor(CFG.blackFlagSeconds)
   CFG.blackFlagLaps                 = math.floor(CFG.blackFlagLaps)
@@ -6509,6 +7128,9 @@ local function configFileText()
     checkpointSkipMaxGates        = CFG.checkpointSkipMaxGates,
     blackFlagSeconds              = CFG.blackFlagSeconds,
     blackFlagLaps                 = CFG.blackFlagLaps,
+    pitStopsRequired      = CFG.pitStopsRequired,
+    pitStopMissed         = CFG.pitStopMissed,
+    pitStopPenaltySeconds = CFG.pitStopPenaltySeconds,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
     qualiLapLimit  = CFG.qualiLapLimit,
@@ -6570,6 +7192,9 @@ local function applyConfigToRace()
   race.checkpointSkipLiftUnserved    = CFG.checkpointSkipLiftUnserved
   race.blackFlagSeconds              = CFG.blackFlagSeconds
   race.blackFlagLaps                 = CFG.blackFlagLaps
+  race.pitStopsRequired      = CFG.pitStopsRequired
+  race.pitStopMissed         = CFG.pitStopMissed
+  race.pitStopPenaltySeconds = CFG.pitStopPenaltySeconds
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
   race.readyCheck     = CFG.readyCheck
@@ -7118,6 +7743,9 @@ function race.layoutEntry(data, name, map, checkpoints, existing)
   -- The gate the out lap arms first; nil is CP 1. A sprint has no out lap.
   local first = math.floor(tonumber(data.firstCheckpoint) or 1)
   if first <= 1 or first > #checkpoints or data.pointToPoint == true then first = nil end
+  -- The same for a field started in the pit stalls (race.pitFirstGate).
+  local pitFirst = math.floor(tonumber(data.pitFirstCheckpoint) or 1)
+  if pitFirst <= 1 or pitFirst > #checkpoints or data.pointToPoint == true then pitFirst = nil end
   return {
     name        = name,
     map         = map,
@@ -7131,7 +7759,7 @@ function race.layoutEntry(data, name, map, checkpoints, existing)
     -- Optional pit stalls: an area, never in lap validation.
     pits         = sanitizeCheckpoints(data.pits),
     -- The pit lane's entry and exit gates (arrays: a lane may have several ways
-    -- in). Optional: without an entry gate the client shows every stall.
+    -- in). Optional signs: the client draws stalls by distance from the car.
     pitEntry     = sanitizeCheckpoints(data.pitEntry),
     pitExit      = sanitizeCheckpoints(data.pitExit),
     markers      = sanitizeCheckpoints(data.markers),
@@ -7148,6 +7776,7 @@ function race.layoutEntry(data, name, map, checkpoints, existing)
     -- or it would be saved on a track that never runs an out lap.
     gridOffLine  = data.gridOffLine == true or (first ~= nil and starts ~= nil and #starts > 0),
     firstCheckpoint = first,
+    pitFirstCheckpoint = pitFirst,
     -- Optional sectors; false (malformed) is turned away just below.
     sectors      = race.sanitizeSectors(data.sectors, #checkpoints),
   }
@@ -8514,12 +9143,36 @@ local function garageModelFromPacket(data)
 end
 
 function RM_onVehicleSpawn(pid, vid, data)
-  if not garageEnforcing() then return end
   local model = garageModelFromPacket(data)
-  if model and not garageHasModel(model) then
+  if garageEnforcing() and model and not garageHasModel(model) then
     rejectVehicle(pid, vid, 'vehicle "' .. model .. '" is not on the Garage List')
     return 1  -- cancel the spawn
   end
+  -- Allowed: they have a car now. Not asked of BeamMP, whose list does not hold
+  -- it while this runs. NEVER AN ENTRY: a driver the grid formed without
+  -- presses Join (the panel offers it off the broadcast), or an admin places
+  -- them. Guarded: nothing here may cost anyone their spawn.
+  if model == 'unicycle' then return end
+  local ok, err = pcall(function ()
+    local rec = players[pidKey(pid)]
+    if rec and rec.noCar then
+      rec.noCar = nil
+      broadcastState()
+    end
+  end)
+  if not ok then print('[RaceManager] Car spawn bookkeeping failed: ' .. tostring(err)) end
+end
+
+-- A car gone: still one left? The deleted one may still be on BeamMP's list.
+-- A slot already handed out is kept: deleting and respawning on the grid is
+-- not leaving it.
+function RM_onVehicleDeleted(pid, vid)
+  local rec = players[pidKey(pid)]
+  if not rec then return end
+  local noCar = (not race.hasCar(rec.id, vid)) or nil
+  if noCar == rec.noCar then return end
+  rec.noCar = noCar
+  broadcastState()
 end
 
 function RM_onVehicleEdited(pid, vid, data)
@@ -8559,6 +9212,7 @@ derbyMod.init({
 
 -- Installed by the host; the inert defaults apply if the module fails to load.
 race.derbyUnderWay    = derbyMod.underWay
+race.derbyLateEntry   = derbyMod.lateEntry
 derbyEntryListChanged = derbyMod.entryListChanged
 
 
@@ -10695,6 +11349,11 @@ function RM_onPlayerJoin(pid)
   end
   local rec = ensurePlayer(pid)
   if not rec then return end
+  -- Arriving with no car while a field is formed: left off it and on no board.
+  -- Join is the way in once they spawn one (or an admin's Place or Add).
+  if race.phase ~= 'waiting' and race.carOut(rec) and not rec.spectating then
+    rec.leftOff = true
+  end
   -- Guarded: a roster fault must not cost the player their join.
   local okRoster, rosterErr = pcall(race.rosterOnJoin, rec)
   if not okRoster then print('[RaceManager] Roster on join failed: ' .. tostring(rosterErr)) end
@@ -10731,6 +11390,9 @@ function RM_onPlayerDisconnect(pid)
   clearGhost(pid, 'player disconnected')
   -- The binding goes with the connection; the ENTRY and its points stay.
   if rosterUnbind then rosterUnbind(pid) end
+  -- An admin's Add lasts until they leave.
+  if identities[pid] then identities[pid].adminEntry = nil end
+  if players[pid] then players[pid].adminEntry = nil end
   local rec = players[pid]
   if not rec then
     -- Non-racer admin (e.g. a spectating host) left: still refresh adminPresent.
@@ -10812,6 +11474,8 @@ function onInit()
   MP.RegisterEvent('RM_HoldPos',            'RM_onHoldPos')
   -- Qualifying session rules
   MP.RegisterEvent('RM_SetGhostQuali',    'RM_onSetGhostQuali')
+  MP.RegisterEvent('RM_SetPitStart',      'RM_onSetPitStart')
+  MP.RegisterEvent('RM_SetPitStopRule',   'RM_onSetPitStopRule')
   MP.RegisterEvent('RM_SetQualiLimits',   'RM_onSetQualiLimits')
   -- Module 1: vehicle reset ruleset + forced spectator reports
   MP.RegisterEvent('RM_SetMaxResets',     'RM_onSetMaxResets')
@@ -10848,6 +11512,10 @@ function onInit()
   MP.RegisterEvent('RM_VehicleConfig',    'RM_onVehicleConfig')
   MP.RegisterEvent('onVehicleSpawn',      'RM_onVehicleSpawn')
   MP.RegisterEvent('onVehicleEdited',     'RM_onVehicleEdited')
+  -- No car, no grid: a car gone, a late Join, an admin's Add.
+  MP.RegisterEvent('onVehicleDeleted',    'RM_onVehicleDeleted')
+  MP.RegisterEvent('RM_JoinField',        'RM_onJoinField')
+  MP.RegisterEvent('RM_SetAdminEntry',    'RM_onSetAdminEntry')
   MP.RegisterEvent('RM_StartCountdown',   'RM_onStartCountdown')
   MP.RegisterEvent('RM_StartRace',        'RM_onStartRace')      -- pace-lap start
   MP.RegisterEvent('RM_SetPaceLap',       'RM_onSetPaceLap')

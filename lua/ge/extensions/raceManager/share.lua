@@ -28,7 +28,7 @@ D.INTERVAL = 0.2     -- seconds between imported layouts
 -- What a layout may carry: the save payload's own fields.
 D.KEYS = {
   'width', 'height', 'depth', 'checkpoints', 'joker', 'startPositions', 'branches',
-  'gridOffLine', 'firstCheckpoint', 'sectors', 'pits', 'pitEntry', 'pitExit',
+  'gridOffLine', 'firstCheckpoint', 'pitFirstCheckpoint', 'sectors', 'pits', 'pitEntry', 'pitExit',
   'markers', 'props', 'pointToPoint', 'drag',
 }
 

@@ -8,16 +8,6 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 ## Unreleased
 
-#### Fixed
-
-- **Switching map reset the race rules.** A map switch that restarts the
-  server (any map it did not have loaded), a crash or a restart by hand put
-  every rule in the Race, Quali and Grid tabs back to `config.json`. They are
-  kept in `Data/rules.json` now and come back as they were. A rule you change
-  in `config.json` itself still wins at the next start. The heat draw, custom
-  grid slots and a joker lap with no track loaded do not come back, since what
-  they need left with the restart. See [Rulesets](docs/REFERENCE.md#rulesets).
-
 #### Added
 
 - **Lift meter in Race Lights.** While a lift is owed, the lamps fill green as it
@@ -35,11 +25,82 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   or disqualify a driver from the race, with an optional reason that goes to the
   field and into the results file's new race control block. See
   [Race control](docs/REFERENCE.md#race-control).
+
+## 0.30.0 - Pit stops, rulesets and no-car grids
+
+#### Added
+
+- **Mandatory pit stops.** **Pit stops** in the Race settings requires every
+  driver to make that many stops, and only one counts per lap. A driver who
+  takes the flag short is disqualified, or, with **If missed: Time**, gets the
+  seconds you set (30 by default) per missing stop on their race time. Drivers
+  are told the rule at GO and after every stop, the timing table shows
+  `PIT 1/2`, and the results file has a Pits column. It needs pit stalls on the
+  layout, as Required serving does. The defaults are `pitStopsRequired`,
+  `pitStopMissed` and `pitStopPenaltySeconds` in `config.json`. See
+  [Mandatory pit stops](docs/REFERENCE.md#mandatory-pit-stops).
+
+- **Qualifying and the race can start from the pit stalls.** **Start in pits**
+  in the Qualifying settings and again in the Race settings, each its own
+  switch, so qualifying can line up in the pits and the race on the grid.
+  Stall 1 is pole. The first lap is an untimed out lap: extra in qualifying,
+  lap 1 in a race. A car standing in its stall at the green is not making a pit
+  stop. Every car is sent to the same first checkpoint (CP 1, or **Pit start**
+  in the editor's Stalls tab), and the field only lines up in the stalls when
+  no gate of that checkpoint runs between two stalls in use, so nobody starts
+  past it and drives an extra lap. Otherwise, or with fewer stalls than
+  drivers, the session uses the grid and chat says why. The Stalls tab warns
+  about such a gate while you build the layout. See
+  [Starting from the pit stalls](docs/REFERENCE.md#starting-from-the-pit-stalls).
+
+- **Not in the field**, for admins, under Race Entry: everyone the board leaves
+  out. **Place** puts a left-off driver who now has a car on the back of the
+  grid. **Add** puts a driver in with or without a car until they leave the
+  server, and **Remove** takes that back. An added driver is tagged **ADDED**
+  in the driver table.
+
 - **Rulesets.** Save every rule in the Race, Quali and Grid tabs under a name
   and load it back in one click between sessions: a sprint, a heat night, an
   endurance. **Server defaults** puts `config.json`'s rules back, and the set
   the rules in force match is ticked. Deleting one is admin only. See
   [Rulesets](docs/REFERENCE.md#rulesets).
+
+#### Fixed
+
+- **Pit stalls vanished at a checkpoint in the pits.** With a Pit In gate
+  placed, the stalls showed once you crossed it and went again at Pit Out or at
+  the next checkpoint you cleared, so a driver who missed Pit Out did not keep
+  them all race. A checkpoint inside the pit lane (a branch gate through the
+  pits, or a start/finish line that spans them) counted as leaving, and the
+  stalls disappeared on the way to one. Stalls are now drawn whenever you are
+  within 200 m of them, whatever you have crossed, and not drawn at all from
+  farther away. See [Pit stalls](docs/REFERENCE.md#pit-stalls).
+
+- **Switching map reset the race rules.** A map switch that restarts the
+  server (any map it did not have loaded), a crash or a restart by hand put
+  every rule in the Race, Quali and Grid tabs back to `config.json`. They are
+  kept in `Data/rules.json` now and come back as they were. A rule you change
+  in `config.json` itself still wins at the next start. The heat draw, custom
+  grid slots and a joker lap with no track loaded do not come back, since what
+  they need left with the restart. See [Rulesets](docs/REFERENCE.md#rulesets).
+
+#### Changed
+
+- **Pit In and Pit Out are signs only.** They no longer show or hide the
+  stalls. Pit In keeps its big P and is drawn all race; PIT OUT is drawn within
+  200 m, like the stalls. Layouts that have them keep them, and layouts without
+  them lose nothing.
+
+- **No car, no grid.** A player with no car spawned is no longer put in the
+  field. When a grid forms (race or qualifying), a heat draw is made, a derby
+  forms up or a drag ladder is drawn, they are left off, told why, and the
+  admins are told who. Spawning a car afterwards **does not** put them in: a
+  **JOIN** banner appears instead, which starts them from the back of the grid.
+  A player who never joins is on no board: not the driver tables, the
+  broadcast board, the overlay feed or the results file. Walking (BeamMP's
+  unicycle) is not a car. Deleting and respawning your car on the grid keeps
+  your slot. See
+  [No car, no grid](docs/REFERENCE.md#no-car-no-grid).
 
 ## 0.29.1 - Layouts folder path
 
@@ -472,11 +533,12 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 #### Changed
 
-- **The repo moved** to
-  [Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG),
-  and the download page to
-  <https://ashes-to-light-studios.github.io/Phoenix-Race-Manager-for-BeamNG/>.
-  The old page address no longer works. Update checks look in the new repo; a
+- **The repo moved** to Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamNG,
+  since renamed
+  [Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP](https://github.com/Ashes-to-Light-Studios/Phoenix-Race-Manager-for-BeamMP),
+  and the download page with it, now
+  <https://ashes-to-light-studios.github.io/Phoenix-Race-Manager-for-BeamMP/>.
+  The old page addresses no longer work. Update checks look in the new repo; a
   server whose `config.json` still names the old one in `updateRepo` is
   switched over at boot. One pointed at a fork keeps its own.
 

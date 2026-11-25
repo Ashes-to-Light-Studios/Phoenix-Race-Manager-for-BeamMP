@@ -170,13 +170,19 @@ and loading selects it, so putting an edited track back takes no retyping. Both 
 layout; if the client sending it isn't holding a section the saved copy has, the
 server refuses and says exactly what would have gone.
 
-**4. Decide who's racing.** **Everyone on the server is in the field**, so
-there's nothing to do. A driver who'd rather watch presses **Spectate** and the
-session runs without them; their car stays put as a ghost, and **Race**, beside
-it, puts them back. That's the whole entry system, and it's the driver's own
-call, not an admin setting. A one on one is two people racing and everybody else
-spectating. Once a session is running the field is fixed: the way out from there
-is **Retire**, which keeps a classified position and scores like any other DNF.
+**4. Decide who's racing.** **Everyone on the server who is in a car is in the
+field**, so there's nothing to do. A driver who'd rather watch presses
+**Spectate** and the session runs without them; their car stays put as a ghost,
+and **Race**, beside it, puts them back. That's the whole entry system, and it's
+the driver's own call, not an admin setting. A one on one is two people racing
+and everybody else spectating. Once a session is running the field is fixed: the
+way out from there is **Retire**, which keeps a classified position and scores
+like any other DNF.
+
+A player with **no car spawned** is left off the grid and off the leaderboard.
+Spawning a car afterwards does not put them in. They press **Join** to start
+from the back, or an admin uses **Place** or **Add** under **Not in the field**.
+See [No car, no grid](docs/REFERENCE.md#no-car-no-grid).
 
 **5. Qualifying.** Press **Start Quali**, then **Start Countdown**. The field
 starts from the grid, so the first lap is an **out lap**: not timed, not scored,
