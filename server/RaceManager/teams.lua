@@ -21,6 +21,13 @@
 -- client asking for the state, a login) and on the one broadcast after an
 -- edit. No new server-to-client event: clients bind those once per session.
 --
+-- PIT STALLS. A team and a driver can each have a stall number; the driver's
+-- own wins over the team's. Resolved with the team and number (rec.pitStall)
+-- and sent on each driver row: clients guide a driver to it, label it, and
+-- hold a car stopped in another driver's stall longer (main.lua's
+-- pitWrongStallSeconds), and Start in pits can place each car in its own.
+-- A number past the loaded layout's stalls is the same as none.
+--
 -- Data/teams.json, cached: it is read on every broadcast. A file that does not
 -- parse is never written over, and edits are refused until it is fixed.
 
@@ -31,6 +38,7 @@ M.MAX_TEAMS   = 32
 M.MAX_ENTRIES = 200
 M.MAX_NAME    = 32
 M.MAX_LOGO    = 256
+M.MAX_STALL   = 99
 
 M.rev = 0            -- bumped on every change: the per-record memo's key
 M.broken = nil       -- why Data/teams.json could not be read, or nil
@@ -105,6 +113,21 @@ function M.cleanNumber(v)
   return nil
 end
 
+-- A pit stall: '' (none), or a whole number 1 to MAX_STALL. nil when neither.
+function M.cleanStall(v)
+  if v == nil or v == '' or v == false then return '' end
+  if type(v) == 'string' then
+    v = trim(v)
+    if v == '' then return '' end
+    if not v:match('^%d%d?$') then return nil end
+    v = tonumber(v)
+  end
+  if type(v) ~= 'number' or v ~= math.floor(v) then return nil end
+  if v == 0 then return '' end
+  if v < 1 or v > M.MAX_STALL then return nil end
+  return math.floor(v)
+end
+
 -- ---------------------------------------------------------------------------
 -- The cache
 -- ---------------------------------------------------------------------------
@@ -113,12 +136,13 @@ local function rebuild()
   for _, t in ipairs(doc.teams) do
     byId[t.id] = t
     wireList[#wireList + 1] = { id = t.id, name = t.name, short = t.short, color = t.color,
-      logo = t.logo ~= '' and t.logo or nil }
+      logo = t.logo ~= '' and t.logo or nil, stall = t.stall ~= '' and t.stall or nil }
   end
   local entries = {}
   for _, e in ipairs(doc.entries) do
     byName[e.name:lower()] = e
-    entries[#entries + 1] = { name = e.name, team = e.team, number = e.number ~= '' and e.number or nil }
+    entries[#entries + 1] = { name = e.name, team = e.team, number = e.number ~= '' and e.number or nil,
+      stall = e.stall ~= '' and e.stall or nil }
   end
   table.sort(entries, function (a, b) return a.name:lower() < b.name:lower() end)
   adminList = { teams = wireList, entries = entries }
@@ -137,9 +161,11 @@ local function fromFile(t)
     local short = type(raw) == 'table' and M.cleanShort(raw.short)
     local color = type(raw) == 'table' and M.cleanColor(raw.color)
     local logo = type(raw) == 'table' and M.cleanLogo(raw.logo) or ''
+    local stall = type(raw) == 'table' and M.cleanStall(raw.stall) or ''
     if id and id >= 1 and id == math.floor(id) and name and short and color and not shorts[short] then
       shorts[short] = true
-      out.teams[#out.teams + 1] = { id = math.floor(id), name = name, short = short, color = color, logo = logo }
+      out.teams[#out.teams + 1] = { id = math.floor(id), name = name, short = short, color = color,
+        logo = logo, stall = stall }
       if id > maxId then maxId = id end
     end
   end
@@ -151,12 +177,13 @@ local function fromFile(t)
     local name = type(raw) == 'table' and M.cleanName(raw.name)
     local team = type(raw) == 'table' and tonumber(raw.team) or nil
     local number = type(raw) == 'table' and M.cleanNumber(raw.number) or ''
+    local stall = type(raw) == 'table' and M.cleanStall(raw.stall) or ''
     if team and not teamIds[team] then team = nil end
     if number and number ~= '' and numbers[number] then number = '' end
-    if name and not names[name:lower()] and (team or (number and number ~= '')) then
+    if name and not names[name:lower()] and (team or (number and number ~= '') or stall ~= '') then
       names[name:lower()] = true
       if number ~= '' then numbers[number] = true end
-      out.entries[#out.entries + 1] = { name = name, team = team, number = number or '' }
+      out.entries[#out.entries + 1] = { name = name, team = team, number = number or '', stall = stall }
     end
   end
   out.nextId = math.max(math.floor(tonumber(t.nextId) or 1), maxId + 1)
@@ -177,8 +204,9 @@ end
 -- ---------------------------------------------------------------------------
 -- What main.lua asks
 -- ---------------------------------------------------------------------------
--- A driver's team id and car number, stamped on the record (rec.team,
--- rec.number) for driverForWire to copy. Memoized: a settled record is a
+-- A driver's team id, car number and pit stall, stamped on the record
+-- (rec.team, rec.number, rec.pitStall) for driverForWire to copy. The stall is
+-- the driver's own, else their team's. Memoized: a settled record is a
 -- comparison per broadcast.
 function M.lookup(rec)
   if rec.teamRev == M.rev and rec.teamAlias == rec.alias and rec.teamFor == rec.name then
@@ -189,6 +217,11 @@ function M.lookup(rec)
   rec.teamRev, rec.teamAlias, rec.teamFor = M.rev, rec.alias, rec.name
   rec.team = e and e.team or nil
   rec.number = (e and e.number ~= '') and e.number or nil
+  local stall = e and e.stall ~= '' and e.stall or nil
+  if not stall and rec.team and byId[rec.team] and byId[rec.team].stall ~= '' then
+    stall = byId[rec.team].stall
+  end
+  rec.pitStall = stall
   return rec.team, rec.number
 end
 
@@ -255,12 +288,18 @@ function OPS.team(pid, d)
   if not color then return notice(pid, 'The color is a hex value like #ff7a1a.') end
   local logo, why = M.cleanLogo(d.logo)
   if not logo then return notice(pid, why) end
+  -- Left out (an older panel): the stall it had.
+  local stall = t and t.stall or ''
+  if d.stall ~= nil then
+    stall = M.cleanStall(d.stall)
+    if not stall then return notice(pid, 'A pit stall is a number from 1 to ' .. M.MAX_STALL .. '.') end
+  end
   if t then
-    t.name, t.short, t.color, t.logo = name, short, color, logo
+    t.name, t.short, t.color, t.logo, t.stall = name, short, color, logo, stall
     return changed(pid, 'team ' .. short .. ' edited')
   end
   if #doc.teams >= M.MAX_TEAMS then return notice(pid, 'There are already ' .. M.MAX_TEAMS .. ' teams.') end
-  t = { id = doc.nextId, name = name, short = short, color = color, logo = logo }
+  t = { id = doc.nextId, name = name, short = short, color = color, logo = logo, stall = stall }
   doc.nextId = doc.nextId + 1
   doc.teams[#doc.teams + 1] = t
   return changed(pid, 'team ' .. short .. ' added')
@@ -271,12 +310,12 @@ function OPS.removeTeam(pid, d)
   for i, t in ipairs(doc.teams) do
     if t.id == id then
       table.remove(doc.teams, i)
-      -- Its drivers keep their numbers; entries left with nothing go.
+      -- Its drivers keep their numbers and stalls; entries left with nothing go.
       for j = #doc.entries, 1, -1 do
         local e = doc.entries[j]
         if e.team == id then
           e.team = nil
-          if e.number == '' then table.remove(doc.entries, j) end
+          if e.number == '' and e.stall == '' then table.remove(doc.entries, j) end
         end
       end
       return changed(pid, 'team ' .. t.short .. ' removed')
@@ -296,6 +335,12 @@ function OPS.entry(pid, d)
   local number = M.cleanNumber(d.number)
   if not number then return notice(pid, 'A car number is 1 to 3 digits, like 7 or 07.') end
   local i = entryIndex(name)
+  -- Left out (an older panel): the stall it had.
+  local stall = i and doc.entries[i].stall or ''
+  if d.stall ~= nil then
+    stall = M.cleanStall(d.stall)
+    if not stall then return notice(pid, 'A pit stall is a number from 1 to ' .. M.MAX_STALL .. '.') end
+  end
   if number ~= '' then
     for j, e in ipairs(doc.entries) do
       if j ~= i and e.number == number then
@@ -303,19 +348,20 @@ function OPS.entry(pid, d)
       end
     end
   end
-  if not team and number == '' then
+  if not team and number == '' and stall == '' then
     if not i then return end
     table.remove(doc.entries, i)
-    return changed(pid, name .. ' has no team or number now')
+    return changed(pid, name .. ' has no team, number or stall now')
   end
   if i then
-    doc.entries[i].name, doc.entries[i].team, doc.entries[i].number = name, team, number
+    local e = doc.entries[i]
+    e.name, e.team, e.number, e.stall = name, team, number, stall
   else
     if #doc.entries >= M.MAX_ENTRIES then return notice(pid, 'There are already ' .. M.MAX_ENTRIES .. ' drivers listed.') end
-    doc.entries[#doc.entries + 1] = { name = name, team = team, number = number }
+    doc.entries[#doc.entries + 1] = { name = name, team = team, number = number, stall = stall }
   end
   return changed(pid, name .. ': ' .. (team and byId[team].short or 'no team')
-    .. (number ~= '' and (', #' .. number) or ''))
+    .. (number ~= '' and (', #' .. number) or '') .. (stall ~= '' and (', PIT ' .. stall) or ''))
 end
 
 function OPS.removeEntry(pid, d)

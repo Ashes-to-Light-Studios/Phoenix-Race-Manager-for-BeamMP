@@ -256,6 +256,10 @@ local RM_BUILD = '0.30.1'
 local session = {
   -- Mirrored from the server broadcast.
   phase      = 'waiting',   -- waiting | grid | countdown | racing | qualifying | finished
+  -- ASSIGNED PIT STALLS (teams.lua, on each driver row as pitStall; see
+  -- pit.syncStalls): ours, which stalls a driver in the field has, the label
+  -- drawn on each, and the seconds a stop in another driver's stall adds.
+  stalls = { mine = nil, owned = {}, label = {}, sig = '', wrongSec = 0, teamShort = {} },
   totalLaps  = 5,
   raceFlag   = 'green',     -- green | yellow | red
   maxResets  = -1,          -- -1 unlimited, 0 none, N per driver per session
@@ -721,6 +725,10 @@ local pit = {
   -- out, and a later withdrawal of it is told.
   black = nil,
   blackSentAt = nil,
+  -- The stall this stop is in, and the seconds it adds for being another
+  -- driver's (pit.wrongExtra).
+  stall = nil,
+  wrong = 0,
 }
 
 -- The list THIS session's grid slot indexes: the pit stalls when the server
@@ -4301,6 +4309,7 @@ function pit.release(reason)
   -- Served only by a stop held to the end; any other release serves nothing.
   local served, black = pit.serving, pit.black
   pit.serving, pit.black = 0, nil
+  pit.stall, pit.wrong = nil, 0
   if (served > 0 or black) and reason == 'complete' and inMultiplayer() and sessionRunning() then
     TriggerServerEvent('RM_PenaltyServed', jsonEncode({ seconds = served, black = black ~= nil or nil }))
     if black then pit.blackSentAt = localTime end
@@ -4339,9 +4348,92 @@ function pit.blackOwed()
   return session.black and session.black.sec or nil
 end
 
+-- Seconds a stop in stall `i` adds for being another driver's: only for a
+-- driver with a stall of their own on this layout, only in a race or
+-- qualifying. Our own stall, and a stall nobody in the field has, are free.
+function pit.wrongExtra(i)
+  local st = session.stalls
+  if practice.on or not sessionRunning() or not (st.wrongSec > 0) then return 0 end
+  local mine = st.mine
+  if not mine or not track.pitRoute[mine] then return 0 end
+  if i == mine or not st.owned[i] then return 0 end
+  return st.wrongSec
+end
+
+-- The assigned stalls, from RM_Update: the rule's seconds, the team codes
+-- when the list comes, our own stall, and who has each. A stall's owners are
+-- the drivers in the field with it, spectators left out. Owners and labels
+-- are rebuilt only when an assignment, a number or a name moves: a league
+-- without stalls pays one field read per row.
+function pit.syncStalls(data, myId)
+  local st = session.stalls
+  if type(data.pitStopRule) == 'table' then st.wrongSec = tonumber(data.pitStopRule.wrongStall) or 0 end
+  if type(data.teams) == 'table' then
+    local m = {}
+    for _, t in pairs(data.teams) do
+      if type(t) == 'table' and tonumber(t.id) and type(t.short) == 'string' then m[tonumber(t.id)] = t.short end
+    end
+    st.teamShort, st.sig = m, nil
+  end
+  if type(data.drivers) ~= 'table' then return end
+  local mine, parts = nil, nil
+  for _, d in ipairs(data.drivers) do
+    local n = tonumber(d.pitStall)
+    if n then
+      if myId and tonumber(d.id) == myId then mine = n end
+      if not d.spectating and not d.unlisted then
+        parts = parts or {}
+        parts[#parts + 1] = string.format('%d:%s:%s:%s:%s', n, tostring(d.id), tostring(d.number or ''),
+          tostring(d.alias or d.name or ''), tostring(d.team or ''))
+      end
+    end
+  end
+  local sig = (parts and table.concat(parts, '|') or '') .. '/' .. tostring(mine)
+  st.mine = mine
+  if sig == st.sig then return end
+  st.sig = sig
+  local owners = {}
+  for _, d in ipairs(data.drivers) do
+    local n = tonumber(d.pitStall)
+    if n and not d.spectating and not d.unlisted then
+      owners[n] = owners[n] or {}
+      owners[n][#owners[n] + 1] = d
+    end
+  end
+  st.owned, st.label = {}, {}
+  for n, list in pairs(owners) do
+    st.owned[n] = true
+    -- Plain ASCII, as every other label drawn in the world.
+    local who
+    if n == mine then
+      who = nil
+    else
+      -- Teammates sharing it: the team's code. Otherwise numbers, or names.
+      local team = list[1].team
+      for _, d in ipairs(list) do if d.team ~= team then team = nil end end
+      local code = #list > 1 and team ~= nil and st.teamShort[tonumber(team)] or nil
+      if code then
+        who = code
+      else
+        local names = {}
+        for k, d in ipairs(list) do
+          if k > 3 then names[#names + 1] = '+' .. (#list - 3); break end
+          local num = type(d.number) == 'string' and d.number ~= '' and ('#' .. d.number) or nil
+          names[#names + 1] = num or tostring(d.alias or d.name or '?'):sub(1, 14)
+        end
+        who = table.concat(names, ' ')
+      end
+    end
+    st.label[n] = who and ('PIT ' .. n .. ': ' .. who) or ('PIT ' .. n .. ' (YOURS)')
+  end
+end
+
 -- What the stop is holding for, as the driver is told it.
 function pit.stopText()
   local t = string.format('PIT STOP: %.0fs', TUNE.PIT_HOLD_SEC)
+  if pit.wrong > 0 then
+    t = t .. string.format(' + NOT YOUR STALL %gs (yours is PIT %d)', pit.wrong, session.stalls.mine or 0)
+  end
   if pit.serving > 0 then t = t .. string.format(' + PENALTY %.1fs', pit.serving) end
   if pit.black then t = t .. string.format(' + BLACK FLAG %ds', pit.black) end
   return t
@@ -4426,7 +4518,9 @@ function pit.update(dt)
   -- what keeping them would.
   pit.serving  = pit.owed()
   pit.black    = pit.blackOwed()
-  pit.left     = TUNE.PIT_HOLD_SEC + pit.serving + (pit.black or 0)
+  pit.stall    = inStall
+  pit.wrong    = pit.wrongExtra(inStall)
+  pit.left     = TUNE.PIT_HOLD_SEC + pit.wrong + pit.serving + (pit.black or 0)
   pit.stops    = pit.stops + 1
   pit.promptLeft = 0
   pit.settleLeft = TUNE.PIT_SETTLE_SEC
@@ -4455,12 +4549,13 @@ function pit.update(dt)
   pushNotice('pit', pit.stopText())
   pushRouteState()
   log('I', 'raceManager', string.format(
-    'Pit stop %d started in stall %d%s%s', pit.stops, inStall,
+    'Pit stop %d started in stall %d%s%s%s', pit.stops, inStall,
+    pit.wrong > 0 and string.format(', not our stall (+%gs)', pit.wrong) or '',
     pit.serving > 0 and string.format(', serving %.1fs', pit.serving) or '',
     pit.black and string.format(', black flag %ds', pit.black) or ''))
   if inMultiplayer() and sessionRunning() then
     TriggerServerEvent('RM_PitStop', jsonEncode({ stall = inStall, serving = pit.serving,
-      black = pit.black }))
+      black = pit.black, wrong = pit.wrong > 0 and pit.wrong or nil }))
   end
 end
 
@@ -9154,6 +9249,8 @@ local function onServerUpdate(rawData)
   end
   -- A warning, a penalty or a lift turned into time: told as the row changes.
   session.cpRow.apply(rowWarn, rowPen, rowLift, rowWindow)
+  -- Assigned pit stalls: ours, who has each, and the wrong-stall seconds.
+  pit.syncStalls(data, myId)
   if cpr.missed and not wasMissed and sessionRunning() then
     pushNotice('penalty', 'PENALTY NOT SERVED IN THE PITS: disqualified at the flag')
   end
@@ -10138,22 +10235,28 @@ end
 -- Start from the pit stalls, for qualifying ('quali') or the race ('race').
 -- The server's switch: it grids the field and decides whether the stalls can
 -- take it (race.pitGridProblem).
-function M.setPitStart(kind, enabled)
+-- `enabled` nil leaves the switch as it is; `order` is 'grid' (stall 1 is
+-- pole) or 'assigned' (each car in its own stall), nil to leave it.
+function M.setPitStart(kind, enabled, order)
   if kind ~= 'quali' and kind ~= 'race' then return end
+  local payload = { session = kind }
+  if enabled ~= nil then payload.enabled = enabled and true or false end
+  if order == 'grid' or order == 'assigned' then payload.order = order end
   if inMultiplayer() then
-    TriggerServerEvent('RM_SetPitStart',
-      jsonEncode({ session = kind, enabled = enabled and true or false }))
+    TriggerServerEvent('RM_SetPitStart', jsonEncode(payload))
   end
 end
 
 -- Mandatory pit stops: how many a race requires (0 = off), and what a
 -- finisher short of them gets, 'dsq' or 'time' (`seconds` per missing stop).
--- The server's rule: it counts the stops and rules at the flag.
-function M.setPitStopRule(required, missed, seconds)
+-- The server's rule: it counts the stops and rules at the flag. `wrongStall`:
+-- seconds a stop in another driver's assigned stall adds (0 = off).
+function M.setPitStopRule(required, missed, seconds, wrongStall)
   if inMultiplayer() then
     TriggerServerEvent('RM_SetPitStopRule', jsonEncode({
       required = tonumber(required), seconds = tonumber(seconds),
       missed = (missed == 'time' or missed == 'dsq') and missed or nil,
+      wrongStall = tonumber(wrongStall),
     }))
   end
 end
@@ -10718,6 +10821,7 @@ local function resetToIdle(reason)
   session.cpSkip.enabled  = false
   session.lapCut          = false
   session.cpRow.warn, session.cpRow.pen, session.cpRow.lift, session.cpRow.window = 0, 0, 0, nil
+  session.stalls.mine, session.stalls.owned, session.stalls.label, session.stalls.sig = nil, {}, {}, ''
   session.lift.active     = false
   session.lift.sent, session.lift.sentAge = 0, 0
   session.black           = nil

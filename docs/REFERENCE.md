@@ -346,9 +346,9 @@ to park rather than the car's outline.
 
 On track a stall is an amber box on the ground with an outline like a grid slot
 and see-through walls on both sides and the front, fading upward. The rear is
-left open as the way in. The stall you are nearest to also gets a **white stop
-bar** across the front edge and a chevron pointing at it: stop with the nose at
-the bar. The box turns **green** the moment your car is inside it, before you
+left open as the way in. The stall you are nearest to (your own, if you have an
+[assigned stall](#assigned-pit-stalls)) also gets a **white stop bar** across
+the front edge and a chevron pointing at it: stop with the nose at the bar. The box turns **green** the moment your car is inside it, before you
 have stopped, and stays green for the stop.
 
 Stalls from a layout saved before stalls had a length took a checkpoint's width,
@@ -389,11 +389,49 @@ They are **not** respawn points. A stall repairs a car where it stands and does
 nothing else - a later reset still goes wherever the reset ruleset says.
 
 Qualifying and the race can each start **from** the stalls, with stall 1 as
-pole: see [Starting from the pit stalls](#starting-from-the-pit-stalls).
+pole or each car in its own assigned stall: see
+[Starting from the pit stalls](#starting-from-the-pit-stalls).
 
 With **Serve in pits** on, a stop also serves any checkpoint-skip penalty
 seconds the driver owes, holding the car that much longer (see
 [Serving penalty seconds in the pits](#serving-penalty-seconds-in-the-pits)).
+
+#### Assigned pit stalls
+
+A stall can belong to a driver, or to a team whose drivers share it. Give them
+out on the [Teams panel](#teams-and-car-numbers): each driver row has a **Pit
+stall** box, and so does each team. A driver's own stall wins over their
+team's; empty, they use the team's, or have none.
+
+| Where the car stops | The stop |
+|---|---|
+| Its own stall (or its team's) | The usual 5 seconds |
+| A stall nobody in the field has | The usual 5 seconds: it is free for anyone |
+| Another driver's stall | **5 seconds longer**, 10 in all, when the car has a stall of its own |
+| Any stall, for a driver with none | The usual 5 seconds |
+
+- **Wrong stall** in the Race settings sets the extra seconds (0 to 60, in
+  steps of 0.5; `pitWrongStallSeconds` in `config.json`, `5` as shipped). `0`
+  turns it off. It is kept over a restart and in [rulesets](#rulesets), and
+  locked while a session runs, like the mandatory stops beside it.
+- It applies in the race and in qualifying. [Free practice](#free-practice)
+  ignores it.
+- The driver is told as the stop starts: `PIT STOP: 5s + NOT YOUR STALL 5s
+  (yours is PIT 3)`. Everything else about the stop is the same: it counts as a
+  [mandatory stop](#mandatory-pit-stops), and penalty seconds or a black flag
+  served there go on top.
+- **Each driver is shown their stall.** At the green, chat says `Your pit stall:
+  PIT 3` to each driver who has one. On track the stop bar and the arrow are on
+  your own stall rather than the nearest, and every assigned stall is labeled
+  with who has it: `PIT 3 (YOURS)`, `PIT 2: #12` (a car number, else a name),
+  or `PIT 4: PHX` for teammates sharing one. Any stall your car is in still
+  turns green.
+- A driver who is spectating does not hold their stall: it is free while they
+  sit out.
+- A stall number past the loaded layout's stalls counts as none, so one list of
+  assignments can serve layouts with different pit lanes.
+- Teammates sharing a stall who pit on the same lap: the second waits, or uses
+  another stall at the wrong-stall time.
 
 #### Mandatory pit stops
 
@@ -803,9 +841,18 @@ in the Race settings. Both are off by default and, like every rule in those
 tabs, are kept over a server restart and in [rulesets](#rulesets). A common
 setup is qualifying from the pits and the race from the grid.
 
-- **Stall 1 is pole**, stall 2 is P2, and so on, in the usual grid order. So
-  number the stalls from the pit exit back. Cars are placed and held exactly as
-  on the grid, facing the way each stall was placed.
+- **Grid order** (as shipped): **stall 1 is pole**, stall 2 is P2, and so on,
+  in the usual grid order. So number the stalls from the pit exit back. Cars
+  are placed and held exactly as on the grid, facing the way each stall was
+  placed.
+- **Assigned**: each car starts in its own [assigned stall](#assigned-pit-stalls).
+  A car with none, or whose team stall a teammate ahead of it on the grid has
+  taken, gets the first free stall. The grid positions (and places gained)
+  still come from the grid order; only where each car stands changes, so in a
+  race the cars leave the pits in stall order. Pick **Grid order** or
+  **Assigned** beside each **Start in pits** switch. Either way, the assigned
+  stalls are the ones the [wrong-stall rule](#assigned-pit-stalls) uses for
+  stops during the session.
 - **The first lap is an out lap.** Every car is sent to the same checkpoint
   first (CP 1, unless you set **Pit start** in the editor's Stalls tab), round
   the lap and over the line. It is not timed. In qualifying it is extra, as
@@ -823,7 +870,8 @@ lines up on the grid instead and chat says why, for example: *Race from the
 track grid: CP 1 runs between pit stalls 3 and 4*. Move that gate, or set **Pit
 start** to a checkpoint ahead of every stall. The Stalls tab shows the same
 warning while you build the layout. The check follows the lane from stall to
-stall by number, which is one more reason to number them in order.
+stall by number, which is one more reason to number them in order. With
+assigned stalls it covers every stall from the lowest in use to the highest.
 
 The grid is also used when the layout has **fewer stalls than drivers** (per
 heat, with heats) or no stalls at all, again with a chat line saying so. The
@@ -1332,6 +1380,7 @@ crossed, so it is not left stuck, and the skip costs a **warning**, then the
 | Pit stops | `pitStopsRequired` | `0` | 0-10 mandatory stops in a race, 0 off (see [Mandatory pit stops](#mandatory-pit-stops)) |
 | If missed | `pitStopMissed` | `"dsq"` | `"dsq"` (disqualified at the flag) or `"time"` |
 | + s per stop | `pitStopPenaltySeconds` | `30` | 1-600, in steps of 0.5, per missing stop under `"time"` |
+| Wrong stall | `pitWrongStallSeconds` | `5` | 0-60, in steps of 0.5: added to a stop in another driver's [assigned stall](#assigned-pit-stalls), 0 off |
 
 The `config.json` values are what the server starts with; the panel changes
 them for the night. Like every regulation they are locked once a countdown or
@@ -3913,16 +3962,18 @@ use and ignore the rest.
 
 ## Teams and car numbers
 
-Admins give the league its **teams** and its drivers their **car numbers**, once,
-on the server. Every streamer's [broadcast overlay](#broadcast-feed) then shows
-a driver's team color, logo and number, and the [feed](#the-data) carries them
-for graphics of your own. Open **Teams** on the menu bar; either admin tier may
-edit.
+Admins give the league its **teams** and its drivers their **car numbers** and
+**pit stalls**, once, on the server. Every streamer's
+[broadcast overlay](#broadcast-feed) then shows a driver's team color, logo and
+number, and the [feed](#the-data) carries them for graphics of your own. The
+stalls are for the race itself: see [Assigned pit stalls](#assigned-pit-stalls).
+Open **Teams** on the menu bar; either admin tier may edit.
 
 **Teams.** A name (1 to 32 characters), a short code (2 to 4 letters or digits,
 like `PHX`, one team each), a color (a hex value, or one from the palette), and
-optionally a logo link (`https://`, 256 characters at most). Up to 32 teams.
-Removing a team leaves its drivers their numbers.
+optionally a logo link (`https://`, 256 characters at most) and a **pit stall**
+(1 to 99) its drivers share. Up to 32 teams. Removing a team leaves its drivers
+their numbers and their own stalls.
 
 A logo link has to keep working for the whole season: a Discord attachment link
 stops working within a day, so the panel refuses one. Use your league's site or
@@ -3932,8 +3983,10 @@ an image host, or give streamers the file to upload in their
 **Drivers and car numbers.** One row for each driver who is connected, saved in
 the cup roster, or already listed, and a box to add anyone else by name. A car
 number is 1 to 3 digits and belongs to one driver: `07` and `7` are different
-numbers, both allowed. Pick a team from the list, then **Save** the row. A row
-with no team and no number is taken off the list. Up to 200 drivers.
+numbers, both allowed. A **pit stall** (1 to 99) is the driver's own; empty,
+they use their team's (the box shows it greyed). Pick a team from the list,
+then **Save** the row. A row with no team, number or stall is taken off the
+list. Up to 200 drivers.
 
 **Who is who.** A driver is matched by their display name first (see
 [Display names](#display-names)), then their BeamMP name, either case. Give
@@ -4207,7 +4260,7 @@ these were collapsed sections.
 | **Track** | admins | Saved layouts, the checkpoint editor, the starting-grid builder and practice approval |
 | **Garage** | everyone | Admins: the Garage List. Drivers: the cars they may run, with Take and + New |
 | **Cup** | everyone | Admins: scoring, bonuses and standings. Drivers: the standings, while a cup runs |
-| **Teams** | admins | League teams (name, code, color, logo) and car numbers, for the broadcast overlay (see [Teams and car numbers](#teams-and-car-numbers)) |
+| **Teams** | admins | League teams (name, code, color, logo), car numbers and pit stalls (see [Teams and car numbers](#teams-and-car-numbers)) |
 | **Derby** | admins | Demo Derby rules, entry and the arena editor |
 | **Drag** | admins | The drag tournament: format, lanes, the tree, dial-ins and the bracket |
 | **Practice** | everyone | Timed laps on your own, on an approved track (see [Free practice](#free-practice)) |
