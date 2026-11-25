@@ -781,9 +781,9 @@ the stragglers are taken where they stand and the session closes normally.
 
 Qualifying and the race can each line up in the [pit stalls](#pit-stalls)
 instead of on the grid: **Start in pits** in the Qualifying settings, and again
-in the Race settings. Both are off by default, and like Ghost quali they are off
-again after a server restart. A common setup is qualifying from the pits and the
-race from the grid.
+in the Race settings. Both are off by default and, like every rule in those
+tabs, are kept over a server restart and in [rulesets](#rulesets). A common
+setup is qualifying from the pits and the race from the grid.
 
 - **Stall 1 is pole**, stall 2 is P2, and so on, in the usual grid order. So
   number the stalls from the pit exit back. Cars are placed and held exactly as

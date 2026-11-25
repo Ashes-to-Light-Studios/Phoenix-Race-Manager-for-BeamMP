@@ -43,6 +43,8 @@ Util = {
   end,
 }
 
+-- Rules outlive a boot (rules.lua): start from config.json's, not the last test's.
+os.remove('Resources/Server/PhoenixRM Server/Data/rules.json')
 dofile('server/RaceManager/main.lua')
 
 local function driver(pid)
@@ -199,6 +201,16 @@ check(lineOf('Alice'):match('^P1 ') ~= nil,
 check(lineOf('Bob'):find('(+60.0s pit)', 1, true) ~= nil, 'Bob\'s time shows the 60 s')
 check((resultsText or ''):find('missed: +30.0s per stop', 1, true) ~= nil,
   'and the header states the time rule')
+-- The Discord post says the same: the gap is on the time with the 60 s in it.
+do
+  local post = require('discord').build.race({ file = 'results.txt' })
+  local desc = post and post.embed and post.embed.description or ''
+  local bobRow = desc:match('\n(P%d+ +Bob[^\n]*)') or ''
+  check(bobRow:find('(+60.0s pit)', 1, true) ~= nil, 'the Discord post notes Bob\'s 60 s ('
+    .. bobRow .. ')')
+  check(bobRow:match('^P%d+ +Bob +%S+ +%+%d') ~= nil,
+    'and his gap to the winner counts it, so it is behind her, not ahead')
+end
 
 -- ---------------------------------------------------------------------------
 -- 4. Qualifying ignores it
