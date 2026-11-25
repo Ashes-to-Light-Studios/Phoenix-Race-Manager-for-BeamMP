@@ -45,6 +45,7 @@ one so the headless tests exercise the real file format).
 | `mapNames.json` | Display names for maps, by level name | Renaming each map back |
 | `update/last.json` | The last in-game update: from, to, when, by whom, and the `_attic` folder holding the old files | The next update |
 | `discord.json` | The Discord webhook and which results it posts | Removing the webhook |
+| `rules.json` | The race rules in force (Race, Quali and Grid tabs), the `config.json` defaults they were written against, and the saved rulesets | Deleting a ruleset; Server defaults puts the rules back |
 | `Lap Records/<map>.json` | Each driver's best lap per saved layout on that map | Clear Board, or deleting the file |
 
 `roster.json` and `cup.json` are deliberately **not** under `results/`: Clear
@@ -53,27 +54,42 @@ routine housekeeping can destroy is not persistent in any sense that matters.
 
 ## Modules inside the server plugin
 
-Nine parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
+Ten parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
 **map switching**, **lap records**, **updates**, **Discord**, **teams and car
-numbers**, the **driver roster** and the **cup**. Each has its own state tables,
-its own `RM_*` event namespace and its own broadcast channel (teams excepted: see
-below), and none of them is reachable from the racing state machine except
-through a handful of named functions declared at the top of the file.
+numbers**, **race rules and rulesets**, the **driver roster** and the **cup**.
+Each has its own state tables, its own `RM_*` event namespace and its own
+broadcast channel (teams and rules excepted: see below), and none of them is
+reachable from the racing state machine except through a handful of named
+functions declared at the top of the file.
 
-The first seven are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
-`records.lua`, `update.lua`, `discord.lua`, `teams.lua`) required as siblings;
-the other two are `do ... end` blocks inside `main.lua`.
+The first eight are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
+`records.lua`, `update.lua`, `discord.lua`, `teams.lua`, `rules.lua`) required
+as siblings; the other two are `do ... end` blocks inside `main.lua`.
 Same isolation either way, reached two different ways for the same reason:
 Lua's 200-local ceiling.
 
 **BeamMP runs every `.lua` in the plugin folder on its own**, alphabetically,
 before `main.lua` requires any of them. `derby.lua` and `drag.lua` sort before
 `main.lua`, so the copy `main.lua` initialises is the one whose global handlers
-win. `maps.lua`, `records.lua`, `teams.lua` and `update.lua` sort after, so they
-define nothing global at file scope: their `RM_Map*`, `RM_Records*`,
-`RM_TeamsSet` and `RM_Update*` handlers are installed by `init()`, and each one's test checks that loading the
-file alone defines nothing. A new module must do the same
-unless its name sorts before `main`.
+win. `maps.lua`, `records.lua`, `rules.lua`, `teams.lua` and `update.lua` sort
+after, so they define nothing global at file scope: their `RM_Map*`,
+`RM_Records*`, `RM_Rules`, `RM_TeamsSet` and `RM_Update*` handlers are installed
+by `init()`, and each one's test checks that loading the file alone defines
+nothing. A new module must do the same unless its name sorts before `main`.
+
+**Race rules are found changed, not reported.** They live in `race`, set by a
+dozen handlers, and every one of those ends in `broadcastState`, which calls
+`race.rulesSync` first: the live rules against what `rules.json` last got, a
+write on a difference. So the automatic switch-offs (the joker on a track with
+no route, the pace lap on a sprint, Reset ending the heats) are kept too, and a
+rule added later needs no call of its own, only a line in `rules.lua`'s `SPEC`.
+`onInit` restores the file right after `applyConfigToRace`, before anything
+broadcasts, except for each rule whose `config.json` value has changed since
+the file was written: a hand edit there is newer than the file. The saved names
+ride `RM_Update` on admins' own sends and the one broadcast after a change, like
+teams. **A test that expects config.json's rules removes `rules.json` before it
+boots**: the suite shares one Data folder, and the last test's rules would
+otherwise be restored.
 
 **Map switching is instant when the map is already loaded, and a restart
 otherwise.** BeamMP hands each joiner the map in its settings, and `MP.Set`

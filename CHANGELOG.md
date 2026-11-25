@@ -39,6 +39,12 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   server, and **Remove** takes that back. An added driver is tagged **ADDED**
   in the driver table.
 
+- **Rulesets.** Save every rule in the Race, Quali and Grid tabs under a name
+  and load it back in one click between sessions: a sprint, a heat night, an
+  endurance. **Server defaults** puts `config.json`'s rules back, and the set
+  the rules in force match is ticked. Deleting one is admin only. See
+  [Rulesets](docs/REFERENCE.md#rulesets).
+
 #### Fixed
 
 - **Pit stalls vanished at a checkpoint in the pits.** With a Pit In gate
@@ -49,6 +55,14 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   stalls disappeared on the way to one. Stalls are now drawn whenever you are
   within 200 m of them, whatever you have crossed, and not drawn at all from
   farther away. See [Pit stalls](docs/REFERENCE.md#pit-stalls).
+
+- **Switching map reset the race rules.** A map switch that restarts the
+  server (any map it did not have loaded), a crash or a restart by hand put
+  every rule in the Race, Quali and Grid tabs back to `config.json`. They are
+  kept in `Data/rules.json` now and come back as they were. A rule you change
+  in `config.json` itself still wins at the next start. The heat draw, custom
+  grid slots and a joker lap with no track loaded do not come back, since what
+  they need left with the restart. See [Rulesets](docs/REFERENCE.md#rulesets).
 
 #### Changed
 

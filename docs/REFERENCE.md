@@ -122,7 +122,7 @@ they are performing.
 | Clear **your own** copies of the results | ✅ | ✅ |
 | Change either password | ✅ | ❌ |
 | **Clear Results Cache** (the server's files) | ✅ | ❌ |
-| **Delete** a track layout, derby arena or garage set | ✅ | ❌ |
+| **Delete** a track layout, derby arena, garage set or ruleset | ✅ | ❌ |
 | **Clear** a lap records board, or take a time off it | ✅ | ❌ |
 | Choose where results are saved (**Save results**) | ✅ | ❌ |
 
@@ -2023,6 +2023,7 @@ Resources/Server/PhoenixRM Server/
         discord.json             the Discord webhook and what it posts
         cup.json                 the championship
         teams.json               teams and car numbers
+        rules.json               the race rules in force, and saved rulesets
         roster.json              display names
         garage.json              the allowed vehicles
         results/                 one .txt per session, while Save results is on the server
@@ -3020,10 +3021,55 @@ Two consequences worth knowing:
 - **Settings stay put for the whole event.** They live on the server, not in
   the app, and nothing but changing them again moves them: they survive Start
   Quali, Generate Grid, a countdown and **Reset**, and every admin's panel
-  shows the same values because all of them are reading the server's. (They are
-  *not* written to disk - restarting the server returns them to their
-  defaults. Track layouts, the garage, the roster and the cup are the things
-  that survive that.)
+  shows the same values because all of them are reading the server's. They are
+  written to `Data/rules.json` too, so a map switch that restarts the server, a
+  crash or a restart by hand comes back on the same rules. See
+  [Rulesets](#rulesets).
+
+### Rulesets
+
+**The rules in force survive a restart.** Every rule in the Race, Quali and
+Grid tabs is written to `Data/rules.json` as it changes and put back when the
+server starts. A map switch to a map the server did not have loaded used to
+restart it on `config.json`'s rules.
+
+Three things do not come back, because what they need is gone:
+
+- **The heat draw.** The heat program (heats, transfers, heat laps, the draw's
+  seeding) comes back; which driver is in which heat does not, since the drivers
+  left with the restart. Press **Draw heats** again.
+- **Custom grid order.** Its slots belong to the drivers connected when they
+  were typed, so it comes back as Quali order.
+- **A joker lap with no Joker Route.** The track is not loaded after a restart,
+  so the joker lap is off until a track with a route is, the same refusal its
+  switch gives.
+
+**`config.json` still wins where you edit it.** The file keeps the defaults it
+was written against. Change `totalLaps` in `config.json` and restart, and the
+race runs to the new number; every rule you did not touch there comes back from
+`rules.json`.
+
+**A ruleset is every one of those rules under a name**, so a night that runs a
+sprint, then a heat program, then an endurance recalls each in one click. The
+**Rulesets** row is the first line of the Race tab:
+
+- **Save** stores the rules in force under the name you type. A name already
+  kept (in any case) says **Update** and replaces that set.
+- Pick a set, then **Load**: every rule in Race, Quali and Grid is replaced and
+  the field is told in chat. Refused while a session is running, as each rule's
+  own switch is. A set that arms the joker lap or the pace lap leaves it off on
+  a track that cannot run it, and says so.
+- **Server defaults**, picked and loaded the same way, puts `config.json`'s
+  rules back.
+- The set the rules in force match is ticked. Change one rule by hand and no
+  set is ticked until you save or load one.
+- **Delete** is **admin only**, like a garage set: nothing puts a deleted one
+  back. Saving and loading are open to a moderator.
+
+Up to 30 rulesets, names up to 32 characters. They live in `rules.json` beside
+the rules in force. A `rules.json` that does not parse is never written over:
+the rules still change for the night, but are not kept over a restart, and
+rulesets cannot be changed until the file is fixed or removed.
 
 ### What a checkpoint looks like
 
