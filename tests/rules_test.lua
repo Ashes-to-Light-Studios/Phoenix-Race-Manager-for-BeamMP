@@ -138,6 +138,9 @@ RM_onSetMaxResets(0, '{"maxResets":3}')
 RM_onSetResetMode(0, '{"mode":"checkpoint"}')
 RM_onSetCheckpointSkip(0, '{"enabled":true,"warnings":2,"type":"lift","penaltySec":7.5,'
   .. '"liftSec":4,"liftWindow":40,"pitServe":"optional","pitLaps":4}')
+RM_onSetPitStopRule(0, '{"required":2,"missed":"time","seconds":45}')
+RM_onSetPitStart(0, '{"session":"quali","enabled":true}')
+RM_onSetPitStart(0, '{"session":"race","enabled":true}')
 RM_onSetPaceLap(0, '{"enabled":true}')
 RM_onSetLuckyDog(0, '{"enabled":true}')
 RM_onSetLapsBack(0, '{"enabled":true}')
@@ -159,6 +162,10 @@ local function sameRules(s, what)
   check(cs.enabled == true and cs.warnings == 2 and cs.type == 'lift' and cs.penaltySec == 7.5
     and cs.liftSec == 4 and cs.liftWindow == 40 and cs.pitServe == 'optional' and cs.pitLaps == 4,
     what .. ': checkpoint skips')
+  local pr = s.pitStopRule or {}
+  check(pr.required == 2 and pr.missed == 'time' and pr.seconds == 45,
+    what .. ': mandatory pit stops')
+  check(s.qualiFromPits == true and s.raceFromPits == true, what .. ': starts from the pit stalls')
   check(s.paceLap == true and s.luckyDog == true and s.lapsBack == true and s.cautionMode == 'call',
     what .. ': pace lap and caution rules')
   check(s.ghostQuali == true and s.qualiLapLimit == 3 and s.qualiTimeLimit == 0,
