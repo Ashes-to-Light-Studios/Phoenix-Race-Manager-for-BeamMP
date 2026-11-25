@@ -1470,14 +1470,23 @@
       </span>
     </span>
     <!-- Start from the pit stalls: the race's own switch (qualifying has one). -->
-    <span class="rm-setting" title="Line the race up in the pit stalls instead of on the grid: stall 1 is pole. The first lap is an untimed out lap that counts as lap 1. Uses the track grid if there are fewer stalls than drivers.">
+    <span class="rm-setting" title="Line the race up in the pit stalls instead of on the grid: stall 1 is pole, or each car in its assigned stall. The first lap is an untimed out lap that counts as lap 1. Uses the track grid if there are fewer stalls than drivers.">
       <label>Start in pits</label>
       <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': raceFromPits}"
               ng-click="togglePitStart('race')"
               ng-disabled="!canSetRules() || (!raceFromPits &amp;&amp; !pitRoute.length)">
         {{ raceFromPits ? '✓ Enabled' : 'Disabled' }}
       </button>
-      <span class="rm-setting-val" ng-if="raceFromPits">Stall 1 is pole &middot; lap 1 is an untimed out lap</span>
+      <span ng-if="raceFromPits">
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStartOrder('race') === 'grid'}"
+                ng-click="setPitStartOrder('race', 'grid')" ng-disabled="!canSetRules()"
+                title="Stall 1 is pole, stall 2 is P2, and so on.">Grid order</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStartOrder('race') === 'assigned'}"
+                ng-click="setPitStartOrder('race', 'assigned')" ng-disabled="!canSetRules()"
+                title="Each car in its own stall (the Teams panel). A car with none, or whose team stall a teammate has, takes the first free one. Cars leave the pits in stall order, not grid order.">Assigned</button>
+      </span>
+      <span class="rm-setting-val" ng-if="raceFromPits &amp;&amp; pitStartOrder('race') === 'grid'">Stall 1 is pole &middot; lap 1 is an untimed out lap</span>
+      <span class="rm-setting-val" ng-if="raceFromPits &amp;&amp; pitStartOrder('race') === 'assigned'">Each car in its own stall &middot; lap 1 is an untimed out lap</span>
       <span class="rm-setting-warn" ng-if="!pitRoute.length">No pit stalls on this layout.</span>
     </span>
     <!-- MANDATORY PIT STOPS. One per lap counts; a finisher short of them is
@@ -1509,6 +1518,20 @@
       <span class="rm-setting-warn" ng-if="pitStopRule.required > 0 &amp;&amp; !pitRoute.length">
         No pit stalls on this layout: the rule does not run.
       </span>
+    </span>
+    <!-- ASSIGNED PIT STALLS (Teams panel): a driver with a stall of their own
+         who stops in another driver's is held this much longer. A stall nobody
+         has is free; a driver with none uses any stall at the normal time. -->
+    <span class="rm-setting" title="A driver with an assigned pit stall (Teams panel) who stops in another driver's stall is held this many seconds longer, in the race and in qualifying. 0 turns it off.">
+      <label>Wrong stall</label>
+      <span>+</span>
+      <input type="number" class="rm-width-num" min="0" max="60" step="0.5" ng-model="settingsUi.pitWrongSecs"
+             ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+             ng-change="applyPitStopRule()"
+             ng-disabled="!canSetRules()">
+      <span>s</span>
+      <span class="rm-setting-val" ng-if="pitStopRule.wrongStall > 0">Added to a stop in another driver's assigned stall (Teams panel)</span>
+      <span class="rm-setting-val" ng-if="!(pitStopRule.wrongStall > 0)">Off: every stall is the usual stop</span>
     </span>
     <!-- THE FREE PASS. Not idle-locked, unlike the pace lap above it: this one
          changes nothing until a yellow is actually called, and a marshal
@@ -1598,14 +1621,23 @@
     <!-- START FROM THE PIT STALLS. The server decides at the grid whether the
          stalls can take the field (a stall each, and the pit start's first
          checkpoint running between none of them) and says so in chat if not. -->
-    <span class="rm-setting" title="Line qualifying up in the pit stalls instead of on the grid: stall 1 is P1. Uses the track grid if there are fewer stalls than drivers.">
+    <span class="rm-setting" title="Line qualifying up in the pit stalls instead of on the grid: stall 1 is P1, or each car in its assigned stall. Uses the track grid if there are fewer stalls than drivers.">
       <label>Start in pits</label>
       <button class="rm-btn rm-btn-mini rm-btn-toggle" ng-class="{'rm-btn-toggle-on': qualiFromPits}"
               ng-click="togglePitStart('quali')"
               ng-disabled="!canSetRules() || (!qualiFromPits &amp;&amp; !pitRoute.length)">
         {{ qualiFromPits ? '✓ Enabled' : 'Disabled' }}
       </button>
-      <span class="rm-setting-val" ng-if="qualiFromPits">Stall 1 is P1</span>
+      <span ng-if="qualiFromPits">
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStartOrder('quali') === 'grid'}"
+                ng-click="setPitStartOrder('quali', 'grid')" ng-disabled="!canSetRules()"
+                title="Stall 1 is P1, stall 2 is P2, and so on.">Grid order</button>
+        <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': pitStartOrder('quali') === 'assigned'}"
+                ng-click="setPitStartOrder('quali', 'assigned')" ng-disabled="!canSetRules()"
+                title="Each car in its own stall (the Teams panel). A car with none, or whose team stall a teammate has, takes the first free one.">Assigned</button>
+      </span>
+      <span class="rm-setting-val" ng-if="qualiFromPits &amp;&amp; pitStartOrder('quali') === 'grid'">Stall 1 is P1</span>
+      <span class="rm-setting-val" ng-if="qualiFromPits &amp;&amp; pitStartOrder('quali') === 'assigned'">Each car in its own stall</span>
       <span class="rm-setting-warn" ng-if="!pitRoute.length">No pit stalls on this layout.</span>
     </span>
     <!-- A qualifying session is run to a LAP ALLOWANCE or to a CLOCK, not both.
@@ -2426,6 +2458,7 @@
       <span class="rm-teams-swatch" ng-style="{'background-color': t.color}"></span>
       <b class="rm-teams-short">{{ t.short }}</b>
       <span class="rm-teams-name">{{ t.name }}</span>
+      <span class="rm-cup-off" ng-if="t.stall" title="The team's pit stall: its drivers stop here unless they have their own">PIT {{ t.stall }}</span>
       <span class="rm-cup-off" ng-if="t.logo" title="{{ t.logo }}">logo</span>
       <span class="rm-teams-actions" ng-if="teamsUi.removeAsk !== t.id">
         <button class="rm-btn rm-btn-mini" ng-click="teamsEdit(t)">Edit</button>
@@ -2463,6 +2496,14 @@
                ng-model="teamsUi.logo" placeholder="https://… (optional: a PNG or SVG on your league's site)">
       </div>
       <div class="rm-cup-row">
+        <label>Pit stall</label>
+        <input type="text" class="rm-login-input rm-teams-input-num" maxlength="2"
+               ng-model="teamsUi.stall" placeholder="–"
+               ng-class="{'rm-input-bad': !teamsStallOk(teamsUi.stall)}"
+               title="The stall this team's drivers stop in (1 to 99), shared by teammates. A driver's own stall wins. Empty: none.">
+        <span class="rm-cup-hint">Optional. A driver's own stall, set below, wins over the team's.</span>
+      </div>
+      <div class="rm-cup-row">
         <label></label>
         <button class="rm-btn rm-btn-mini rm-btn-start" ng-disabled="!teamsFormOk()" ng-click="teamsSave()">
           {{ teamsUi.editing ? 'Save team' : 'Add team' }}</button>
@@ -2472,10 +2513,12 @@
       </div>
     </div>
 
-    <div class="rm-cup-sep">Drivers and car numbers</div>
+    <div class="rm-cup-sep">Drivers, car numbers and pit stalls</div>
     <div class="rm-cup-hint">
       Matched by display name, then BeamMP name. A number is 1 to 3 digits and
-      belongs to one driver (07 and 7 are different numbers).
+      belongs to one driver (07 and 7 are different numbers). A pit stall (1 to
+      99) is where the driver stops; empty uses their team's. Stopping in
+      another driver's stall adds the seconds set in Race settings.
     </div>
     <div class="rm-cup-hint" ng-if="!teamsDrivers.length">Nobody to list yet: drivers show here when they connect.</div>
     <div class="rm-teams-row" ng-repeat="e in teamsDrivers track by e.key">
@@ -2485,6 +2528,10 @@
       <input type="text" class="rm-login-input rm-teams-input-num" maxlength="3"
              ng-model="teamsUi.numbers[e.key]" placeholder="#"
              ng-class="{'rm-input-bad': !teamsNumberOk(e)}">
+      <input type="text" class="rm-login-input rm-teams-input-num" maxlength="2"
+             ng-model="teamsUi.stalls[e.key]" placeholder="{{ teamsTeamStall(e) ? 'P' + teamsTeamStall(e) : 'Pit' }}"
+             ng-class="{'rm-input-bad': !teamsDriverStallOk(e)}"
+             title="This driver's pit stall (1 to 99). Empty: their team's{{ teamsTeamStall(e) ? ' (PIT ' + teamsTeamStall(e) + ')' : '' }}, or none.">
       <div class="rm-layout-dropdown rm-teams-picker"
            ng-class="{'rm-layout-dropdown-open': teamsMenuOpen(e.key)}">
         <button type="button" class="rm-layout-trigger"
@@ -2503,7 +2550,7 @@
           </div>
         </div>
       </div>
-      <button class="rm-btn rm-btn-mini" ng-disabled="!teamsDriverChanged(e) || !teamsNumberOk(e)"
+      <button class="rm-btn rm-btn-mini" ng-disabled="!teamsDriverChanged(e) || !teamsNumberOk(e) || !teamsDriverStallOk(e)"
               ng-click="teamsDriverSave(e)">Save</button>
     </div>
     <div class="rm-cup-row rm-teams-add">

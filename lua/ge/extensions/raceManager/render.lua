@@ -756,19 +756,29 @@ local function drawDriverGate(derbyLive)
         if d < bestD then best, bestD = i, d end
       end
     end
-    -- Every stall in range; the nearest in full, GREEN once the car is in it.
-    -- Distances inline, no table: this runs every frame.
+    -- Every stall in range. In full (stop bar, chevron, two-band walls): our
+    -- ASSIGNED stall (session.stalls), else the nearest. Any stall the car is
+    -- in goes GREEN and full, ours or not, so a stop always reads. An assigned
+    -- stall is labeled with who has it. Distances inline, no table: this runs
+    -- every frame.
     local sets = p.pitSets
+    local st = session.stalls
+    local focus = (st.mine and track.pitRoute[st.mine]) and st.mine or best
     for i, wp in ipairs(track.pitRoute) do
-      if i ~= best then
-        local dx, dy = wp.x - px, wp.y - py
-        if dx * dx + dy * dy <= r2 then paint.pitBox(wp, sets.far, false) end
+      local dx, dy = wp.x - px, wp.y - py
+      if not ppos or dx * dx + dy * dy <= r2 then
+        local inBox = false
+        if i == focus or i == best then
+          inBox = (pit.active and pit.stall == i) or (ppos ~= nil and not pit.active and pit.inside(wp, ppos))
+        end
+        if inBox then paint.pitBox(wp, sets.inbox, true)
+        elseif i == focus then paint.pitBox(wp, sets.near, true)
+        else paint.pitBox(wp, sets.far, false) end
+        local label = st.label[i]
+        if label then
+          debugDrawer:drawTextAdvanced(pitGeometry(wp).label, String(label), p.text, true, false, p.textBg)
+        end
       end
-    end
-    local near = track.pitRoute[best]
-    if near and (not ppos or bestD <= r2) then
-      local inBox = pit.active or (ppos ~= nil and pit.inside(near, ppos))
-      paint.pitBox(near, inBox and sets.inbox or sets.near, true)
     end
     -- The way out: in range, like a stall, so it is not a sign on the racing
     -- line all lap.

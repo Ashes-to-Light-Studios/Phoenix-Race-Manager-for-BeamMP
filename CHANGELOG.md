@@ -6,6 +6,25 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Added
+
+- **Assigned pit stalls.** Give each driver a pit stall, or a team one its
+  drivers share, on the **Teams** panel; a driver's own wins over the team's.
+  A stop in your own stall, or one nobody has, is the usual 5 seconds. A
+  driver with a stall who stops in another driver's is held **5 seconds
+  longer** (**Wrong stall** in the Race settings, 0 to turn it off), in the race
+  and in qualifying. Drivers are told their stall at the green, the stop bar
+  points at it, and each assigned stall is labeled on track (`PIT 3 (YOURS)`,
+  `PIT 2: #12`, `PIT 4: PHX`). See
+  [Assigned pit stalls](docs/REFERENCE.md#assigned-pit-stalls).
+- **Start in pits: Grid order or Assigned.** Beside each **Start in pits**
+  switch: stall 1 is pole as before, or each car lines up in its own assigned
+  stall (the first free one for a car with none). The assigned stalls stand for
+  the race either way. See
+  [Starting from the pit stalls](docs/REFERENCE.md#starting-from-the-pit-stalls).
+
 ## 0.30.1 - Banner ticker and tower columns
 
 #### Added

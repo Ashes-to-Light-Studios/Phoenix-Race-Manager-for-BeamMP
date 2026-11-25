@@ -83,7 +83,9 @@ angular.module('beamng.apps')
         bfLaps: 3,
         // Mandatory pit stops: how many, and the seconds per missing stop.
         pitStopsRequired: 0,
-        pitStopSecs: 30
+        pitStopSecs: 30,
+        // Assigned stalls: the seconds a stop in another driver's adds.
+        pitWrongSecs: 5
       };
 
       // ----------------------------------------------------------------
@@ -265,9 +267,14 @@ angular.module('beamng.apps')
       $scope.ghostQuali = false;
       $scope.qualiFromPits = false;
       $scope.raceFromPits = false;
+      // Which car starts in which stall: 'grid' (stall 1 is pole) or
+      // 'assigned' (each car in the stall the Teams panel gives it).
+      $scope.qualiPitOrder = 'grid';
+      $scope.racePitOrder = 'grid';
       // Mandatory pit stops as the server has them; `active` is the number in
-      // force (0 with no stalls, or outside a race).
-      $scope.pitStopRule = { required: 0, missed: 'dsq', seconds: 30, active: 0 };
+      // force (0 with no stalls, or outside a race). `wrongStall`: seconds a
+      // stop in another driver's assigned stall adds.
+      $scope.pitStopRule = { required: 0, missed: 'dsq', seconds: 30, active: 0, wrongStall: 5 };
       // Put display names on BeamMP's nametags as well as on the board.
       // Server-owned so every client agrees; each client applies it locally,
       // because a nametag is drawn from that machine's own player list.
@@ -2063,8 +2070,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // BeamNG's UI: a hex box with a palette, and the custom dropdown.
       $scope.teamsList = [];
       $scope.teamEntries = [];
-      $scope.teamsUi = { editing: null, name: '', short: '', color: '#ff7a1a', logo: '',
-                         numbers: {}, teamOf: {}, newName: '', removeAsk: null };
+      // `stall` (the form) and `stalls` (by driver): assigned pit stalls, 1 to 99.
+      $scope.teamsUi = { editing: null, name: '', short: '', color: '#ff7a1a', logo: '', stall: '',
+                         numbers: {}, teamOf: {}, stalls: {}, newName: '', removeAsk: null };
       $scope.TEAM_PALETTE = ['#ff7a1a', '#e53935', '#f43f5e', '#ec4899', '#a855f7', '#6366f1',
                              '#3b82f6', '#0ea5e9', '#14b8a6', '#22c55e', '#84cc16', '#eab308',
                              '#f59e0b', '#a16207', '#f5f5f5', '#6b7280'];
@@ -2111,11 +2119,13 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           var e = teamsEntryFor(k);
           var num = e && e.number ? String(e.number) : '';
           var team = e && e.team ? e.team : null;
-          var now = num + '|' + team;
+          var stall = e && e.stall ? String(e.stall) : '';
+          var now = num + '|' + team + '|' + stall;
           if (teamsSeen[k] !== now) {
             teamsSeen[k] = now;
             $scope.teamsUi.numbers[k] = num;
             $scope.teamsUi.teamOf[k] = team;
+            $scope.teamsUi.stalls[k] = stall;
           }
         });
       }
@@ -2139,27 +2149,36 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         return null;
       };
       $scope.teamsColorOk = function (c) { return TEAM_HEX.test(c || ''); };
+      // A pit stall box: empty (none) or 1 to 99.
+      function stallOk(v) {
+        var t = String(v === undefined || v === null ? '' : v).trim();
+        return t === '' || (/^[0-9]{1,2}$/.test(t) && parseInt(t, 10) >= 1);
+      }
+      $scope.teamsStallOk = function (v) { return stallOk(v); };
       $scope.teamsPickColor = function (c) { $scope.teamsUi.color = c; };
       $scope.teamsFormOk = function () {
         var u = $scope.teamsUi;
         var name = (u.name || '').trim(), short = (u.short || '').trim(), logo = (u.logo || '').trim();
         return name.length >= 1 && name.length <= 32 && /^[A-Za-z0-9]{2,4}$/.test(short)
-          && TEAM_HEX.test(u.color || '') && (logo === '' || /^https?:\/\/\S+$/.test(logo));
+          && TEAM_HEX.test(u.color || '') && (logo === '' || /^https?:\/\/\S+$/.test(logo))
+          && stallOk(u.stall);
       };
       $scope.teamsEdit = function (t) {
         var u = $scope.teamsUi;
         u.editing = t.id; u.name = t.name; u.short = t.short; u.color = t.color || '#ff7a1a'; u.logo = t.logo || '';
+        u.stall = t.stall ? String(t.stall) : '';
         u.removeAsk = null;
       };
       $scope.teamsCancelEdit = function () {
         var u = $scope.teamsUi;
-        u.editing = null; u.name = ''; u.short = ''; u.logo = '';
+        u.editing = null; u.name = ''; u.short = ''; u.logo = ''; u.stall = '';
       };
       $scope.teamsSave = function () {
         if (!$scope.teamsFormOk()) { return; }
         var u = $scope.teamsUi;
         var payload = { op: 'team', name: u.name.trim(), short: u.short.trim().toUpperCase(),
-                        color: u.color.toLowerCase(), logo: (u.logo || '').trim() };
+                        color: u.color.toLowerCase(), logo: (u.logo || '').trim(),
+                        stall: String(u.stall || '').trim() };
         if (u.editing) { payload.id = u.editing; }
         teamsSend(payload);
         $scope.teamsCancelEdit();
@@ -2174,13 +2193,21 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // A driver's row: changed from what the server has?
       $scope.teamsDriverChanged = function (e) {
         var u = $scope.teamsUi;
-        return ((u.numbers[e.key] || '') + '|' + (u.teamOf[e.key] || null)) !== teamsSeen[e.key];
+        return ((u.numbers[e.key] || '') + '|' + (u.teamOf[e.key] || null) + '|'
+          + String(u.stalls[e.key] || '').trim()) !== teamsSeen[e.key];
       };
       $scope.teamsNumberOk = function (e) { return /^[0-9]{0,3}$/.test(String($scope.teamsUi.numbers[e.key] || '')); };
+      $scope.teamsDriverStallOk = function (e) { return stallOk($scope.teamsUi.stalls[e.key]); };
       $scope.teamsDriverSave = function (e) {
-        if (!$scope.teamsNumberOk(e)) { return; }
+        if (!$scope.teamsNumberOk(e) || !$scope.teamsDriverStallOk(e)) { return; }
         teamsSend({ op: 'entry', name: e.name, team: $scope.teamsUi.teamOf[e.key] || null,
-                    number: String($scope.teamsUi.numbers[e.key] || '') });
+                    number: String($scope.teamsUi.numbers[e.key] || ''),
+                    stall: String($scope.teamsUi.stalls[e.key] || '').trim() });
+      };
+      // The stall a driver gets from their team, for the row's placeholder.
+      $scope.teamsTeamStall = function (e) {
+        var t = $scope.teamById($scope.teamsUi.teamOf[e.key]);
+        return t && t.stall ? String(t.stall) : '';
       };
       // A name typed in: for a driver who is not on the server or the roster.
       $scope.teamsAddDriver = function () {
@@ -2591,17 +2618,22 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.ghostQuali = !!data.ghostQuali;
           $scope.qualiFromPits = !!data.qualiFromPits;
           $scope.raceFromPits = !!data.raceFromPits;
+          $scope.qualiPitOrder = data.qualiPitOrder === 'assigned' ? 'assigned' : 'grid';
+          $scope.racePitOrder = data.racePitOrder === 'assigned' ? 'assigned' : 'grid';
           if (data.pitStopRule && typeof data.pitStopRule.required === 'number') {
             var psr = data.pitStopRule;
+            var wrong = typeof psr.wrongStall === 'number' ? psr.wrongStall : 5;
             // The boxes follow the server only when its value moved, so typing
             // is not overwritten by the next broadcast.
             if ($scope.pitStopRule.required !== psr.required) { $scope.settingsUi.pitStopsRequired = psr.required; }
             if ($scope.pitStopRule.seconds !== psr.seconds) { $scope.settingsUi.pitStopSecs = psr.seconds; }
+            if ($scope.pitStopRule.wrongStall !== wrong) { $scope.settingsUi.pitWrongSecs = wrong; }
             $scope.pitStopRule = {
               required: psr.required,
               missed: psr.missed === 'time' ? 'time' : 'dsq',
               seconds: typeof psr.seconds === 'number' ? psr.seconds : 30,
-              active: typeof psr.active === 'number' ? psr.active : 0
+              active: typeof psr.active === 'number' ? psr.active : 0,
+              wrongStall: wrong
             };
           }
           $scope.nametags = !!data.nametags;
@@ -5683,14 +5715,17 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       function sendPitStopRule(missed) {
         var n = parseInt($scope.settingsUi.pitStopsRequired, 10);
         var s = parseFloat($scope.settingsUi.pitStopSecs);
+        var w = parseFloat($scope.settingsUi.pitWrongSecs);
         if (isNaN(n)) { n = $scope.pitStopRule.required; }
         if (isNaN(s)) { s = $scope.pitStopRule.seconds; }
+        if (isNaN(w)) { w = $scope.pitStopRule.wrongStall; }
         bngApi.engineLua('raceManager.setPitStopRule(' + n + ', '
-          + luaStr(missed || $scope.pitStopRule.missed) + ', ' + s + ')');
+          + luaStr(missed || $scope.pitStopRule.missed) + ', ' + s + ', ' + w + ')');
       }
       $scope.applyPitStopRule = function () {
         if (isNaN(parseInt($scope.settingsUi.pitStopsRequired, 10))) { return; }
         if (isNaN(parseFloat($scope.settingsUi.pitStopSecs))) { return; }
+        if (isNaN(parseFloat($scope.settingsUi.pitWrongSecs))) { return; }
         sendPitStopRule();
       };
       $scope.setPitStopMissed = function (mode) {
@@ -5712,6 +5747,15 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.togglePitStart = function (kind) {
         var on = kind === 'quali' ? !$scope.qualiFromPits : !$scope.raceFromPits;
         bngApi.engineLua('raceManager.setPitStart(' + JSON.stringify(kind) + ', ' + on + ')');
+      };
+      // ...and which car goes in which stall: 'grid' or 'assigned'.
+      $scope.pitStartOrder = function (kind) {
+        return kind === 'quali' ? $scope.qualiPitOrder : $scope.racePitOrder;
+      };
+      $scope.setPitStartOrder = function (kind, order) {
+        if (order !== 'grid' && order !== 'assigned') { return; }
+        bngApi.engineLua('raceManager.setPitStart(' + JSON.stringify(kind) + ', nil, '
+          + JSON.stringify(order) + ')');
       };
       // Qualifying is LAPS or TIMED, never both: the box not shown sends 0. The
       // mode is a display choice, seeded from the server.
