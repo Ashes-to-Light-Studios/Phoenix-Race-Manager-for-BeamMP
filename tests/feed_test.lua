@@ -321,6 +321,9 @@ check(st.running == true and st.error == nil, 'the panel hears it is running')
 check(st.urls.json == 'http://127.0.0.1:8128/live.json'
   and st.urls.tower == 'http://127.0.0.1:8128/overlay?view=tower'
   and st.urls.stream == 'http://127.0.0.1:8128/stream', 'and is given the URLs to copy')
+check(st.urls.bannerTicker == 'http://127.0.0.1:8128/overlay?view=banner'
+  .. '&show=logo,flag,session,lap,time|leader,margin,fastest|order',
+  'including the banner as a ticker, ready to paste')
 check(st.urls.lan == nil, 'with no LAN address while LAN is off')
 
 -- ===========================================================================
@@ -602,6 +605,22 @@ for _, e0 in ipairs(doc.events) do
   for _, k in ipairs(schema.events[e0.type]) do
     check(e0[k] ~= nil, 'event ' .. e0.type .. '.' .. k .. ' is always present')
   end
+end
+
+-- A missed mandatory pit stop at the flag ADDS to the checkpoint penalty: one
+-- figure, as in the classification, and the event says what was added.
+do
+  local np = copy(nxt)
+  rowOf(np, 3).pitStopPenalty = 30
+  feed.feedState(np)
+  local d = live()
+  local carl
+  for _, row in ipairs(d.drivers) do if row.id == 3 then carl = row end end
+  check(carl and carl.penalty == 40, 'the pit stop penalty adds to the checkpoint seconds (got '
+    .. tostring(carl and carl.penalty) .. ')')
+  local pe = findEvent(d, 'penalty', 3)
+  check(pe and pe.seconds == 30 and pe.total == 40, 'and the event adds 30 to a total of 40')
+  feed.feedState(nxt)
 end
 
 -- The caution, the flag, the leader, the finish, the session.
@@ -958,6 +977,47 @@ check(live().styleSeq > seq0, 'live.json says the look changed (styleSeq), for o
 postStyle('{"subtitle":"Round 3"}')
 got = styleNow()
 check(got.colors.accent == '#00ff00' and got.subtitle == 'Round 3', 'a post changes only the keys it has')
+-- The banner: items by name, `|` between pages, checked like everything else.
+check(got.banner == 'logo,flag,session,lap,time,countdown,fastest,sponsor' and got.bannerCycle == 8,
+  'the banner shows what it always has until told otherwise, turning every 8 s')
+r, res = postStyle('{"banner":" Logo, flag,session,lap|leader,margin,,fastest|order| ","bannerCycle":6}')
+got = styleNow()
+check(res.ok and #res.rejected == 0 and got.banner == 'logo,flag,session,lap|leader,margin,fastest|order'
+  and got.bannerCycle == 6, 'pages of items, kept tidy: case, spaces and empty items and pages dropped')
+r, res = postStyle('{"banner":"session,lapz|order"}')
+check(res.rejected[1] == 'banner' and styleNow().banner == got.banner,
+  'a name it does not know refuses the banner, which keeps what it had')
+postStyle('{"banner":"lap|lap|lap|lap|lap|lap|lap|lap|lap"}')
+check(styleNow().banner == got.banner, 'and so do nine pages: eight at most')
+postStyle('{"banner":"|,|"}')
+check(styleNow().banner == got.banner, 'and a banner with nothing on it')
+postStyle('{"bannerCycle":1}')
+check(styleNow().bannerCycle == 6, 'a page turns every 2 to 60 seconds')
+local items = {}
+for _, k in ipairs(feed.style.BANNER_ITEMS) do items[#items + 1] = k end
+postStyle('{"banner":"' .. table.concat(items, ',') .. '"}')
+check(styleNow().banner == table.concat(items, ','), 'every item there is, on one page')
+do
+  -- The overlay and the editor know the same items, and the docs name each one.
+  local function slurp(p)
+    local fh = io.open(p, 'r')
+    local t = fh and fh:read('*a') or ''
+    if fh then fh:close() end
+    return t
+  end
+  local overlay = slurp('ui/modules/apps/RaceManager/overlay.html')
+  local editor = slurp('ui/modules/apps/RaceManager/style.html')
+  local docs = slurp('docs/REFERENCE.md')
+  local from = docs:find('\n#### The banner', 1, true)
+  docs = from and docs:sub(from, (docs:find('\n###', from + 5, true) or #docs)) or ''
+  check(docs ~= '', 'docs/REFERENCE.md has a "The banner" section')
+  local listed = overlay:match('var BANNER_ITEMS = (%b[])') or ''
+  for _, k in ipairs(feed.style.BANNER_ITEMS) do
+    check(listed:find("'" .. k .. "'", 1, true) ~= nil, 'the overlay draws the banner item ' .. k)
+    check(editor:find("['" .. k .. "', '", 1, true) ~= nil, 'the style editor offers the banner item ' .. k)
+    check(docs:find('| `' .. k .. '` |', 1, true) ~= nil, 'the docs describe the banner item ' .. k)
+  end
+end
 postStyle('{"reset":true,"title":"Fresh"}')
 got = styleNow()
 check(got.colors.accent == '#ff7a1a' and got.title == 'Fresh' and got.subtitle == '', 'reset starts from the defaults')

@@ -133,6 +133,41 @@ function C.css(v)
   return assetOf('css')(v)
 end
 
+-- THE BANNER (?view=banner): what it shows, in order. Items by name, a comma
+-- between them; a `|` starts a new page, and the banner turns through the
+-- pages every bannerCycle seconds. logo, flag and sponsor are its frame: shown
+-- on every page wherever they are named. The overlay's BANNER_ITEMS is this
+-- list, and docs/REFERENCE.md describes each one.
+D.BANNER_ITEMS = {
+  'logo', 'flag', 'session', 'title', 'track', 'lap', 'togo', 'time', 'clock', 'left',
+  'countdown', 'fastest', 'leader', 'margin', 'order', 'onboard', 'heat', 'field',
+  'latest', 'sponsor',
+}
+D.BANNER_PAGES = 8
+local BANNER_SET = {}
+for _, k in ipairs(D.BANNER_ITEMS) do BANNER_SET[k] = true end
+
+-- "logo,flag,session,lap|order": known items only, spaces and empty pages
+-- dropped, at most BANNER_PAGES pages. A name it does not know refuses the
+-- whole value, so a typo is reported rather than quietly shown as nothing.
+function C.banner(v)
+  if type(v) ~= 'string' or #v > 200 then return nil end
+  v = (v:lower():gsub('%s', ''))
+  local pages = {}
+  for page in (v .. '|'):gmatch('([^|]*)|') do
+    local items = {}
+    for item in (page .. ','):gmatch('([^,]*),') do
+      if item ~= '' then
+        if not BANNER_SET[item] then return nil end
+        items[#items + 1] = item
+      end
+    end
+    if #items > 0 then pages[#pages + 1] = table.concat(items, ',') end
+  end
+  if #pages == 0 or #pages > D.BANNER_PAGES then return nil end
+  return table.concat(pages, '|')
+end
+
 local function shortCode(k)
   if type(k) == 'string' and k:match('^[A-Z0-9][A-Z0-9][A-Z0-9]?[A-Z0-9]?$') then return k end
   return nil
@@ -182,6 +217,8 @@ D.SPEC = {
   { 'sponsor', C.image, '' },
   { 'title', C.text(40), '' },
   { 'subtitle', C.text(60), '' },
+  { 'banner', C.banner, 'logo,flag,session,lap,time,countdown,fastest,sponsor' },
+  { 'bannerCycle', C.num(2, 60), 8 },
   { 'labels', group = {
     { 'leader', text24, 'LEADER' }, { 'lap', text24, 'LAP' }, { 'noTime', text24, 'NO TIME' },
     { 'race', text24, 'Race' }, { 'qualifying', text24, 'Qualifying' },
@@ -191,6 +228,10 @@ D.SPEC = {
     { 'session', text24, 'Session' }, { 'timeLeft', text24, 'Time left' },
     { 'time', text24, 'Time' }, { 'start', text24, 'Start' },
     { 'fastestLap', text24, 'Fastest lap' },
+    { 'track', text24, 'Track' }, { 'toGo', text24, 'To go' },
+    { 'margin', text24, 'Margin' }, { 'order', text24, 'Running order' },
+    { 'onBoard', text24, 'On board' }, { 'heat', text24, 'Heat' },
+    { 'field', text24, 'Field' }, { 'latest', text24, 'Latest' },
     { 'waiting', C.text(60), 'Waiting for Phoenix Race Manager…' },
     { 'pit', text24, 'PIT' }, { 'fl', text24, 'FL' }, { 'joker', text24, 'J' },
   } },

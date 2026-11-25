@@ -547,7 +547,9 @@ local function buildModel(data, teams, cameraPid)
     d.pitStops = num(src.pitStops) or 0
     d.finishTime = num(src.finishTime)
     d.finishText = fmtLap(d.finishTime)
-    d.penalty = num(src.penaltySeconds) or 0
+    -- Every time penalty, in one figure: checkpoint skips and missed mandatory
+    -- pit stops add up, as they do in the classification.
+    d.penalty = (num(src.penaltySeconds) or 0) + (num(src.pitStopPenalty) or 0)
     -- A black flag out: the row carries its seconds, and 0 is still a flag.
     d.blackFlag = src.blackFlag ~= nil
     d.resets = num(src.resets) or 0
@@ -1006,6 +1008,9 @@ local function status()
       tower = base .. '/overlay?view=tower',
       grid = base .. '/overlay?view=grid',
       banner = base .. '/overlay?view=banner',
+      -- The banner as a ticker: three pages, the last stepping through the field.
+      bannerTicker = base .. '/overlay?view=banner&show=logo,flag,session,lap,time'
+        .. '|leader,margin,fastest|order',
       json = base .. '/live.json',
       drivers = base .. '/drivers.json',
       stream = base .. '/stream',
@@ -1226,7 +1231,9 @@ local function indexPage()
   local links = {
     { '/overlay?view=tower', 'Overlay: running order (tower)' },
     { '/overlay?view=grid', 'Overlay: starting grid' },
-    { '/overlay?view=banner', 'Overlay: session banner (lap, flag, clock)' },
+    { '/overlay?view=banner', 'Overlay: session banner (lap, flag, clock: or what you choose)' },
+    { '/overlay?view=banner&show=logo,flag,session,lap,time|leader,margin,fastest|order',
+      'Overlay: banner ticker (turns through pages, then the running order)' },
     { '/overlay?view=results', 'Overlay: results' },
     { '/overlay?view=ticker', 'Overlay: event ticker' },
     { '/live.json', 'live.json: everything' },
@@ -1243,7 +1250,8 @@ local function indexPage()
   }
   local items = {}
   for _, l in ipairs(links) do
-    items[#items + 1] = '<li><a href="' .. l[1] .. '">' .. l[2] .. '</a></li>'
+    -- An & in a link is written &amp; (the banner ticker's has two).
+    items[#items + 1] = '<li><a href="' .. l[1]:gsub('&', '&amp;') .. '">' .. l[2] .. '</a></li>'
   end
   return '<!doctype html><html><head><meta charset="utf-8"><title>PRM Broadcast feed</title>'
     .. '<style>body{font:15px/1.5 system-ui,sans-serif;margin:2em;max-width:44em}'

@@ -418,6 +418,15 @@ happens to a driver who takes the flag short of the number:
 The results file states the rule under the header, adds a **Pits** column
 (`1/2`), and shows a time penalty beside the race time as `(+30.0s pit)`.
 
+**It adds to a checkpoint penalty.** A driver short of their stops who also
+carries [checkpoint-skip](#checkpoint-skips-track-cuts) seconds gets both: the
+pit stop seconds go on top, never instead. Everything that states a penalty
+gives the total: the driver hears it at the flag (`+30.0s on your race time
+(35.0s of time penalties in all)`), the timing table's
+penalty badge reads `+35.0s` (hover it for each part), the results file and the
+Discord post say `(+35.0s pen incl. 30.0s pit)`, and the broadcast feed's
+`penalty` is 35.
+
 Every stall within **200 m** of your car is drawn as a box; only the nearest
 gets the stop bar, the chevron and the two-band walls. That depends only on
 where your car is, not on which gates you have crossed, so nothing hides a stall
@@ -1467,7 +1476,8 @@ finish inside the penalty. Cup points, heat transfers, awards and Discord all
 take the same final order.
 
 **On the board and in the results.** Next to a driver's name the board shows
-`+5.0s` for a time penalty, `LIFT` while a lift is owed, and `W 1/2` once a
+`+5.0s` for a time penalty (the total, with any seconds for a
+[missed mandatory pit stop](#mandatory-pit-stops) added in), `LIFT` while a lift is owed, and `W 1/2` once a
 warning has been used; your own header shows `CUTS` with the same. The results
 file states the rule under the header, gives each penalised car's race time as
 the corrected time with `(+5.0s pen)` beside it, and adds a **Track cuts**
@@ -1686,7 +1696,8 @@ untouched**, so the car still sits on the road and still hits the scenery.
 
 Everyone else sees the ghosted car go **translucent**, then fade back to solid
 over the last second as a warning that contact is about to resume. The ghosted
-driver gets a countdown of their own in the app.
+driver gets a countdown of their own in the app. A player who is only watching
+sees it solid: see [Broadcast board](#broadcast-board-spectators).
 
 It is on by default and applies during a race **and** during qualifying
 resetting into somebody is the same physical problem in both.
@@ -3277,7 +3288,15 @@ that has nothing to do with rights.
 
 **The race is solid on your screen.** Only your own car is a ghost: you see it
 normally, everyone else sees it translucent, and nobody can touch it. Every
-other car is solid and opaque, so contact and damage show. A grid forming no
+other car is solid and opaque, so contact and damage show.
+
+**Ghosts look solid while you watch.** A car that is a ghost for a reason of its
+own (a reset, ghosted practice, ghost qualifying, a finisher, a placement) is
+still a ghost in the physics on every screen, yours included, but it is not
+drawn see-through on yours while you are spectating, out of the race (finished,
+retired, out of the derby), sitting out a running session, or have no car at
+all. See-through means "you will pass through this car", which only tells a
+driver anything. The moment you are back in the field, ghosts fade again. A grid forming no
 longer moves your camera: whoever you were watching, you stay on them.
 
 **It is the whole app while it is on.** The header, the session controls, both
@@ -3496,7 +3515,7 @@ falls back to polling `/live.json`. Pick what it shows with the address:
 |---|---|
 | `?view=tower` | The running order: position, name, gap, and badges for the fastest lap (**FL**), the joker (**J**, **J×2**), pit stops (**PIT**) and penalties. Rows flash green or red when they move. |
 | `?view=grid` | The starting grid, two by two. Before a grid is called, the provisional grid from qualifying. |
-| `?view=banner` | One line: flag, session, lap, clock or time left, fastest lap. |
+| `?view=banner` | One line: flag, session, lap, clock or time left, fastest lap. Or what you choose, a page at a time: see [the banner](#the-banner). |
 | `?view=results` | The classification: gap, best lap and places gained. |
 | `?view=ticker` | What just happened, a few lines at a time: laps, the joker, pit stops, flags, the lead. |
 
@@ -3510,6 +3529,53 @@ A driver's **team** colors the bar beside their name and the chip with their
 **car number**, and the team's logo sits next to it (see
 [Teams and car numbers](#teams-and-car-numbers)). The colors, logos, font and
 words are yours to change: next.
+
+#### The banner
+
+The banner is one line, and you choose what is on it. Name the items in the
+order you want them, with a comma between them. A `|` starts a new **page**: the
+banner then turns through its pages, a few seconds each, like a TV ticker.
+
+- **In the style editor**, the **Banner** card: click an item to add it, or
+  type the names; **New page** starts another page; **Seconds a page** is how
+  long each one stays up. That sets every banner you have open.
+- **In the link**, `&show=` does the same for that one browser source, so a
+  second banner can show something else:
+  `/overlay?view=banner&show=logo,flag,session,lap,time|leader,margin,fastest|order`.
+  `&cycle=6` sets the seconds a page (`&cycle=0` puts every page on the one line,
+  no turning), and `&per=5` how many drivers a page of the running order shows.
+  A name the link does not know is left out.
+
+| Item | Shows |
+|---|---|
+| `logo` | The league logo. Always first, on every page. |
+| `flag` | The flag color stripe. After the logo, on every page. |
+| `session` | The session (Session, or Qualifying) and its phase, or the flag's words while one is out: CAUTION, RED FLAG... |
+| `title` | Your title, with the line under it above it. |
+| `track` | The layout's name. |
+| `lap` | The lap: `3/10`, `PACE`. Races only. |
+| `togo` | Laps to go, counting this one (`1` on the last lap). Races only. |
+| `time` | Time left in a timed race or qualifying, else the race clock. |
+| `clock` | The race clock (qualifying's clock in qualifying). |
+| `left` | Time left, in a timed race or qualifying. |
+| `countdown` | The start countdown, while it runs. |
+| `fastest` | The fastest lap: who, and the time. |
+| `leader` | The leader (provisional pole in qualifying), with their number and team logo. |
+| `margin` | The leader's margin over second: a time, or `+1 LAP`. |
+| `order` | The running order: place, number, name and gap. On a turning banner it steps through the field `&per` drivers at a time (5 unless the link says), up to `&rows`, before the next page. |
+| `onboard` | The driver this PC's camera is on (see `camera`, below), with their place. |
+| `heat` | The heat running, `2/3`, in a heat program. |
+| `field` | How many drivers are in the session. |
+| `latest` | What just happened: the newest line of the [ticker](#the-overlay). |
+| `sponsor` | The sponsor. Always last, on every page. |
+
+Shipped, it is `logo,flag,session,lap,time,countdown,fastest,sponsor`: one
+page, which never turns. An item with nothing to say right now (no fastest lap
+yet, no countdown running) is left out, and a page with nothing on it at all is
+passed over for the next. One page with `order` on it still turns, through the
+field. The words beside each value are in the style editor's **Words** card.
+For a stylesheet of your own, the banner has `data-page` (1, 2...), each of its
+cells `data-item` (`lap`, `order`...), and the part that turns is `.page`.
 
 ### Styling the overlay
 
@@ -3584,6 +3650,8 @@ refused, named in the answer, and keeps its old value.
 | `logo` | The league's logo: above the tower, grid and results, and first on the banner | none |
 | `sponsor` | Under them, and last on the banner | none |
 | `title`, `subtitle` | Beside the logo; up to 40 and 60 characters | none |
+| `banner` | What [the banner](#the-banner) shows: items by name, `,` between them, `\|` between pages (at most 8). A name it does not know refuses the whole value | `logo,flag,session,lap,time,countdown,fastest,sponsor` |
+| `bannerCycle` | Seconds a banner page stays up, 2 to 60. A link's `&cycle=` wins | `8` |
 | `css` | A stylesheet of yours (`asset:<name>`), loaded after the overlay's own | none |
 
 And every word the overlay shows, 24 characters each: `labels.leader`
@@ -3591,7 +3659,10 @@ And every word the overlay shows, 24 characters each: `labels.leader`
 when the layout has no name), `labels.qualifying`, `labels.qualiResult`,
 `labels.result`, `labels.standings`, `labels.startingGrid`,
 `labels.provisionalGrid`, `labels.noGrid`, the banner's `labels.session`,
-`labels.timeLeft`, `labels.time`, `labels.start` and `labels.fastestLap`, the
+`labels.timeLeft`, `labels.time`, `labels.start`, `labels.fastestLap`,
+`labels.track` (Track), `labels.toGo` (To go), `labels.margin` (Margin),
+`labels.order` (Running order), `labels.onBoard` (On board), `labels.heat`
+(Heat), `labels.field` (Field) and `labels.latest` (Latest), the
 badges' `labels.pit` (PIT), `labels.fl` (FL) and `labels.joker` (J), and
 `labels.waiting` (60 characters), shown while there is no session. An empty
 badge word hides that badge.
@@ -3684,7 +3755,7 @@ out, and so is anyone not in the field for want of a car
 | `jokerTaken`, `jokerLap`, `jokerText` | How many times the joker was taken, the lap, and `L4` (or `×2!` twice). |
 | `pitStops` | Pit stops this session. |
 | `finishTime`, `finishText` | Race time at the flag. |
-| `penalty` | Time penalties, in seconds. |
+| `penalty` | Time penalties, in seconds: checkpoint skips and [missed mandatory pit stops](#mandatory-pit-stops) added up. |
 | `blackFlag` | A black flag is out for this driver (see [Black flags](#black-flags)). |
 | `resets` | Resets used. |
 | `number` | The car number, as text (`"07"` is not `"7"`), or `null`. |

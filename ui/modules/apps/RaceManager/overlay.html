@@ -10,7 +10,9 @@
   Views, by query string:
     ?view=tower    running order (default)     &rows=N  &gap=leader|interval
     ?view=grid     the starting grid
-    ?view=banner   one line: flag, lap or clock, fastest lap
+    ?view=banner   one line: flag, lap or clock, fastest lap; or what you choose
+                   &show=session,lap,time|leader,margin|order  (`|` = a new page)
+                   &cycle=8 (seconds a page)  &per=5 (drivers a page of the order)
     ?view=results  the classification
     ?view=ticker   what just happened (laps, the joker, pit stops, flags)
   And for any view: &class=GT3 (one class), &scale=1.5, &theme=light,
@@ -33,6 +35,8 @@
   rows have data-pos, data-class and data-team (the short code); the parts
   are .panel .brand .head .flag .title .meta .rows .row .pos .bar .carno .tlogo
   .name .gap .badges .badge .slot .banner .results .toast .sponsor.
+  The banner's root has data-page, each of its cells data-item (lap, order...),
+  and the turning part is .page.
 -->
 <html lang="en">
 <head>
@@ -195,7 +199,16 @@
 
   /* Banner */
   .banner { display: inline-flex; align-items: stretch; background: var(--bg); border-radius: var(--radius); overflow: hidden; }
-  .banner > div { padding: 0.45em 0.8em; display: flex; flex-direction: column; justify-content: center; white-space: nowrap; }
+  .banner > div, .banner .page > div { padding: 0.45em 0.8em; display: flex; flex-direction: column; justify-content: center; white-space: nowrap; }
+  .banner > .page { padding: 0; flex-direction: row; justify-content: flex-start; }
+  .banner .page.turn { animation: bturn 0.35s ease-out both; }
+  @keyframes bturn { from { opacity: 0; transform: translateY(0.4em); } }
+  .banner .who, .banner .ent { display: inline-flex; align-items: center; gap: 0.35em; }
+  .banner .who .carno, .banner .who .tlogo, .banner .ent .carno, .banner .ent .tlogo { margin-left: 0; }
+  .banner .nm { text-transform: var(--case); }
+  .banner .ents { display: flex; gap: 1em; }
+  .banner .ent .p, .banner .who .p { color: var(--accent); }
+  .banner .ent .g { color: var(--muted); font-weight: var(--w); font-size: 0.8em; }
   .banner .flag { padding: 0; width: 0.5em; }
   .banner .k { font-size: 0.62em; color: var(--muted); font-weight: var(--w); letter-spacing: 0.1em; text-transform: uppercase; }
   .banner .v { font-weight: var(--w-strong); font-size: 1.1em; }
@@ -254,6 +267,13 @@
   // Another PC's feed: an origin only (scheme, host, port), nothing else.
   var SRC = (q.get('src') || '').replace(/\/+$/, '');
   if (SRC && !/^https?:\/\/[a-z0-9.\-\[\]:]+$/i.test(SRC)) { SRC = ''; }
+  // The banner: what it shows (else the style's `banner`), the seconds a page
+  // (else the style's `bannerCycle`; 0 puts every page on one line), and the
+  // drivers a page of the running order.
+  var SHOW = q.get('show');
+  var URL_CYCLE = parseFloat(q.get('cycle'));
+  if (!(URL_CYCLE === 0 || (URL_CYCLE >= 1 && URL_CYCLE <= 600))) { URL_CYCLE = NaN; }
+  var PER = Math.max(1, Math.min(20, parseInt(q.get('per'), 10) || 5));
   var TICKER_HOLD = Math.max(2, parseFloat(q.get('hold')) || 8) * 1000;
   var TICKER_MAX = Math.max(1, Math.min(10, parseInt(q.get('max'), 10) || 4));
   var URL_SCALE = parseFloat(q.get('scale'));
@@ -282,16 +302,42 @@
     bar: 'team', nameFormat: 'full', numbers: 'chip', teamLogos: true,
     badges: true, gained: true, flash: true, flagStripe: true,
     logo: '', sponsor: '', title: '', subtitle: '',
+    banner: 'logo,flag,session,lap,time,countdown,fastest,sponsor', bannerCycle: 8,
     labels: {
       leader: 'LEADER', lap: 'LAP', noTime: 'NO TIME', race: 'Race', qualifying: 'Qualifying',
       qualiResult: 'Qualifying result', result: 'Result', standings: 'Standings',
       startingGrid: 'Starting grid', provisionalGrid: 'Provisional grid', noGrid: 'No grid yet',
       session: 'Session', timeLeft: 'Time left', time: 'Time', start: 'Start',
-      fastestLap: 'Fastest lap', waiting: 'Waiting for Phoenix Race Manager…',
+      fastestLap: 'Fastest lap', track: 'Track', toGo: 'To go', margin: 'Margin',
+      order: 'Running order', onBoard: 'On board', heat: 'Heat', field: 'Field', latest: 'Latest',
+      waiting: 'Waiting for Phoenix Race Manager…',
       pit: 'PIT', fl: 'FL', joker: 'J'
     },
     css: ''
   };
+  // The banner's items (feedstyle.lua D.BANNER_ITEMS). logo, flag and sponsor
+  // are its frame: on every page, wherever they are named.
+  var BANNER_ITEMS = ['logo', 'flag', 'session', 'title', 'track', 'lap', 'togo', 'time', 'clock',
+    'left', 'countdown', 'fastest', 'leader', 'margin', 'order', 'onboard', 'heat', 'field',
+    'latest', 'sponsor'];
+  var BANNER_FRAME = { logo: true, flag: true, sponsor: true };
+  // "session,lap|order" -> [['session', 'lap'], ['order']], or null. strict: a
+  // name it does not know makes the whole value null, as the feed refuses it
+  // (a saved style); otherwise that name is dropped (a link's &show=).
+  function bannerPages(v, strict) {
+    if (typeof v !== 'string' || v.length > 200) { return null; }
+    var pages = [], bad = false;
+    v.toLowerCase().replace(/\s+/g, '').split('|').forEach(function (p) {
+      var items = p.split(',').filter(function (it) {
+        if (!it) { return false; }
+        if (BANNER_ITEMS.indexOf(it) < 0) { bad = true; return false; }
+        return true;
+      });
+      if (items.length) { pages.push(items); }
+    });
+    if ((strict && bad) || !pages.length || pages.length > 8) { return null; }
+    return pages;
+  }
   var FONTS = {
     system: '"Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
     condensed: '"Bahnschrift SemiCondensed", Bahnschrift, "Roboto Condensed", "Arial Narrow", sans-serif',
@@ -382,6 +428,8 @@
     o.sponsor = image(s.sponsor, rev);
     o.title = text(s.title, 40, d.title);
     o.subtitle = text(s.subtitle, 60, d.subtitle);
+    o.banner = bannerPages(s.banner, true) ? s.banner : d.banner;
+    o.bannerCycle = num(s.bannerCycle, 2, 60, d.bannerCycle);
     var l = isObj(s.labels) ? s.labels : {};
     o.labels = {};
     for (k in d.labels) { o.labels[k] = text(l[k], k === 'waiting' ? 60 : 24, d.labels[k]); }
@@ -734,29 +782,200 @@
     return finish(p);
   }
 
+  // ------------------------------------------------------------- the banner
+  // What it shows, as pages: the link's &show= wins over the style's `banner`.
+  // The frame (logo, flag, sponsor) is taken out of the pages: it never turns.
+  // With no turning (&cycle=0) every page goes on the one line.
+  function bannerConfig() {
+    var pages = (SHOW !== null && bannerPages(SHOW, false)) || bannerPages(ST.banner, true)
+      || bannerPages(DEFAULTS.banner, true);
+    var frame = {};
+    pages = pages.map(function (p) {
+      return p.filter(function (it) {
+        if (BANNER_FRAME[it]) { frame[it] = true; return false; }
+        return true;
+      });
+    }).filter(function (p) { return p.length > 0; });
+    var cycle = isNaN(URL_CYCLE) ? ST.bannerCycle : URL_CYCLE;
+    if (!(cycle > 0) && pages.length > 1) {
+      var one = [];
+      pages.forEach(function (p) { p.forEach(function (it) { if (one.indexOf(it) < 0) { one.push(it); } }); });
+      pages = [one];
+    }
+    if (!pages.length) { pages = [[]]; }
+    return { pages: pages, frame: frame, cycle: cycle };
+  }
+
+  // Where the banner is: the page, how far through the running order, when it
+  // last turned. `more`: the page on screen has more of the order to show.
+  var bTurn = { key: '', page: 0, offset: 0, at: 0, turnedAt: -1e9, pages: 1, cycle: 0, more: false };
+
+  function bannerCell(parent, item, k, v, cls) {
+    if (v === null || v === undefined || v === '') { return false; }
+    var c = el('div', 'sep' + (cls ? ' ' + cls : ''));
+    c.setAttribute('data-item', item);
+    c.appendChild(el('span', 'k', k));
+    if (typeof v === 'object') { v.classList.add('v'); c.appendChild(v); }
+    else { c.appendChild(el('span', 'v', v)); }
+    parent.appendChild(c);
+    return true;
+  }
+  // The field still running, in this view's class: the order and the leader.
+  function running(doc) {
+    return doc.drivers.filter(function (d) { return inClass(d) && !d.out; });
+  }
+  // A driver as the banner names one: their number chip, logo and name.
+  function who(d, before) {
+    var w = el('span', 'who');
+    tag(w, d, null);
+    if (before) { w.appendChild(el('span', 'p', before)); }
+    identity(w, d);
+    w.appendChild(el('span', 'nm', nameOf(d.name)));
+    return w;
+  }
+  function lastNews(doc) {
+    var list = doc.events || [];
+    for (var i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i] && list[i].text) { return list[i].text; }
+    }
+    return '';
+  }
+
+  // One page's cells. Returns how many it drew.
+  function bannerPage(parent, doc, items) {
+    var s = doc.session, n = 0, field = null;
+    function put(item, k, v, cls) { if (bannerCell(parent, item, k, v, cls)) { n += 1; } }
+    function fieldNow() { if (!field) { field = running(doc); } return field; }
+    bTurn.more = false;
+    items.forEach(function (it) {
+      if (it === 'session') {
+        put(it, s.kind === 'quali' ? L.qualifying : L.session, s.flagText && s.flag !== 'green' ? s.flagText : s.phaseText);
+      } else if (it === 'title') {
+        put(it, ST.subtitle, ST.title);
+      } else if (it === 'track') {
+        put(it, L.track, s.layout);
+      } else if (it === 'lap') {
+        if (s.kind !== 'quali' && s.lapText) { put(it, L.lap, s.lapText); }
+      } else if (it === 'togo') {
+        if (s.kind !== 'quali' && s.phase === 'racing' && typeof s.lapsToGo === 'number') { put(it, L.toGo, String(s.lapsToGo)); }
+      } else if (it === 'time') {
+        if (s.timeLeftText) { put(it, L.timeLeft, s.timeLeftText); } else { put(it, L.time, s.clockText); }
+      } else if (it === 'clock') {
+        put(it, L.time, s.clockText);
+      } else if (it === 'left') {
+        put(it, L.timeLeft, s.timeLeftText);
+      } else if (it === 'countdown') {
+        if (s.countdown) { put(it, L.start, String(s.countdown)); }
+      } else if (it === 'fastest') {
+        if (s.fastestLap) { put(it, L.fastestLap, nameOf(s.fastestLap.name) + '  ' + s.fastestLap.text, 'fast'); }
+      } else if (it === 'leader') {
+        var lead = fieldNow()[0];
+        if (lead) { put(it, L.leader, who(lead)); }
+      } else if (it === 'margin') {
+        var second = fieldNow()[1];
+        if (second && second.gapText) { put(it, L.margin, second.gapText); }
+      } else if (it === 'order') {
+        if (orderCell(parent, doc, fieldNow().slice(0, ROWS))) { n += 1; }
+      } else if (it === 'onboard') {
+        var cam = doc.camera;
+        if (cam && cam.name) { put(it, L.onBoard, who(cam, cam.posText || null)); }
+      } else if (it === 'heat') {
+        if (s.heat && s.heat.count) { put(it, L.heat, (s.heat.current || '?') + '/' + s.heat.count); }
+      } else if (it === 'field') {
+        if (s.entrants > 0) { put(it, L.field, String(s.entrants)); }
+      } else if (it === 'latest') {
+        put(it, L.latest, lastNews(doc));
+      }
+    });
+    return n;
+  }
+
+  // The running order, PER drivers at a time from bTurn.offset: a turning
+  // banner steps through the field before it moves on to the next page.
+  function orderCell(parent, doc, list) {
+    if (!list.length) { return false; }
+    if (bTurn.offset >= list.length) { bTurn.offset = 0; }
+    var from = bTurn.offset, part = list.slice(from, from + PER), quali = doc.session.kind === 'quali';
+    var c = el('div', 'sep order');
+    c.setAttribute('data-item', 'order');
+    var range = list.length > PER ? (from + 1) + '–' + (from + part.length) : '';
+    c.appendChild(el('span', 'k', L.order && range ? L.order + ' ' + range : (L.order || range)));
+    var row = el('span', 'v ents');
+    part.forEach(function (d, i) {
+      var at = from + i;
+      var e = el('span', 'ent');
+      var pos = CLASS && d.classPos ? d.classPos : (d.position || at + 1);
+      tag(e, d, pos);
+      e.appendChild(el('span', 'p', pos));
+      identity(e, d);
+      e.appendChild(el('span', 'nm', nameOf(d.name)));
+      var gap;
+      if (quali) { gap = at === 0 ? d.bestLapText : d.gapText; }
+      else if (at === 0) { gap = d.status === 'finished' ? d.finishText : ''; }
+      else { gap = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText; }
+      if (gap) { e.appendChild(el('span', 'g', gap)); }
+      row.appendChild(e);
+    });
+    c.appendChild(row);
+    parent.appendChild(c);
+    bTurn.more = from + PER < list.length;
+    return true;
+  }
+
   function banner(doc) {
     var s = doc.session;
+    var cfg = bannerConfig();
+    var key = cfg.pages.map(function (p) { return p.join(','); }).join('|');
+    if (key !== bTurn.key) { bTurn.key = key; bTurn.page = 0; bTurn.offset = 0; bTurn.at = Date.now(); }
+    bTurn.pages = cfg.pages.length;
+    bTurn.cycle = cfg.cycle;
+    if (bTurn.page >= cfg.pages.length) { bTurn.page = 0; bTurn.offset = 0; }
+
     var b = el('div', 'banner');
-    var logo = picture(ST.logo, null);
-    if (logo) { var lc = el('div', 'pic'); lc.appendChild(logo); b.appendChild(lc); }
-    if (ST.flagStripe) { b.appendChild(el('div', 'flag ' + (s.flag || 'none'))); }
-    function cell(k, v, cls) {
-      if (v === null || v === undefined || v === '') { return; }
-      var c = el('div', 'sep' + (cls ? ' ' + cls : ''));
-      c.appendChild(el('span', 'k', k));
-      c.appendChild(el('span', 'v', v));
-      b.appendChild(c);
+    if (cfg.frame.logo) {
+      var logo = picture(ST.logo, null);
+      if (logo) { var lc = el('div', 'pic'); lc.appendChild(logo); b.appendChild(lc); }
     }
-    cell(s.kind === 'quali' ? L.qualifying : L.session, s.flagText && s.flag !== 'green' ? s.flagText : s.phaseText);
-    if (s.kind !== 'quali' && s.lapText) { cell(L.lap, s.lapText); }
-    if (s.timeLeftText) { cell(L.timeLeft, s.timeLeftText); }
-    else if (s.clockText) { cell(L.time, s.clockText); }
-    if (s.countdown) { cell(L.start, s.countdown); }
-    if (s.fastestLap) { cell(L.fastestLap, nameOf(s.fastestLap.name) + '  ' + s.fastestLap.text, 'fast'); }
-    var sp = picture(ST.sponsor, null);
-    if (sp) { var sc = el('div', 'pic sep'); sc.appendChild(sp); b.appendChild(sc); }
+    if (cfg.frame.flag && ST.flagStripe) { b.appendChild(el('div', 'flag ' + (s.flag || 'none'))); }
+    // A page with nothing to say now (no camera, no order yet) is passed over
+    // for the next that has, rather than leaving an empty banner up.
+    var pg = null;
+    for (var tries = 0; tries < cfg.pages.length; tries += 1) {
+      pg = el('div', 'page');
+      if (bannerPage(pg, doc, cfg.pages[bTurn.page]) > 0 || cfg.pages.length === 1) { break; }
+      bTurn.page = (bTurn.page + 1) % cfg.pages.length;
+      bTurn.offset = 0;
+      bTurn.at = Date.now();
+    }
+    // The page that just turned slides in; a redraw mid-way carries on from
+    // where the slide had got to instead of starting it again.
+    var since = Date.now() - bTurn.turnedAt;
+    if (since < 350) { pg.classList.add('turn'); pg.style.animationDelay = (-since) + 'ms'; }
+    b.setAttribute('data-page', String(bTurn.page + 1));
+    b.appendChild(pg);
+    if (cfg.frame.sponsor) {
+      var sp = picture(ST.sponsor, null);
+      if (sp) { var sc = el('div', 'pic sep'); sc.appendChild(sp); b.appendChild(sc); }
+    }
     return b;
   }
+  // Turning: the next PER of the running order while there are more, else the
+  // next page. Nothing turns with one page and no order to step through.
+  setInterval(function () {
+    if (VIEW !== 'banner' || !lastDoc || !(bTurn.cycle > 0)) { return; }
+    var now = Date.now();
+    if (now - bTurn.at < bTurn.cycle * 1000) { return; }
+    bTurn.at = now;
+    if (bTurn.more) { bTurn.offset += PER; }
+    else {
+      var next = (bTurn.page + 1) % bTurn.pages;
+      if (next === bTurn.page && bTurn.offset === 0) { return; }
+      bTurn.page = next;
+      bTurn.offset = 0;
+    }
+    bTurn.turnedAt = now;
+    rerender();
+  }, 250);
 
   function results(doc) {
     var s = doc.session;
@@ -1024,10 +1243,11 @@
           lap: lap, lapTarget: LAPS, lapText: lap + '/' + LAPS, lapsToGo: LAPS - lap,
           clockText: Math.floor(clock / 60) + ':' + ('0' + Math.floor(clock % 60)).slice(-2),
           timeLeftText: '', flag: yellow ? 'yellow' : 'green', flagText: yellow ? 'YELLOW FLAG' : '',
-          countdown: null, jokerEnabled: true, gridSource: 'quali',
+          countdown: null, jokerEnabled: true, gridSource: 'quali', entrants: drivers.length, heat: null,
           fastestLap: fastest ? { id: fastest.id, name: fastest.name, time: fastest.time, text: fastest.text } : null
         },
-        drivers: drivers, grid: grid, events: events.slice()
+        // The camera rides with whoever is third: the banner's `onboard`.
+        drivers: drivers, grid: grid, events: events.slice(), camera: drivers[2] || null
       };
     }
     reset();

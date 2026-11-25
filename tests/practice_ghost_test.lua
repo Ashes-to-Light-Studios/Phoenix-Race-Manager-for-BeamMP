@@ -235,6 +235,44 @@ check(count('RM_PracticeEnd') == 1, 'and tells the server, so the other clients 
 check(lastNotice() == 'Practice ended', 'and says so')
 
 -- ---------------------------------------------------------------------------
+-- Watching: a spectator sees the practisers solid
+-- ---------------------------------------------------------------------------
+-- Reported with a screenshot: spectating open practice, a practiser drove past
+-- see-through. Their car stays a ghost in our physics (every client ghosts the
+-- same cars); only the look changes, and only while we watch.
+rival.x, rival.y = 500, 0
+serverState({ phase = 'waiting', ghostPractice = { RIVAL_PID } })
+frames(0.3)
+check(rival.ghosted == true and rival.alpha < 1, 'a practiser is a faded ghost to a driver')
+local meSpectating = { { id = OWN_PID, name = 'Me', status = 'waiting', bystander = true } }
+serverState({ phase = 'waiting', ghostPractice = { RIVAL_PID }, youSpectating = true,
+  drivers = meSpectating })
+frames(0.3)
+check(rival.alpha == 1, 'spectating, the practiser is drawn solid')
+check(rival.ghosted == true, 'and is still a ghost: collision is the same on every client')
+frames(2.5)
+check(rival.alpha == 1, 'and the two-second sweep keeps it solid')
+rival.ghosted = false
+RM.onVehicleResetted(RIVAL_ID)
+check(rival.ghosted == true and rival.alpha == 1, 'and so does re-asserting it after their reset')
+local meDriving = { { id = OWN_PID, name = 'Me', status = 'waiting' } }
+serverState({ phase = 'waiting', ghostPractice = { RIVAL_PID }, youSpectating = false,
+  drivers = meDriving })
+frames(0.3)
+check(rival.alpha < 1, 'back in the field, the ghost is faded again')
+check(own.ghosted ~= true, 'and our own spectator ghost is off')
+-- No car at all is watching too: BeamMP's own way to spectate.
+serverState({ phase = 'waiting', ghostPractice = { RIVAL_PID },
+  drivers = { { id = OWN_PID, name = 'Me', status = 'waiting', noCar = true } } })
+frames(0.3)
+check(rival.alpha == 1, 'with no car of our own, the practiser is drawn solid')
+serverState({ phase = 'waiting', ghostPractice = { RIVAL_PID }, drivers = meDriving })
+frames(0.3)
+check(rival.alpha < 1, 'and faded again once we have one')
+serverState({ phase = 'waiting', ghostPractice = {} })
+frames(0.5)
+
+-- ---------------------------------------------------------------------------
 -- A session starting ends practice
 -- ---------------------------------------------------------------------------
 practise()
