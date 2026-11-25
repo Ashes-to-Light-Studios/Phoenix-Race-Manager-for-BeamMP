@@ -457,11 +457,13 @@ local function buildModel(data, teams, cameraPid)
     return n, target and (istr(n) .. '/' .. istr(target)) or istr(n)
   end
 
-  -- The field: spectators are counted, not listed (app.js splitField).
+  -- The field: spectators are counted, not listed (app.js splitField). A row
+  -- the server marks unlisted (left off for want of a car and never joined)
+  -- is neither: it is on no board.
   local spectators = 0
   local field = {}
   for _, src in ipairs(rows) do
-    if type(src) == 'table' then
+    if type(src) == 'table' and not src.unlisted then
       if src.spectating then spectators = spectators + 1
       else field[#field + 1] = src end
     end

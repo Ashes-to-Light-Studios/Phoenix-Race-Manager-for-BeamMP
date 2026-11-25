@@ -1439,12 +1439,14 @@ local function shuffle(list)
   end
 end
 
--- Everyone the ladder could be drawn from: connected and entered (isEntrant).
+-- Everyone the ladder could be drawn from: connected and entered, in a car
+-- unless an admin added them (race.inField). Cars are asked of BeamMP first.
 local function candidates()
   local list = {}
+  race.refreshCars()
   for id in pairs(onlinePlayers()) do
     local rec = players[id]
-    if (not rec) or isEntrant(rec) then
+    if race.inField(id) then
       list[#list + 1] = {
         id = id,
         name = rec and displayName(rec) or (MP.GetPlayerName(id) or ('Player ' .. id)),

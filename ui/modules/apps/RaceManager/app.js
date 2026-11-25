@@ -43,6 +43,17 @@ angular.module('beamng.apps')
       $scope.totalLaps = 5;
       $scope.countdown = null;    // null = hidden, 3..1 = number, 0 = GO!
       $scope.drivers = [];
+      // NO CAR, NO GRID. `drivers` is the board: who is in. Rows the server
+      // marks `unlisted` (left off for want of a car and never joined) are on no
+      // table, board or overlay; admins see them under Not in the field.
+      // `everyDriver` is every row, for the Display Names list.
+      $scope.notInField = [];
+      $scope.everyDriver = [];
+      // This driver: the grid formed without them and they have a car now
+      // (the Join banner), and no car spawned (the Race Entry row). Off our
+      // own row, through the extension, like myStatus.
+      $scope.myJoinable = false;
+      $scope.myNoCar = false;
 
       // Settings inputs, on an OBJECT: they sit inside ng-if child scopes, where
       // a bare primitive ng-model would shadow the controller's value.
@@ -1398,8 +1409,8 @@ angular.module('beamng.apps')
         shape: null,          // { cx, cy, cz, halfW, halfL, rot } while 'rect'
         wallHeight: 6,        // how tall the arena walls are drawn (visual only)
         wallDepth: 1.5,       // how far they drop below the boundary (visual only)
-        // Who takes part: 'all' (every connected player, the historical
-        // behavior) or 'join' (only drivers who pressed Join Race).
+        // Who takes part: everyone connected in a car who is not spectating,
+        // plus anyone an admin added.
         entrants: 0,          // how many would be in a derby started right now
         maxResets: -1,        // resets per driver per derby (-1 = unlimited)
         visualize: true,      // boundary/grid visuals shown (client-local)
@@ -2067,7 +2078,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           if (online) { byKey[key].online = true; }
         }
         $scope.teamEntries.forEach(function (e) { add(e.name, false); });
-        ($scope.drivers || []).forEach(function (d) { add(d.alias || d.name, true); });
+        ($scope.everyDriver || []).forEach(function (d) { add(d.alias || d.name, true); });
         (($scope.cup && $scope.cup.roster) || []).forEach(function (e) { add(e.name, false); });
         teamsTyped.forEach(function (n) { add(n, false); });
         order.sort();
@@ -2408,7 +2419,10 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
             if (typeof data.dragStrip === 'boolean') { $scope.dragStrip = data.dragStrip; }
           }
           if (typeof data.layoutName === 'string') { $scope.loadedLayout = data.layoutName; }
-          $scope.drivers = data.drivers || [];
+          var rows = data.drivers || [];
+          $scope.everyDriver = rows;
+          $scope.drivers = rows.filter(function (d) { return !d.unlisted; });
+          $scope.notInField = rows.filter(function (d) { return !!d.unlisted; });
           // The broadcast board's buckets, cut once per broadcast.
           splitField($scope.drivers);
           // Note gains/losses before the table re-renders, so the arrows in the
@@ -2526,6 +2540,8 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           $scope.readyCheck = data.readyCheck !== false;
           $scope.myStatus = data.myStatus || null;
           $scope.myGridPos = data.myGridPos || null;
+          $scope.myJoinable = data.myJoinable === true;
+          $scope.myNoCar = data.myNoCar === true;
           if (data.phase !== 'grid'
               && ($scope.readyUi.confirm === 'countdown' || $scope.readyUi.confirm === 'race')) {
             $scope.readyUi.confirm = null;
@@ -4447,7 +4463,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // What is waiting on this driver: race grid, derby form-up or drag pass, one
       // banner. Used as !!readyPrompt() (a fresh object never settles a watch).
       $scope.readyPrompt = function () {
-        if (!$scope.readyCheck) { return null; }
+        // Called with the ready check off is an admin's Add: still a Ready to press.
+        var called = $scope.phase === 'grid' && $scope.myStatus === 'called';
+        if (!$scope.readyCheck && !called) { return null; }
         if ($scope.phase === 'grid'
             && ($scope.myStatus === 'called' || $scope.myStatus === 'gridded')) {
           return { mode: 'race', ready: $scope.myStatus === 'gridded',
@@ -4488,6 +4506,19 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       $scope.readyDriver = function (row) {
         if (row) { bngApi.engineLua('raceManager.readyDriver(' + row.id + ')'); }
+      };
+      // JOIN: the grid formed without this driver (no car then) and they are in
+      // one now. Nothing else puts them in: not spawning, not waiting.
+      $scope.joinPress = function () {
+        bngApi.engineLua('raceManager.joinField()');
+      };
+      // Admin: put a left-off driver with a car on the back of the grid.
+      $scope.placeDriver = function (row) {
+        if (row) { bngApi.engineLua('raceManager.placeDriver(' + row.id + ')'); }
+      };
+      // Admin: in the field with or without a car, until they leave (Add), or not.
+      $scope.addDriver = function (row, on) {
+        if (row) { bngApi.engineLua('raceManager.addDriver(' + row.id + ',' + (on !== false) + ')'); }
       };
       $scope.readyAll = function () {
         bngApi.engineLua('raceManager.readyAll()');
