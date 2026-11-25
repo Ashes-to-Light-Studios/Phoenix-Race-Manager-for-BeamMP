@@ -210,7 +210,7 @@ local SESSION_KEYS = {
   'clock', 'clockText', 'timeLimit', 'timeLeft', 'timeLeftText', 'clockStopped',
   'flag', 'flagText', 'caution', 'cautionPending', 'cautionLaps', 'pacing',
   'restartPending', 'greenReady', 'finalLap', 'raceExpired', 'finishCloseIn',
-  'countdown', 'jokerEnabled', 'heat', 'fastestLap', 'entrants', 'spectators',
+  'countdown', 'jokerEnabled', 'pitStopsRequired', 'heat', 'fastestLap', 'entrants', 'spectators',
   'gridSource',
 }
 local DRIVER_KEYS = {
@@ -220,7 +220,7 @@ local DRIVER_KEYS = {
   'lap', 'lapText', 'lapsLed', 'lastLap', 'lastLapText',
   'bestLap', 'bestLapText', 'qualiBest', 'qualiBestText', 'fastest',
   'gap', 'gapText', 'interval', 'intervalText', 'lapsDown',
-  'jokerTaken', 'jokerLap', 'jokerText', 'pitStops',
+  'jokerTaken', 'jokerLap', 'jokerText', 'pitStops', 'pitStopsCounted', 'pitStopsText',
   'finishTime', 'finishText', 'penalty', 'blackFlag', 'resets',
   'number', 'team', 'teamName', 'teamShort', 'teamColor', 'teamLogo',
   'onCamera',
@@ -373,7 +373,7 @@ local function offlineSession()
   s.pointToPoint, s.caution, s.cautionPending, s.pacing = false, false, false, false
   s.restartPending, s.greenReady, s.finalLap, s.raceExpired = false, false, false, false
   s.clockStopped, s.jokerEnabled = false, false
-  s.cautionLaps, s.entrants, s.spectators = 0, 0, 0
+  s.cautionLaps, s.entrants, s.spectators, s.pitStopsRequired = 0, 0, 0, 0
   return s
 end
 
@@ -469,6 +469,11 @@ local function buildModel(data, teams, cameraPid)
     end
   end
 
+  -- Mandatory pit stops in force (the server's pitStopRule.active: the race's
+  -- own once under way, 0 in qualifying, with no stalls or no rule).
+  local pitRule = type(data.pitStopRule) == 'table' and data.pitStopRule or {}
+  local pitsRequired = quali and 0 or math.max(math.floor(num(pitRule.active) or 0), 0)
+
   -- Qualifying gaps are between best laps, to the first car still out there
   -- with a time (app.js bcGapLabel).
   local qualiLeader
@@ -545,9 +550,19 @@ local function buildModel(data, teams, cameraPid)
     elseif d.jokerTaken > 1 then d.jokerText = '×' .. istr(d.jokerTaken) .. '!'
     else d.jokerText = 'L' .. (d.jokerLap and istr(d.jokerLap) or '?') end
     d.pitStops = num(src.pitStops) or 0
+    -- The stops that count toward the mandatory ones (one per lap), and "1/2"
+    -- under that rule, as the timing table says it; else the stops made.
+    d.pitStopsCounted = num(src.pitCounted) or 0
+    if pitsRequired > 0 then
+      d.pitStopsText = istr(d.pitStopsCounted) .. '/' .. istr(pitsRequired)
+    else
+      d.pitStopsText = d.pitStops > 0 and istr(d.pitStops) or ''
+    end
     d.finishTime = num(src.finishTime)
     d.finishText = fmtLap(d.finishTime)
-    d.penalty = num(src.penaltySeconds) or 0
+    -- Every time penalty, in one figure: checkpoint skips and missed mandatory
+    -- pit stops add up, as they do in the classification.
+    d.penalty = (num(src.penaltySeconds) or 0) + (num(src.pitStopPenalty) or 0)
     -- A black flag out: the row carries its seconds, and 0 is still a flag.
     d.blackFlag = src.blackFlag ~= nil
     d.resets = num(src.resets) or 0
@@ -668,6 +683,7 @@ local function buildModel(data, teams, cameraPid)
 
   s.countdown = (phase == 'countdown') and S.countdown or nil
   s.jokerEnabled = data.jokerEnabled == true
+  s.pitStopsRequired = pitsRequired
   local heats = num(data.heatCount) or 0
   if heats > 0 then
     s.heat = keyedObject(HEAT_KEYS)
@@ -1006,6 +1022,9 @@ local function status()
       tower = base .. '/overlay?view=tower',
       grid = base .. '/overlay?view=grid',
       banner = base .. '/overlay?view=banner',
+      -- The banner as a ticker: three pages, the last stepping through the field.
+      bannerTicker = base .. '/overlay?view=banner&show=logo,flag,session,lap,time'
+        .. '|leader,margin,fastest|order',
       json = base .. '/live.json',
       drivers = base .. '/drivers.json',
       stream = base .. '/stream',
@@ -1226,7 +1245,9 @@ local function indexPage()
   local links = {
     { '/overlay?view=tower', 'Overlay: running order (tower)' },
     { '/overlay?view=grid', 'Overlay: starting grid' },
-    { '/overlay?view=banner', 'Overlay: session banner (lap, flag, clock)' },
+    { '/overlay?view=banner', 'Overlay: session banner (lap, flag, clock: or what you choose)' },
+    { '/overlay?view=banner&show=logo,flag,session,lap,time|leader,margin,fastest|order',
+      'Overlay: banner ticker (turns through pages, then the running order)' },
     { '/overlay?view=results', 'Overlay: results' },
     { '/overlay?view=ticker', 'Overlay: event ticker' },
     { '/live.json', 'live.json: everything' },
@@ -1243,7 +1264,8 @@ local function indexPage()
   }
   local items = {}
   for _, l in ipairs(links) do
-    items[#items + 1] = '<li><a href="' .. l[1] .. '">' .. l[2] .. '</a></li>'
+    -- An & in a link is written &amp; (the banner ticker's has two).
+    items[#items + 1] = '<li><a href="' .. l[1]:gsub('&', '&amp;') .. '">' .. l[2] .. '</a></li>'
   end
   return '<!doctype html><html><head><meta charset="utf-8"><title>PRM Broadcast feed</title>'
     .. '<style>body{font:15px/1.5 system-ui,sans-serif;margin:2em;max-width:44em}'

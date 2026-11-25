@@ -1451,7 +1451,7 @@ local RM_PROTOCOL = 2
 --   tools/deploy.py                      RELEASE_NAME
 --
 -- tests/wiring_test.lua fails if they disagree.
-local RM_BUILD = '0.30.0'
+local RM_BUILD = '0.30.1'
 
 -- The ghost roster on the wire: absolute END times on race.time, so a late
 -- client works out a shorter remainder, never a longer one.
@@ -2287,13 +2287,10 @@ local function buildResultsText(cupRound)
   end
   -- A classified car's Race Time cell: its time, or the laps it was down on
   -- the winner (a car home a lap down did not race the winner's distance).
-  -- A checkpoint-skip penalty is IN the time shown, and said beside it.
+  -- Every time penalty is IN the time shown, and said beside it as one total.
   local function finishCell(rec)
-    local pen, pit = rec.penaltySeconds or 0, rec.pitStopPenalty or 0
-    local notes = {}
-    if pen > 0 then notes[#notes + 1] = string.format('+%.1fs pen', pen) end
-    if pit > 0 then notes[#notes + 1] = string.format('+%.1fs pit', pit) end
-    local note = #notes > 0 and (' (' .. table.concat(notes, ', ') .. ')') or ''
+    local note = race.penaltyNote(rec)
+    note = note ~= '' and (' ' .. note) or ''
     local down = leaderLaps - lapsRun(rec)
     if down > 0 then return '+' .. down .. (down == 1 and ' lap' or ' laps') .. note end
     return fmtLap(progress.flagTime(rec)) .. note
@@ -2307,7 +2304,7 @@ local function buildResultsText(cupRound)
     if (rec.penaltySeconds or 0) > 0 or (rec.pitStopPenalty or 0) > 0 then timeW = 24 break end
   end
   for _, rec in ipairs(final) do
-    if (rec.penaltySeconds or 0) > 0 and (rec.pitStopPenalty or 0) > 0 then timeW = 36 break end
+    if (rec.penaltySeconds or 0) > 0 and (rec.pitStopPenalty or 0) > 0 then timeW = 38 break end
   end
   local function skipCell(rec)
     local parts = {}
@@ -5931,8 +5928,23 @@ function race.countRequiredStop(rec)
     rec.pitCounted, need, rec.pitCounted >= need and ': all required stops made' or ''))
 end
 
+-- Every time penalty on a car, as ONE figure: checkpoint skips and missed
+-- mandatory stops add up. The classification adds them (progress.flagTime);
+-- this is how the results file says it (discord.lua the same). '' with none, else
+-- "(+5.0s pen)", "(+30.0s pit)", or "(+35.0s pen incl. 30.0s pit)".
+function race.penaltyNote(rec)
+  local pen, pit = rec.penaltySeconds or 0, rec.pitStopPenalty or 0
+  if pen > 0 and pit > 0 then
+    return string.format('(+%.1fs pen incl. %.1fs pit)', pen + pit, pit)
+  end
+  if pen > 0 then return string.format('(+%.1fs pen)', pen) end
+  if pit > 0 then return string.format('(+%.1fs pit)', pit) end
+  return ''
+end
+
 -- A car took the flag (retireDriver). Short of the stops: time on now, before
--- its place is worked out, or marked for race.pitStopRuling.
+-- its place is worked out, or marked for race.pitStopRuling. On top of any
+-- checkpoint penalty already on the car, never instead of it.
 function race.pitStopsAtFlag(rec)
   local r = race.pitStopRun
   local need = r.required or 0
@@ -5942,10 +5954,15 @@ function race.pitStopsAtFlag(rec)
   local what = string.format('%d required pit stop%s not made', missing, missing == 1 and '' or 's')
   if r.missed == 'time' then
     rec.pitStopPenalty = missing * r.seconds
-    MP.SendChatMessage(rec.id, string.format('[RaceManager] %s: +%.1fs on your race time',
-      what, rec.pitStopPenalty))
-    race.tellRaceControl(string.format('[RaceManager] Race control: %s finished with %s: +%.1fs',
-      displayName(rec), what, rec.pitStopPenalty))
+    -- With other time penalties on the car too (checkpoint skips, a black
+    -- flag converted at the flag), the driver hears the total.
+    local pen = rec.penaltySeconds or 0
+    local all = pen > 0 and string.format(' (%.1fs of time penalties in all)',
+      pen + rec.pitStopPenalty) or ''
+    MP.SendChatMessage(rec.id, string.format('[RaceManager] %s: +%.1fs on your race time%s',
+      what, rec.pitStopPenalty, all))
+    race.tellRaceControl(string.format('[RaceManager] Race control: %s finished with %s: +%.1fs%s',
+      displayName(rec), what, rec.pitStopPenalty, all))
   else
     rec.pitStopsShort = true
     MP.SendChatMessage(rec.id, '[RaceManager] ' .. what .. ': disqualified at the flag')

@@ -133,6 +133,70 @@ function C.css(v)
   return assetOf('css')(v)
 end
 
+-- THE BANNER (?view=banner): what it shows, in order. Items by name, a comma
+-- between them; a `|` starts a new page, and the banner turns through the
+-- pages every bannerCycle seconds. logo, flag and sponsor are its frame: shown
+-- on every page wherever they are named. The overlay's BANNER_ITEMS is this
+-- list, and docs/REFERENCE.md describes each one.
+D.BANNER_ITEMS = {
+  'logo', 'flag', 'session', 'title', 'track', 'lap', 'togo', 'time', 'clock', 'left',
+  'countdown', 'fastest', 'leader', 'margin', 'order', 'onboard', 'heat', 'field',
+  'joker', 'pits', 'latest', 'sponsor',
+}
+D.BANNER_PAGES = 8
+local BANNER_SET = {}
+for _, k in ipairs(D.BANNER_ITEMS) do BANNER_SET[k] = true end
+
+-- "logo,flag,session,lap|order": known items only, spaces and empty pages
+-- dropped, at most BANNER_PAGES pages. A name it does not know refuses the
+-- whole value, so a typo is reported rather than quietly shown as nothing.
+function C.banner(v)
+  if type(v) ~= 'string' or #v > 200 then return nil end
+  v = (v:lower():gsub('%s', ''))
+  local pages = {}
+  for page in (v .. '|'):gmatch('([^|]*)|') do
+    local items = {}
+    for item in (page .. ','):gmatch('([^,]*),') do
+      if item ~= '' then
+        if not BANNER_SET[item] then return nil end
+        items[#items + 1] = item
+      end
+    end
+    if #items > 0 then pages[#pages + 1] = table.concat(items, ',') end
+  end
+  if #pages == 0 or #pages > D.BANNER_PAGES then return nil end
+  return table.concat(pages, '|')
+end
+
+-- THE TOWER'S COLUMNS (?view=tower), right of each driver's name, in order.
+-- Place, color bar, number, team logo and name are always there. The
+-- overlay's TOWER_COLUMNS is this list; docs/REFERENCE.md describes each.
+D.TOWER_COLUMNS = {
+  'gap', 'interval', 'last', 'best', 'lap', 'gained', 'led', 'pits', 'joker',
+  'resets', 'status', 'team', 'class', 'badges',
+}
+local COLUMN_SET = {}
+for _, k in ipairs(D.TOWER_COLUMNS) do COLUMN_SET[k] = true end
+
+-- "gap,last,best,badges": known names only, each once, at least one. A name
+-- it does not know refuses the whole value, as C.banner does.
+function C.columns(v)
+  if type(v) ~= 'string' or #v > 200 then return nil end
+  v = (v:lower():gsub('%s', ''))
+  local out, seen = {}, {}
+  for item in (v .. ','):gmatch('([^,]*),') do
+    if item ~= '' then
+      if not COLUMN_SET[item] then return nil end
+      if not seen[item] then
+        seen[item] = true
+        out[#out + 1] = item
+      end
+    end
+  end
+  if #out == 0 then return nil end
+  return table.concat(out, ',')
+end
+
 local function shortCode(k)
   if type(k) == 'string' and k:match('^[A-Z0-9][A-Z0-9][A-Z0-9]?[A-Z0-9]?$') then return k end
   return nil
@@ -178,10 +242,13 @@ D.SPEC = {
   { 'gained', C.bool, true },
   { 'flash', C.bool, true },
   { 'flagStripe', C.bool, true },
+  { 'towerColumns', C.columns, 'gap,badges' },
   { 'logo', C.image, '' },
   { 'sponsor', C.image, '' },
   { 'title', C.text(40), '' },
   { 'subtitle', C.text(60), '' },
+  { 'banner', C.banner, 'logo,flag,session,lap,time,countdown,fastest,sponsor' },
+  { 'bannerCycle', C.num(2, 60), 8 },
   { 'labels', group = {
     { 'leader', text24, 'LEADER' }, { 'lap', text24, 'LAP' }, { 'noTime', text24, 'NO TIME' },
     { 'race', text24, 'Race' }, { 'qualifying', text24, 'Qualifying' },
@@ -191,6 +258,19 @@ D.SPEC = {
     { 'session', text24, 'Session' }, { 'timeLeft', text24, 'Time left' },
     { 'time', text24, 'Time' }, { 'start', text24, 'Start' },
     { 'fastestLap', text24, 'Fastest lap' },
+    { 'track', text24, 'Track' }, { 'toGo', text24, 'To go' },
+    { 'margin', text24, 'Margin' }, { 'order', text24, 'Running order' },
+    { 'onBoard', text24, 'On board' }, { 'heat', text24, 'Heat' },
+    { 'field', text24, 'Field' }, { 'latest', text24, 'Latest' },
+    { 'jokers', text24, 'Jokers taken' }, { 'pits', text24, 'Pit stops' },
+    { 'pitsDone', text24, 'All stops made' },
+    { 'colGap', text24, 'Gap' }, { 'colInterval', text24, 'Int.' },
+    { 'colLast', text24, 'Last' }, { 'colBest', text24, 'Best' },
+    { 'colLap', text24, 'Lap' }, { 'colGained', text24, 'Gained' },
+    { 'colLed', text24, 'Led' }, { 'colPits', text24, 'Pits' },
+    { 'colJoker', text24, 'Joker' }, { 'colResets', text24, 'Resets' },
+    { 'colStatus', text24, 'Status' }, { 'colTeam', text24, 'Team' },
+    { 'colClass', text24, 'Class' },
     { 'waiting', C.text(60), 'Waiting for Phoenix Race Manager…' },
     { 'pit', text24, 'PIT' }, { 'fl', text24, 'FL' }, { 'joker', text24, 'J' },
   } },

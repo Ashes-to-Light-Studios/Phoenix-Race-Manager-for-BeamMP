@@ -326,17 +326,20 @@ function M.build.race(data)
       else
         time = host.fmtLap(flagTime(rec))
       end
-      -- Said as the results file says it.
-      local notes = {}
-      if (rec.penaltySeconds or 0) > 0 then
-        notes[#notes + 1] = string.format('+%.1fs pen', rec.penaltySeconds)
+      -- Said as the results file says it (race.penaltyNote): every time
+      -- penalty as one total, checkpoint skips and missed pit stops added up.
+      local pen, pit = rec.penaltySeconds or 0, rec.pitStopPenalty or 0
+      local note
+      if pen > 0 and pit > 0 then
+        note = string.format('(+%.1fs pen incl. %.1fs pit)', pen + pit, pit)
+      elseif pen > 0 then
+        note = string.format('(+%.1fs pen)', pen)
+      elseif pit > 0 then
+        note = string.format('(+%.1fs pit)', pit)
       end
-      if (rec.pitStopPenalty or 0) > 0 then
-        notes[#notes + 1] = string.format('+%.1fs pit', rec.pitStopPenalty)
-      end
-      if #notes > 0 then
-        time = time .. ' (' .. table.concat(notes, ', ') .. ')'
-        timeW = math.max(timeW, #notes == 2 and 34 or 22)
+      if note then
+        time = time .. ' ' .. note
+        timeW = math.max(timeW, #time)
       end
     else
       pos, time = 'DNF', 'DNF'

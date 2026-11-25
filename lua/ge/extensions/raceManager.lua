@@ -229,7 +229,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.30.0'
+local RM_BUILD = '0.30.1'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -5694,6 +5694,19 @@ function ghost.wouldWeld(vehId, veh)
   return weld
 end
 
+-- Is this player WATCHING rather than driving among the cars? Spectating by
+-- choice, out of the race (finished, retired, out of the derby), sitting out a
+-- running session (another heat, a mid-session arrival), or with no car at all.
+-- Then translucency tells them nothing: it means "you will pass through this
+-- car", and they either have no car or theirs is a ghost to everyone. It only
+-- hid the race (reported: spectating practice, the practisers were see-through).
+-- The LOOK only: collision is untouched, so every client still ghosts the same
+-- cars, and the cars fade again the moment they are back in the field.
+function ghost.watching()
+  return selfSpectating or session.spectatorLock ~= nil
+    or (isBystander and sessionRunning()) or session.myNoCar == true
+end
+
 -- Alpha mid-ghost: translucent, fading to solid over the last second. An
 -- occupancy block does not fade: a stuck car stays visibly a ghost.
 function ghost.alphaFor(vehId)
@@ -5701,6 +5714,8 @@ function ghost.alphaFor(vehId)
   -- collision is off, but alpha is a separate call. Decided only here.
   if vehId ~= nil and vehId == ghost.finishedOwn then return 1 end
   if vehId ~= nil and vehId == ghost.practiceOwn then return 1 end
+  -- Nor is anyone's while we are only watching (ghost.watching).
+  if ghost.watching() then return 1 end
   -- 'bystander' only ever sits on our own rig.
   local set = vehId ~= nil and ghost.veh[vehId] or nil
   if set and set.bystander then return 1 end
@@ -6164,6 +6179,16 @@ local function ghostUpdate(dt)
   -- The server flags a mid-session arrival instead of entering them; their car
   -- is ghosted for as long as the flag lasts (cleared when the next grid forms).
   if isBystander ~= ghost.bystander then ghost.syncBystander() end
+  -- Starting or stopping watching redraws every ghost at once: solid while we
+  -- watch, faded again once we drive. alphaFor decides; fade skips no-ops.
+  local watching = ghost.watching()
+  if watching ~= ghost.watchingWas then
+    ghost.watchingWas = watching
+    for vehId in pairs(ghost.applied) do
+      local got, veh = pcall(getObjectByID, vehId)
+      if got and veh then ghost.fade(vehId, veh, ghost.alphaFor(vehId)) end
+    end
+  end
   -- Said when the session RUNS, not when the ghost goes on: forming a grid
   -- calls everyone, and a called car is a ghost until Ready.
   local sayOut = isBystander and sessionRunning()

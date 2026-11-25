@@ -6,6 +6,58 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## 0.30.1 - Banner ticker and tower columns
+
+#### Added
+
+- **Choose what the broadcast banner shows, and let it turn like a ticker.**
+  `?view=banner` can show any of twenty-two items in the order you name them:
+  session, track, lap, laps to go, clock, time left, countdown, fastest lap,
+  leader, the leader's margin, the running order, the driver on camera, heat,
+  field size, jokers taken (`5/8`), pit stops (or, with stops required, how
+  many cars have made them all), what just happened, your title, logo, flag
+  and sponsor. A `|` starts a new page, and the banner turns through its pages
+  every few seconds; the running order steps through the field five drivers at
+  a time, each with the tower's badges (fastest lap, joker, pit, penalty). Set it in
+  the style editor's new **Banner** card (click the items, preview live), or per
+  browser source with `&show=`, `&cycle=` and `&per=`. The Feed panel has a
+  ready-made **banner ticker** link. As shipped, the banner looks as it did. See
+  [The banner](docs/REFERENCE.md#the-banner).
+
+- **Choose the overlay tower's columns.** Right of each driver's name, any of:
+  gap, interval to the car ahead, last lap, best lap, the driver's lap, places
+  gained, laps led, pit stops, the joker lap, resets, status, team, class and
+  the badges, in the order you name them. Their names show above them, and
+  every column lines up down the tower. Set it in the style editor's new
+  **Tower columns** card, or per browser source with `&cols=`, for example
+  `?view=tower&cols=gap,last,best,pits,badges`. As shipped, the tower looks as
+  it did. See [Tower columns](docs/REFERENCE.md#tower-columns).
+- **Mandatory pit stops on the broadcast.** With stops required, every car on
+  the overlay's tower carries `PIT 1/2`, outlined until all its stops are made,
+  as in the timing table. The feed has the number required
+  (`pitStopsRequired`) and each car's counted stops (`pitStopsCounted`,
+  `pitStopsText`). See [The data](docs/REFERENCE.md#the-data).
+
+#### Changed
+
+- **A missed pit stop's penalty adds to the checkpoint penalties.** The race
+  time already counted both, but each place showed them apart. Now the driver
+  is told the total at the flag, the timing table has one penalty badge with
+  the total (hover it for each part), the results file and the Discord post say
+  `(+35.0s pen incl. 30.0s pit)`, and the broadcast feed's `penalty` (and the
+  overlay's badge) includes the pit stop seconds. See
+  [Mandatory pit stops](docs/REFERENCE.md#mandatory-pit-stops).
+
+#### Fixed
+
+- **Spectators saw ghosted cars see-through.** Spectating open practice, every
+  driver practising ghosted drove past translucent, and so did any car ghosted
+  after a reset, in ghost qualifying or after the flag. While you spectate, are
+  out of the race, sit out a session or have no car, ghosts are now drawn solid
+  on your screen. They are still ghosts in the physics, and fade again as soon
+  as you are back in the field. See
+  [Broadcast board](docs/REFERENCE.md#broadcast-board-spectators).
+
 ## 0.30.0 - Black flags, pit stops and rulesets
 
 #### Added
