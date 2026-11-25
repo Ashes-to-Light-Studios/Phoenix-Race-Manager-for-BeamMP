@@ -2410,9 +2410,9 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           var prevPhase = $scope.phase;
           $scope.phase = data.phase || 'waiting';
           if (prevPhase !== $scope.phase) { menuSessionEdge(); }
-          // Lua keeps no preferences, so it hears the sound and pillar settings
+          // Lua keeps no preferences, so it hears the sound and gate settings
           // once a server is talking to this panel, in case it loaded after the panel.
-          if (!soundSent) { soundSent = true; pushSound(); pushPoles(); }
+          if (!soundSent) { soundSent = true; pushSound(); pushGates(); }
           $scope.flag = (data.flag === 'yellow' || data.flag === 'red') ? data.flag : 'green';
           // Read here, on the broadcast that arrives on a clock (the route push
           // only fires at gates).
@@ -6547,19 +6547,41 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       };
       pushSound();
 
-      // CHECKPOINT PILLARS, this player's own: off hides the armed and next
-      // gate's poles, never the joker, pit lane or markers. Remembered here.
-      $scope.polesOn = loadPref('poles', true) !== false;
-      function pushPoles() {
-        bngApi.engineLua('if raceManager and raceManager.setShowPoles then '
-          + 'raceManager.setShowPoles(' + ($scope.polesOn ? 'true' : 'false') + ') end');
+      // GATES THIS PLAYER SEES, each on its own: checkpoint pillars, the pit
+      // lane, the joker gate. Drawing only, never the race. Remembered here;
+      // 'poles' keeps its old key so an earlier choice carries over.
+      $scope.gateKinds = [
+        { key: 'poles', pref: 'poles',      label: 'Checkpoints', tip: 'Armed and next checkpoint pillars' },
+        { key: 'pit',   pref: 'pitGates',   label: 'Pit lane',    tip: 'The Pit In sign. Stalls still show near your car.' },
+        { key: 'joker', pref: 'jokerGates', label: 'Joker gate',  tip: 'The joker route gate' }
+      ];
+      $scope.gatesShown = {};
+      $scope.gateKinds.forEach(function (k) {
+        $scope.gatesShown[k.key] = loadPref(k.pref, true) !== false;
+      });
+      function pushGates() {
+        var g = $scope.gatesShown;
+        bngApi.engineLua('if raceManager and raceManager.setShowJokerGates then '
+          + 'raceManager.setShowPoles(' + (g.poles ? 'true' : 'false') + ') '
+          + 'raceManager.setShowPitGates(' + (g.pit ? 'true' : 'false') + ') '
+          + 'raceManager.setShowJokerGates(' + (g.joker ? 'true' : 'false') + ') end');
       }
-      $scope.togglePoles = function () {
-        $scope.polesOn = !$scope.polesOn;
-        savePref('poles', $scope.polesOn);
-        pushPoles();
+      $scope.toggleGate = function (k) {
+        $scope.gatesShown[k.key] = !$scope.gatesShown[k.key];
+        savePref(k.pref, $scope.gatesShown[k.key]);
+        pushGates();
       };
-      pushPoles();
+      function gatesHidden() {
+        return $scope.gateKinds.filter(function (k) { return !$scope.gatesShown[k.key]; })
+          .map(function (k) { return k.label.toLowerCase(); });
+      }
+      $scope.gatesAllShown = function () { return gatesHidden().length === 0; };
+      $scope.gatesTitle = function () {
+        var off = gatesHidden();
+        return off.length ? 'Hidden for you: ' + off.join(', ') + '. Click to choose.'
+                          : 'Gates you see. Click to hide some for you.';
+      };
+      pushGates();
 
       // ------------------------------------------------------------------
       // Collapsing the HUD

@@ -688,8 +688,8 @@ local function drawDriverGate(derbyLive)
   -- still labels everything. ALL of a checkpoint's gates are drawn: a branch
   -- gate is the driver's choice.
   --
-  -- The player's pillar switch hides the armed and next gates and nothing
-  -- below: the joker, the pit lane and the markers each tell a driver what to do.
+  -- The player's gate switches each hide one group below and nothing else:
+  -- checkpoints (edit.poles), the joker, the pit lane. Markers have none.
   if edit.poles ~= false then
     local a = session.armedWp
     if a < 1 or a > n then a = 1 end
@@ -713,7 +713,7 @@ local function drawDriverGate(derbyLive)
   end
 
   -- The joker and the pit lane, in the same style.
-  if session.jokerEnabled and #track.jokerRoute > 0 then
+  if edit.jokerGates ~= false and session.jokerEnabled and #track.jokerRoute > 0 then
     local j = session.jokerArmed
     if j < 1 or j > #track.jokerRoute then j = 1 end
     local wp = track.jokerRoute[j]
@@ -736,8 +736,12 @@ local function drawDriverGate(derbyLive)
   -- within TUNE.PIT_DRAW_DIST of the car is drawn: the whole lane near the
   -- pits, nothing on the far side of the track. The entry gate's big P is a
   -- sign for where the lane is, so it is drawn all race.
-  for _, wp in ipairs(track.pitEntry) do
-    drawPoleGate(wp, p.pit, nil, p.pitFill, 'pit')
+  -- The player's pit switch hides that sign only: stalls and PIT OUT keep the
+  -- distance rule, so a driver in the lane always sees them.
+  if edit.pitGates ~= false then
+    for _, wp in ipairs(track.pitEntry) do
+      drawPoleGate(wp, p.pit, nil, p.pitFill, 'pit')
+    end
   end
   if #track.pitRoute > 0 or #track.pitExit > 0 then
     local _, ppos = sampledVehicle()

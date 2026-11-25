@@ -87,6 +87,15 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
   200 m, like the stalls. Layouts that have them keep them, and layouts without
   them lose nothing.
 
+- **Hide the Pit In sign and the joker gate too.** The pillar button beside
+  🔊 now opens a small menu with three ticks: **Checkpoints**, **Pit lane**
+  (the Pit In sign) and **Joker gate**. Each is on your screen only and
+  remembered; a choice to hide pillars from before carries over. The pit
+  stalls and PIT OUT still show whenever your car is near them, so you can
+  always find your stop. Hidden gates still count: laps, pit stops and the
+  joker work as before. See
+  [Seeing the checkpoints](docs/REFERENCE.md#seeing-the-checkpoints).
+
 - **No car, no grid.** A player with no car spawned is no longer put in the
   field. When a grid forms (race or qualifying), a heat draw is made, a derby
   forms up or a drag ladder is drawn, they are left off, told why, and the

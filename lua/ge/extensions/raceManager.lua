@@ -402,10 +402,13 @@ local edit = {
   target = 'main',
   -- Draw the gates at all (Hide/Show): this client's view, not the race.
   visualize = true,
-  -- The player's own pillar switch: the armed and next checkpoint's poles only.
-  -- Separate from visualize, so hiding them to race never blanks the editor.
-  -- The app holds the preference; Lua keeps none.
-  poles = true,
+  -- The player's own gate switches: checkpoint poles (armed and next), the Pit
+  -- In sign (never the stalls) and the joker gate, each on its own. Separate
+  -- from visualize, so hiding them to race never blanks the editor. The app
+  -- holds the preferences; Lua keeps none.
+  poles      = true,
+  pitGates   = true,
+  jokerGates = true,
   -- Fingerprint of the buffer as the server last handed it over. nil until a
   -- layout is applied, which keeps late joiners and drivers on the plain path.
   stamp   = nil,
@@ -8380,9 +8383,16 @@ function M.editorToggleVisualize()
   pushRouteState()
 end
 
--- Drawing only: a hidden gate still arms, scores and catches a skip.
+-- Drawing only: a hidden gate still arms, scores and catches a skip. Anything
+-- but false or 'false' is on, so a missing preference never hides a gate.
 function M.setShowPoles(on)
   edit.poles = on ~= false and on ~= 'false'
+end
+function M.setShowPitGates(on)
+  edit.pitGates = on ~= false and on ~= 'false'
+end
+function M.setShowJokerGates(on)
+  edit.jokerGates = on ~= false and on ~= 'false'
 end
 
 -- ---------------------------------------------------------------------------
