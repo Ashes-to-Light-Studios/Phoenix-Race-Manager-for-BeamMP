@@ -9,8 +9,11 @@
 
   Views, by query string:
     ?view=tower    running order (default)     &rows=N  &gap=leader|interval
+                   &cols=gap,last,best,pits,badges  (the columns, in order)
     ?view=grid     the starting grid
-    ?view=banner   one line: flag, lap or clock, fastest lap
+    ?view=banner   one line: flag, lap or clock, fastest lap; or what you choose
+                   &show=session,lap,time|leader,margin|order  (`|` = a new page)
+                   &cycle=8 (seconds a page)  &per=5 (drivers a page of the order)
     ?view=results  the classification
     ?view=ticker   what just happened (laps, the joker, pit stops, flags)
   And for any view: &class=GT3 (one class), &scale=1.5, &theme=light,
@@ -33,6 +36,9 @@
   rows have data-pos, data-class and data-team (the short code); the parts
   are .panel .brand .head .flag .title .meta .rows .row .pos .bar .carno .tlogo
   .name .gap .badges .badge .slot .banner .results .toast .sponsor.
+  The banner's root has data-page, each of its cells data-item (lap, order...),
+  and the turning part is .page. The tower's columns are .col with data-col
+  (gap, last...), and their names are in .colheads.
 -->
 <html lang="en">
 <head>
@@ -165,15 +171,32 @@
     flex: 1; padding: 0 0.55em; font-weight: var(--w); white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; min-width: 6em; max-width: var(--name-w); text-transform: var(--case);
   }
-  .gap { width: 5.2em; text-align: right; padding-right: 0.55em; color: var(--muted); font-weight: var(--w); font-size: 0.9em; white-space: nowrap; }
+  /* The tower's columns: right of the name, pushed to the panel's right edge
+     (margin-left: auto on the first), and made one width down the tower once
+     drawn (alignColumns). */
+  .col { flex: none; box-sizing: border-box; text-align: right; padding-right: 0.55em; color: var(--muted); font-weight: var(--w); font-size: 0.9em; white-space: nowrap; }
+  .col.first { margin-left: auto; }
+  .gap, .c-interval { width: 5.75em; }
+  .c-last, .c-best { min-width: 4.9em; }
+  .c-lap, .c-class { min-width: 3.3em; }
+  .c-gained, .c-led, .c-pits, .c-joker, .c-resets { min-width: 2.6em; }
+  .c-team { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+  .c-best.fast { color: var(--fastest); }
+  .c-gained.gain { color: var(--gain); }
+  .c-gained.loss { color: var(--loss); }
   .row:first-child .gap { color: var(--fg); }
   .badges { display: flex; gap: 0.25em; padding-right: 0.45em; flex: none; min-width: 1.6em; justify-content: flex-end; }
+  .col.badges { font-size: 1em; color: inherit; }
+  .colheads { display: flex; align-items: flex-end; background: var(--bg); padding: 0.2em 0 0.15em; }
+  .colheads .col span { font-size: 0.72em; letter-spacing: 0.08em; text-transform: uppercase; }
   .badge {
     font-size: 0.68em; font-weight: var(--w-strong); padding: 0.08em 0.35em; border-radius: calc(var(--radius) * 0.6);
     background: var(--line); color: var(--fg); white-space: nowrap;
   }
   .badge.joker { background: var(--accent); color: var(--on-accent); }
   .badge.pit { background: var(--pit); color: var(--on-pit); }
+  /* Mandatory stops still owed: PIT 0/2 in outline, filled once all are made. */
+  .badge.pit.owed { background: transparent; color: var(--pit); box-shadow: inset 0 0 0 1px var(--pit); }
   .badge.fast { background: var(--fastest); color: var(--on-fastest); }
   .badge.out { background: var(--flag-red); color: var(--on-red); }
   .badge.black { background: #000000; color: #ffffff; box-shadow: inset 0 0 0 1px #ffffff; }
@@ -195,7 +218,17 @@
 
   /* Banner */
   .banner { display: inline-flex; align-items: stretch; background: var(--bg); border-radius: var(--radius); overflow: hidden; }
-  .banner > div { padding: 0.45em 0.8em; display: flex; flex-direction: column; justify-content: center; white-space: nowrap; }
+  .banner > div, .banner .page > div { padding: 0.45em 0.8em; display: flex; flex-direction: column; justify-content: center; white-space: nowrap; }
+  .banner > .page { padding: 0; flex-direction: row; justify-content: flex-start; }
+  .banner .page.turn { animation: bturn 0.35s ease-out both; }
+  @keyframes bturn { from { opacity: 0; transform: translateY(0.4em); } }
+  .banner .who, .banner .ent { display: inline-flex; align-items: center; gap: 0.35em; }
+  .banner .who .carno, .banner .who .tlogo, .banner .ent .carno, .banner .ent .tlogo { margin-left: 0; }
+  .banner .nm { text-transform: var(--case); }
+  .banner .ents { display: flex; gap: 1em; }
+  .banner .ent .p, .banner .who .p { color: var(--accent); }
+  .banner .ent .g { color: var(--muted); font-weight: var(--w); font-size: 0.8em; }
+  .banner .ent .badges { padding: 0; min-width: 0; }
   .banner .flag { padding: 0; width: 0.5em; }
   .banner .k { font-size: 0.62em; color: var(--muted); font-weight: var(--w); letter-spacing: 0.1em; text-transform: uppercase; }
   .banner .v { font-weight: var(--w-strong); font-size: 1.1em; }
@@ -254,6 +287,15 @@
   // Another PC's feed: an origin only (scheme, host, port), nothing else.
   var SRC = (q.get('src') || '').replace(/\/+$/, '');
   if (SRC && !/^https?:\/\/[a-z0-9.\-\[\]:]+$/i.test(SRC)) { SRC = ''; }
+  // The banner: what it shows (else the style's `banner`), the seconds a page
+  // (else the style's `bannerCycle`; 0 puts every page on one line), and the
+  // drivers a page of the running order.
+  // The tower's columns (else the style's `towerColumns`).
+  var COLS = q.get('cols');
+  var SHOW = q.get('show');
+  var URL_CYCLE = parseFloat(q.get('cycle'));
+  if (!(URL_CYCLE === 0 || (URL_CYCLE >= 1 && URL_CYCLE <= 600))) { URL_CYCLE = NaN; }
+  var PER = Math.max(1, Math.min(20, parseInt(q.get('per'), 10) || 5));
   var TICKER_HOLD = Math.max(2, parseFloat(q.get('hold')) || 8) * 1000;
   var TICKER_MAX = Math.max(1, Math.min(10, parseInt(q.get('max'), 10) || 4));
   var URL_SCALE = parseFloat(q.get('scale'));
@@ -281,17 +323,66 @@
     font: 'system', weight: 'bold', uppercase: false,
     bar: 'team', nameFormat: 'full', numbers: 'chip', teamLogos: true,
     badges: true, gained: true, flash: true, flagStripe: true,
+    towerColumns: 'gap,badges',
     logo: '', sponsor: '', title: '', subtitle: '',
+    banner: 'logo,flag,session,lap,time,countdown,fastest,sponsor', bannerCycle: 8,
     labels: {
       leader: 'LEADER', lap: 'LAP', noTime: 'NO TIME', race: 'Race', qualifying: 'Qualifying',
       qualiResult: 'Qualifying result', result: 'Result', standings: 'Standings',
       startingGrid: 'Starting grid', provisionalGrid: 'Provisional grid', noGrid: 'No grid yet',
       session: 'Session', timeLeft: 'Time left', time: 'Time', start: 'Start',
-      fastestLap: 'Fastest lap', waiting: 'Waiting for Phoenix Race Manager…',
+      fastestLap: 'Fastest lap', track: 'Track', toGo: 'To go', margin: 'Margin',
+      order: 'Running order', onBoard: 'On board', heat: 'Heat', field: 'Field', latest: 'Latest',
+      jokers: 'Jokers taken', pits: 'Pit stops', pitsDone: 'All stops made',
+      colGap: 'Gap', colInterval: 'Int.', colLast: 'Last', colBest: 'Best', colLap: 'Lap',
+      colGained: 'Gained', colLed: 'Led', colPits: 'Pits', colJoker: 'Joker', colResets: 'Resets',
+      colStatus: 'Status', colTeam: 'Team', colClass: 'Class',
+      waiting: 'Waiting for Phoenix Race Manager…',
       pit: 'PIT', fl: 'FL', joker: 'J'
     },
     css: ''
   };
+  // The banner's items (feedstyle.lua D.BANNER_ITEMS). logo, flag and sponsor
+  // are its frame: on every page, wherever they are named.
+  var BANNER_ITEMS = ['logo', 'flag', 'session', 'title', 'track', 'lap', 'togo', 'time', 'clock',
+    'left', 'countdown', 'fastest', 'leader', 'margin', 'order', 'onboard', 'heat', 'field',
+    'joker', 'pits', 'latest', 'sponsor'];
+  var BANNER_FRAME = { logo: true, flag: true, sponsor: true };
+  // The tower's columns (feedstyle.lua D.TOWER_COLUMNS), and the word above each.
+  var TOWER_COLUMNS = ['gap', 'interval', 'last', 'best', 'lap', 'gained', 'led', 'pits', 'joker',
+    'resets', 'status', 'team', 'class', 'badges'];
+  var COLUMN_HEADS = { gap: 'colGap', interval: 'colInterval', last: 'colLast', best: 'colBest',
+    lap: 'colLap', gained: 'colGained', led: 'colLed', pits: 'colPits', joker: 'colJoker',
+    resets: 'colResets', status: 'colStatus', team: 'colTeam', 'class': 'colClass' };
+  // "gap,last,badges" -> ['gap', 'last', 'badges'], each once, or null. strict:
+  // a name it does not know makes it null (a saved style); else it is dropped.
+  function towerColumns(v, strict) {
+    if (typeof v !== 'string' || v.length > 200) { return null; }
+    var out = [], bad = false;
+    v.toLowerCase().replace(/\s+/g, '').split(',').forEach(function (it) {
+      if (!it) { return; }
+      if (TOWER_COLUMNS.indexOf(it) < 0) { bad = true; return; }
+      if (out.indexOf(it) < 0) { out.push(it); }
+    });
+    return (strict && bad) || !out.length ? null : out;
+  }
+  // "session,lap|order" -> [['session', 'lap'], ['order']], or null. strict: a
+  // name it does not know makes the whole value null, as the feed refuses it
+  // (a saved style); otherwise that name is dropped (a link's &show=).
+  function bannerPages(v, strict) {
+    if (typeof v !== 'string' || v.length > 200) { return null; }
+    var pages = [], bad = false;
+    v.toLowerCase().replace(/\s+/g, '').split('|').forEach(function (p) {
+      var items = p.split(',').filter(function (it) {
+        if (!it) { return false; }
+        if (BANNER_ITEMS.indexOf(it) < 0) { bad = true; return false; }
+        return true;
+      });
+      if (items.length) { pages.push(items); }
+    });
+    if ((strict && bad) || !pages.length || pages.length > 8) { return null; }
+    return pages;
+  }
   var FONTS = {
     system: '"Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
     condensed: '"Bahnschrift SemiCondensed", Bahnschrift, "Roboto Condensed", "Arial Narrow", sans-serif',
@@ -382,6 +473,9 @@
     o.sponsor = image(s.sponsor, rev);
     o.title = text(s.title, 40, d.title);
     o.subtitle = text(s.subtitle, 60, d.subtitle);
+    o.towerColumns = towerColumns(s.towerColumns, true) ? s.towerColumns : d.towerColumns;
+    o.banner = bannerPages(s.banner, true) ? s.banner : d.banner;
+    o.bannerCycle = num(s.bannerCycle, 2, 60, d.bannerCycle);
     var l = isObj(s.labels) ? s.labels : {};
     o.labels = {};
     for (k in d.labels) { o.labels[k] = text(l[k], k === 'waiting' ? 60 : 24, d.labels[k]); }
@@ -654,6 +748,28 @@
     return s.timeLeftText || s.clockText || s.phaseText;
   }
 
+  // A driver's badges: the fastest lap, the joker, pit stops, a penalty, a
+  // black flag. The tower's rows and the banner's running order.
+  function badges(d, s) {
+    var bs = el('div', 'badges');
+    if (d.fastest && L.fl) { bs.appendChild(el('span', 'badge fast', L.fl)); }
+    if (s.jokerEnabled && d.jokerTaken > 0 && L.joker) {
+      bs.appendChild(el('span', 'badge joker', d.jokerTaken > 1 ? L.joker + '×' + d.jokerTaken : L.joker));
+    }
+    // PIT, not P1: on a broadcast "P1" is a position. With stops required,
+    // every car carries PIT 1/2, outlined until all are made.
+    var need = s.pitStopsRequired > 0 ? s.pitStopsRequired : 0;
+    if (L.pit && need && !d.out) {
+      var made = d.pitStopsCounted || 0;
+      bs.appendChild(el('span', 'badge pit' + (made >= need ? '' : ' owed'), L.pit + ' ' + made + '/' + need));
+    } else if (L.pit && d.pitStops > 0) {
+      bs.appendChild(el('span', 'badge pit', d.pitStops > 1 ? L.pit + '×' + d.pitStops : L.pit));
+    }
+    if (d.penalty > 0) { bs.appendChild(el('span', 'badge out', '+' + d.penalty + 's')); }
+    if (d.blackFlag) { bs.appendChild(el('span', 'badge black', 'BLACK')); }
+    return bs;
+  }
+
   // --------------------------------------------------------------- the views
   var lastPos = {};      // id -> position, for the moved flash
   function tower(doc) {
@@ -662,6 +778,22 @@
     var title = s.kind === 'quali' ? L.qualifying : (s.phase === 'finished' ? L.result : (s.layout || L.race));
     p.appendChild(header(title, sessionMeta(s), s.flag));
     if (s.flagText && s.flag !== 'green') { p.appendChild(el('div', 'flagtext ' + s.flag, s.flagText)); }
+    var cols = (COLS !== null && towerColumns(COLS, false)) || towerColumns(ST.towerColumns, true)
+      || towerColumns(DEFAULTS.towerColumns, true);
+    if (!ST.badges) { cols = cols.filter(function (c) { return c !== 'badges'; }); }
+    // Names above the columns once there is more than the plain gap to read.
+    var named = cols.some(function (c) { return c !== 'gap' && c !== 'badges'; });
+    if (named && cols.some(function (c) { return COLUMN_HEADS[c] && L[COLUMN_HEADS[c]]; })) {
+      var heads = el('div', 'colheads');
+      cols.forEach(function (c, ci) {
+        var hc = el('div', 'col c-' + c + (c === 'gap' ? ' gap' : '') + (ci === 0 ? ' first' : ''));
+        hc.setAttribute('data-col', c);
+        if (c === 'badges') { hc.classList.add('badges'); }
+        hc.appendChild(el('span', null, COLUMN_HEADS[c] ? L[COLUMN_HEADS[c]] : ''));
+        heads.appendChild(hc);
+      });
+      p.appendChild(heads);
+    }
     var rows = el('div', 'rows');
     var list = doc.drivers.filter(inClass).slice(0, ROWS);
     list.forEach(function (d, i) {
@@ -682,29 +814,60 @@
       }
       identity(r, d);
       r.appendChild(el('div', 'name', nameOf(d.name)));
-      var gap;
-      if (d.out) { gap = d.statusText; }
-      else if (s.kind === 'quali') { gap = (i === 0 || !d.gapText) ? (d.bestLapText || L.noTime) : d.gapText; }
-      else if (i === 0) { gap = d.status === 'finished' ? d.finishText : (s.phase === 'finished' ? d.finishText : L.leader); }
-      else { gap = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText || ''; }
-      r.appendChild(el('div', 'gap', gap));
-      if (ST.badges) {
-        var bs = el('div', 'badges');
-        if (d.fastest && L.fl) { bs.appendChild(el('span', 'badge fast', L.fl)); }
-        if (s.jokerEnabled && d.jokerTaken > 0 && L.joker) {
-          bs.appendChild(el('span', 'badge joker', d.jokerTaken > 1 ? L.joker + '×' + d.jokerTaken : L.joker));
-        }
-        // PIT, not P1: on a broadcast "P1" is a position.
-        if (d.pitStops > 0 && L.pit) { bs.appendChild(el('span', 'badge pit', d.pitStops > 1 ? L.pit + '×' + d.pitStops : L.pit)); }
-        if (d.penalty > 0) { bs.appendChild(el('span', 'badge out', '+' + d.penalty + 's')); }
-        if (d.blackFlag) { bs.appendChild(el('span', 'badge black', 'BLACK')); }
-        r.appendChild(bs);
-      }
+      cols.forEach(function (c, ci) {
+        var cell = c === 'badges' ? badges(d, s) : towerCell(c, d, i, s);
+        cell.classList.add('col', 'c-' + c);
+        if (ci === 0) { cell.classList.add('first'); }
+        cell.setAttribute('data-col', c);
+        r.appendChild(cell);
+      });
       rows.appendChild(r);
     });
     doc.drivers.forEach(function (d) { lastPos[d.id] = d.position; });
     p.appendChild(rows);
     return finish(p);
+  }
+
+  // One of the tower's columns for one driver (`i`: their row, 0 for the top).
+  function towerCell(c, d, i, s) {
+    var v = '', cls = '';
+    if (c === 'gap') {
+      cls = 'gap';
+      if (d.out) { v = d.statusText; }
+      else if (s.kind === 'quali') { v = (i === 0 || !d.gapText) ? (d.bestLapText || L.noTime) : d.gapText; }
+      else if (i === 0) { v = d.status === 'finished' ? d.finishText : (s.phase === 'finished' ? d.finishText : L.leader); }
+      else { v = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText || ''; }
+    } else if (c === 'interval') { v = (i === 0 || d.out) ? '' : d.intervalText; }
+    else if (c === 'last') { v = d.lastLapText; }
+    else if (c === 'best') { v = d.bestLapText; if (d.fastest) { cls = 'fast'; } }
+    else if (c === 'lap') { v = d.lapText; }
+    else if (c === 'gained') {
+      if (s.kind !== 'quali') { v = d.gainedText; cls = d.gained > 0 ? 'gain' : (d.gained < 0 ? 'loss' : ''); }
+    }
+    else if (c === 'led') { v = d.lapsLed > 0 ? String(d.lapsLed) : ''; }
+    else if (c === 'pits') { v = d.pitStopsText; }
+    else if (c === 'joker') { v = d.jokerText; }
+    else if (c === 'resets') { v = d.resets > 0 ? String(d.resets) : ''; }
+    // Blank while simply circulating: a column of "Racing" says nothing.
+    else if (c === 'status') { v = (d.status === 'racing' || d.status === 'qualifying') ? '' : d.statusText; }
+    else if (c === 'team') { v = d.teamName || ''; }
+    else if (c === 'class') { v = d['class'] || ''; }
+    return el('div', cls, v || '');
+  }
+
+  // One width per column down the tower: the widest cell's, so a badge or a
+  // team name in one row does not push that row's other columns out of line.
+  function alignColumns(root) {
+    var cells = root.querySelectorAll('.colheads .col, .rows .col');
+    var widest = {}, i, c, k, w;
+    for (i = 0; i < cells.length; i += 1) {
+      c = cells[i]; k = c.getAttribute('data-col'); w = c.getBoundingClientRect().width;
+      if (!(widest[k] >= w)) { widest[k] = w; }
+    }
+    for (i = 0; i < cells.length; i += 1) {
+      c = cells[i];
+      c.style.minWidth = Math.ceil(widest[c.getAttribute('data-col')]) + 'px';
+    }
   }
 
   function grid(doc) {
@@ -734,29 +897,223 @@
     return finish(p);
   }
 
+  // ------------------------------------------------------------- the banner
+  // What it shows, as pages: the link's &show= wins over the style's `banner`.
+  // The frame (logo, flag, sponsor) is taken out of the pages: it never turns.
+  // With no turning (&cycle=0) every page goes on the one line.
+  function bannerConfig() {
+    var pages = (SHOW !== null && bannerPages(SHOW, false)) || bannerPages(ST.banner, true)
+      || bannerPages(DEFAULTS.banner, true);
+    var frame = {};
+    pages = pages.map(function (p) {
+      return p.filter(function (it) {
+        if (BANNER_FRAME[it]) { frame[it] = true; return false; }
+        return true;
+      });
+    }).filter(function (p) { return p.length > 0; });
+    var cycle = isNaN(URL_CYCLE) ? ST.bannerCycle : URL_CYCLE;
+    if (!(cycle > 0) && pages.length > 1) {
+      var one = [];
+      pages.forEach(function (p) { p.forEach(function (it) { if (one.indexOf(it) < 0) { one.push(it); } }); });
+      pages = [one];
+    }
+    if (!pages.length) { pages = [[]]; }
+    return { pages: pages, frame: frame, cycle: cycle };
+  }
+
+  // Where the banner is: the page, how far through the running order, when it
+  // last turned. `more`: the page on screen has more of the order to show.
+  var bTurn = { key: '', page: 0, offset: 0, at: 0, turnedAt: -1e9, pages: 1, cycle: 0, more: false };
+
+  function bannerCell(parent, item, k, v, cls) {
+    if (v === null || v === undefined || v === '') { return false; }
+    var c = el('div', 'sep' + (cls ? ' ' + cls : ''));
+    c.setAttribute('data-item', item);
+    c.appendChild(el('span', 'k', k));
+    if (typeof v === 'object') { v.classList.add('v'); c.appendChild(v); }
+    else { c.appendChild(el('span', 'v', v)); }
+    parent.appendChild(c);
+    return true;
+  }
+  // The field still running, in this view's class: the order and the leader.
+  function running(doc) {
+    return doc.drivers.filter(function (d) { return inClass(d) && !d.out; });
+  }
+  // A driver as the banner names one: their number chip, logo and name.
+  function who(d, before) {
+    var w = el('span', 'who');
+    tag(w, d, null);
+    if (before) { w.appendChild(el('span', 'p', before)); }
+    identity(w, d);
+    w.appendChild(el('span', 'nm', nameOf(d.name)));
+    return w;
+  }
+  function lastNews(doc) {
+    var list = doc.events || [];
+    for (var i = list.length - 1; i >= 0; i -= 1) {
+      if (list[i] && list[i].text) { return list[i].text; }
+    }
+    return '';
+  }
+
+  // One page's cells. Returns how many it drew.
+  function bannerPage(parent, doc, items) {
+    var s = doc.session, n = 0, field = null;
+    function put(item, k, v, cls) { if (bannerCell(parent, item, k, v, cls)) { n += 1; } }
+    function fieldNow() { if (!field) { field = running(doc); } return field; }
+    bTurn.more = false;
+    items.forEach(function (it) {
+      if (it === 'session') {
+        put(it, s.kind === 'quali' ? L.qualifying : L.session, s.flagText && s.flag !== 'green' ? s.flagText : s.phaseText);
+      } else if (it === 'title') {
+        put(it, ST.subtitle, ST.title);
+      } else if (it === 'track') {
+        put(it, L.track, s.layout);
+      } else if (it === 'lap') {
+        if (s.kind !== 'quali' && s.lapText) { put(it, L.lap, s.lapText); }
+      } else if (it === 'togo') {
+        if (s.kind !== 'quali' && s.phase === 'racing' && typeof s.lapsToGo === 'number') { put(it, L.toGo, String(s.lapsToGo)); }
+      } else if (it === 'time') {
+        if (s.timeLeftText) { put(it, L.timeLeft, s.timeLeftText); } else { put(it, L.time, s.clockText); }
+      } else if (it === 'clock') {
+        put(it, L.time, s.clockText);
+      } else if (it === 'left') {
+        put(it, L.timeLeft, s.timeLeftText);
+      } else if (it === 'countdown') {
+        if (s.countdown) { put(it, L.start, String(s.countdown)); }
+      } else if (it === 'fastest') {
+        if (s.fastestLap) { put(it, L.fastestLap, nameOf(s.fastestLap.name) + '  ' + s.fastestLap.text, 'fast'); }
+      } else if (it === 'leader') {
+        var lead = fieldNow()[0];
+        if (lead) { put(it, L.leader, who(lead)); }
+      } else if (it === 'margin') {
+        var second = fieldNow()[1];
+        if (second && second.gapText) { put(it, L.margin, second.gapText); }
+      } else if (it === 'order') {
+        if (orderCell(parent, doc, fieldNow().slice(0, ROWS))) { n += 1; }
+      } else if (it === 'onboard') {
+        var cam = doc.camera;
+        if (cam && cam.name) { put(it, L.onBoard, who(cam, cam.posText || null)); }
+      } else if (it === 'heat') {
+        if (s.heat && s.heat.count) { put(it, L.heat, (s.heat.current || '?') + '/' + s.heat.count); }
+      } else if (it === 'field') {
+        if (s.entrants > 0) { put(it, L.field, String(s.entrants)); }
+      } else if (it === 'joker') {
+        // Of the cars still running: how many have taken the joker.
+        if (s.jokerEnabled && fieldNow().length) {
+          var took = fieldNow().filter(function (d) { return d.jokerTaken > 0; }).length;
+          put(it, L.jokers, took + '/' + fieldNow().length);
+        }
+      } else if (it === 'pits') {
+        if (s.kind !== 'quali') {
+          if (s.pitStopsRequired > 0) {
+            // Mandatory stops: how many of the cars still running have made all.
+            var done = fieldNow().filter(function (d) { return (d.pitStopsCounted || 0) >= s.pitStopsRequired; }).length;
+            if (fieldNow().length) { put(it, L.pitsDone, done + '/' + fieldNow().length); }
+          } else {
+            // Otherwise every stop the field has made, retirements' included.
+            var stops = 0;
+            doc.drivers.forEach(function (d) { if (inClass(d)) { stops += d.pitStops || 0; } });
+            if (stops > 0) { put(it, L.pits, String(stops)); }
+          }
+        }
+      } else if (it === 'latest') {
+        put(it, L.latest, lastNews(doc));
+      }
+    });
+    return n;
+  }
+
+  // The running order, PER drivers at a time from bTurn.offset: a turning
+  // banner steps through the field before it moves on to the next page.
+  function orderCell(parent, doc, list) {
+    if (!list.length) { return false; }
+    if (bTurn.offset >= list.length) { bTurn.offset = 0; }
+    var from = bTurn.offset, part = list.slice(from, from + PER), quali = doc.session.kind === 'quali';
+    var c = el('div', 'sep order');
+    c.setAttribute('data-item', 'order');
+    var range = list.length > PER ? (from + 1) + '–' + (from + part.length) : '';
+    c.appendChild(el('span', 'k', L.order && range ? L.order + ' ' + range : (L.order || range)));
+    var row = el('span', 'v ents');
+    part.forEach(function (d, i) {
+      var at = from + i;
+      var e = el('span', 'ent');
+      var pos = CLASS && d.classPos ? d.classPos : (d.position || at + 1);
+      tag(e, d, pos);
+      e.appendChild(el('span', 'p', pos));
+      identity(e, d);
+      e.appendChild(el('span', 'nm', nameOf(d.name)));
+      var gap;
+      if (quali) { gap = at === 0 ? d.bestLapText : d.gapText; }
+      else if (at === 0) { gap = d.status === 'finished' ? d.finishText : ''; }
+      else { gap = (GAP === 'interval' ? d.intervalText : d.gapText) || d.gapText; }
+      if (gap) { e.appendChild(el('span', 'g', gap)); }
+      if (ST.badges) {
+        var bs = badges(d, doc.session);
+        if (bs.firstChild) { e.appendChild(bs); }
+      }
+      row.appendChild(e);
+    });
+    c.appendChild(row);
+    parent.appendChild(c);
+    bTurn.more = from + PER < list.length;
+    return true;
+  }
+
   function banner(doc) {
     var s = doc.session;
+    var cfg = bannerConfig();
+    var key = cfg.pages.map(function (p) { return p.join(','); }).join('|');
+    if (key !== bTurn.key) { bTurn.key = key; bTurn.page = 0; bTurn.offset = 0; bTurn.at = Date.now(); }
+    bTurn.pages = cfg.pages.length;
+    bTurn.cycle = cfg.cycle;
+    if (bTurn.page >= cfg.pages.length) { bTurn.page = 0; bTurn.offset = 0; }
+
     var b = el('div', 'banner');
-    var logo = picture(ST.logo, null);
-    if (logo) { var lc = el('div', 'pic'); lc.appendChild(logo); b.appendChild(lc); }
-    if (ST.flagStripe) { b.appendChild(el('div', 'flag ' + (s.flag || 'none'))); }
-    function cell(k, v, cls) {
-      if (v === null || v === undefined || v === '') { return; }
-      var c = el('div', 'sep' + (cls ? ' ' + cls : ''));
-      c.appendChild(el('span', 'k', k));
-      c.appendChild(el('span', 'v', v));
-      b.appendChild(c);
+    if (cfg.frame.logo) {
+      var logo = picture(ST.logo, null);
+      if (logo) { var lc = el('div', 'pic'); lc.appendChild(logo); b.appendChild(lc); }
     }
-    cell(s.kind === 'quali' ? L.qualifying : L.session, s.flagText && s.flag !== 'green' ? s.flagText : s.phaseText);
-    if (s.kind !== 'quali' && s.lapText) { cell(L.lap, s.lapText); }
-    if (s.timeLeftText) { cell(L.timeLeft, s.timeLeftText); }
-    else if (s.clockText) { cell(L.time, s.clockText); }
-    if (s.countdown) { cell(L.start, s.countdown); }
-    if (s.fastestLap) { cell(L.fastestLap, nameOf(s.fastestLap.name) + '  ' + s.fastestLap.text, 'fast'); }
-    var sp = picture(ST.sponsor, null);
-    if (sp) { var sc = el('div', 'pic sep'); sc.appendChild(sp); b.appendChild(sc); }
+    if (cfg.frame.flag && ST.flagStripe) { b.appendChild(el('div', 'flag ' + (s.flag || 'none'))); }
+    // A page with nothing to say now (no camera, no order yet) is passed over
+    // for the next that has, rather than leaving an empty banner up.
+    var pg = null;
+    for (var tries = 0; tries < cfg.pages.length; tries += 1) {
+      pg = el('div', 'page');
+      if (bannerPage(pg, doc, cfg.pages[bTurn.page]) > 0 || cfg.pages.length === 1) { break; }
+      bTurn.page = (bTurn.page + 1) % cfg.pages.length;
+      bTurn.offset = 0;
+      bTurn.at = Date.now();
+    }
+    // The page that just turned slides in; a redraw mid-way carries on from
+    // where the slide had got to instead of starting it again.
+    var since = Date.now() - bTurn.turnedAt;
+    if (since < 350) { pg.classList.add('turn'); pg.style.animationDelay = (-since) + 'ms'; }
+    b.setAttribute('data-page', String(bTurn.page + 1));
+    b.appendChild(pg);
+    if (cfg.frame.sponsor) {
+      var sp = picture(ST.sponsor, null);
+      if (sp) { var sc = el('div', 'pic sep'); sc.appendChild(sp); b.appendChild(sc); }
+    }
     return b;
   }
+  // Turning: the next PER of the running order while there are more, else the
+  // next page. Nothing turns with one page and no order to step through.
+  setInterval(function () {
+    if (VIEW !== 'banner' || !lastDoc || !(bTurn.cycle > 0)) { return; }
+    var now = Date.now();
+    if (now - bTurn.at < bTurn.cycle * 1000) { return; }
+    bTurn.at = now;
+    if (bTurn.more) { bTurn.offset += PER; }
+    else {
+      var next = (bTurn.page + 1) % bTurn.pages;
+      if (next === bTurn.page && bTurn.offset === 0) { return; }
+      bTurn.page = next;
+      bTurn.offset = 0;
+    }
+    bTurn.turnedAt = now;
+    rerender();
+  }, 250);
 
   function results(doc) {
     var s = doc.session;
@@ -849,6 +1206,7 @@
       clear(viewEl);
       viewEl.appendChild(out);
     }
+    if (render === tower) { alignColumns(out); }
   }
   function rerender() { if (lastDoc) { draw(lastDoc); } }
   function show(doc) {
@@ -939,7 +1297,8 @@
         var cls = i < 4 ? 0 : 1;
         return { id: i + 1, name: p[0], number: p[1], team: i % 4, cls: cls, grid: i + 1,
           pace: 101.8 + cls * 3.2 + i * 0.12, dist: -i * 0.011, lapStart: 0, last: null, best: null,
-          quali: 100.9 + cls * 3.1 + i * 0.137, pits: 0, joker: 0 };
+          quali: 100.9 + cls * 3.1 + i * 0.137, pits: 0, joker: 0, jokerLap: null, led: 0,
+          resets: i === 5 ? 1 : 0 };
       });
       events = []; clock = 0; fastest = null; leaderId = 1; yellowUntil = -1;
     }
@@ -965,8 +1324,9 @@
             fastest = { id: c.id, name: c.name, time: t, text: fmt(t) };
             if (lap > 1) { add('fastest', c, 'Fastest lap: ' + c.name + ' ' + fmt(t)); }
           }
-          if (c.id === 2 && lap === 3) { c.joker = 1; add('joker', c, c.name + ' takes the joker on lap 3'); }
-          if (c.id === 6 && lap === 4) { c.joker = 1; add('joker', c, c.name + ' takes the joker on lap 4'); }
+          if (c.id === 2 && lap === 3) { c.joker = 1; c.jokerLap = 3; add('joker', c, c.name + ' takes the joker on lap 3'); }
+          if (c.id === 6 && lap === 4) { c.joker = 1; c.jokerLap = 4; add('joker', c, c.name + ' takes the joker on lap 4'); }
+          if (c.id === leaderId) { c.led += 1; }
           if ((c.id === 3 && lap === 5) || (c.id === 7 && lap === 6)) {
             c.pits += 1; c.pitNow = true; c.dist -= 0.2;
             add('pit', c, c.name + ' pits (stop ' + c.pits + ')');
@@ -1004,7 +1364,9 @@
           fastest: !!(fastest && fastest.id === c.id),
           gapText: i === 0 ? '' : (down >= 1 ? '+' + down + ' LAP' + (down > 1 ? 'S' : '') : '+' + (behind * c.pace).toFixed(3)),
           intervalText: i === 0 ? '' : '+' + (iv * c.pace).toFixed(3),
-          jokerTaken: c.joker, pitStops: c.pits, penalty: 0, finishText: '',
+          jokerTaken: c.joker, jokerText: c.joker ? 'L' + c.jokerLap : '', lapsLed: c.led, resets: c.resets,
+          pitStops: c.pits, pitStopsCounted: c.pits,
+          pitStopsText: c.pits > 0 ? String(c.pits) : '', penalty: 0, finishText: '',
           number: c.number, team: c.team + 1, teamName: team.name, teamShort: team.short,
           teamColor: team.color, teamLogo: team.logo
         };
@@ -1024,10 +1386,12 @@
           lap: lap, lapTarget: LAPS, lapText: lap + '/' + LAPS, lapsToGo: LAPS - lap,
           clockText: Math.floor(clock / 60) + ':' + ('0' + Math.floor(clock % 60)).slice(-2),
           timeLeftText: '', flag: yellow ? 'yellow' : 'green', flagText: yellow ? 'YELLOW FLAG' : '',
-          countdown: null, jokerEnabled: true, gridSource: 'quali',
+          countdown: null, jokerEnabled: true, pitStopsRequired: 0, gridSource: 'quali',
+          entrants: drivers.length, heat: null,
           fastestLap: fastest ? { id: fastest.id, name: fastest.name, time: fastest.time, text: fastest.text } : null
         },
-        drivers: drivers, grid: grid, events: events.slice()
+        // The camera rides with whoever is third: the banner's `onboard`.
+        drivers: drivers, grid: grid, events: events.slice(), camera: drivers[2] || null
       };
     }
     reset();

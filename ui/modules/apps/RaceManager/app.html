@@ -5683,8 +5683,8 @@
           <td class="rm-col-name" title="{{ driverName(row) }}{{ realName(row) ? ' (' + realName(row) + ')' : '' }}">{{ driverName(row) }}<span
               class="rm-ucpass" ng-if="row.ucPassed"
               title="Passed {{ row.ucPassed }} under caution and has not given the place back. The board keeps the frozen order until the green.">&#9888; owes a place</span><span
-              class="rm-ucpass rm-cp-pen" ng-if="row.penaltySeconds"
-              title="Checkpoint-skip penalty: added to the race time in the final classification, not to the order on the road.">{{ penaltyLabel(row) }}</span><span
+              class="rm-ucpass rm-cp-pen" ng-if="row.penaltySeconds || row.pitStopPenalty"
+              title="{{ penaltyTitle(row) }}">{{ penaltyLabel(row) }}</span><span
               class="rm-ucpass rm-cp-lift" ng-if="row.liftOwed"
               title="Owes a lift-off for a skipped checkpoint. Not served in time, or still owed at the flag, it becomes a time penalty.">LIFT</span><span
               class="rm-ucpass rm-cp-pen" ng-if="row.pitMissed"
@@ -5694,8 +5694,6 @@
               class="rm-ucpass" ng-if="pitStopsShown()"
               ng-class="pitStopsDone(row) ? 'rm-pit-done' : 'rm-cp-lift'"
               title="Mandatory pit stops made of those required. One counts per lap.">{{ pitStopsLabel(row) }}</span><span
-              class="rm-ucpass rm-cp-pen" ng-if="row.pitStopPenalty"
-              title="Mandatory pit stops not made: added to the race time in the final classification.">+{{ row.pitStopPenalty | number:1 }}s PIT</span><span
               class="rm-cp-warn" ng-if="cpWarnShown(row)"
               title="Checkpoint-skip warnings used">{{ cpWarnLabel(row) }}</span></td>
           <td class="rm-col-lap" ng-if="!pointToPoint" title="{{ (row.outLap && sessionKind === 'quali') ? 'Out lap: not timed, not counted' : (row.cpCleared ? row.cpCleared + ' checkpoint(s) cleared this lap' : '') }}">{{ lapLabel(row) }}</td>

@@ -141,6 +141,10 @@
   .stage.light { background: #e9edf3; }
   .stage.track { background: linear-gradient(135deg, #2b4a3a, #5b6b7a 60%, #8a7b5a); }
   textarea { width: 100%; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .chips.items button { font-family: Consolas, Menlo, monospace; }
+  .bnhint { color: var(--dim); font-size: 12px; }
+  .bnhint.bad { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -220,6 +224,16 @@
   </section>
 
   <section class="card">
+    <h2>Tower columns</h2>
+    <p class="hint">What <code>?view=tower</code> shows right of each driver's name, in order. Click a column to add it,
+      or type the names with commas between them. Place, number, team logo and name are always there. With more than
+      the gap, each column's name shows above it. A link's <code>&amp;cols=</code> wins over this, for a second tower.</p>
+    <div class="fields one">
+      <div class="field" data-key="towerColumns" data-type="columns"><span class="lbl">Columns</span></div>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Class colors</h2>
     <p class="hint">Used for the color bar and the number chip when a driver has no team color.</p>
     <div class="field wide" data-key="classColors" data-type="classmap"></div>
@@ -243,8 +257,20 @@
   </section>
 
   <section class="card">
+    <h2>Banner</h2>
+    <p class="hint">What <code>?view=banner</code> shows, left to right. Click an item to add it, or type the names
+      with commas between them. <strong>New page</strong> starts another: the banner turns through its pages, and
+      steps through the running order a few drivers at a time. The logo, the flag and the sponsor stay put on every
+      page. A link's <code>&amp;show=</code> wins over this, for a second banner that shows something else.</p>
+    <div class="fields one">
+      <div class="field" data-key="banner" data-type="banner"><span class="lbl">Items, a page at a time</span></div>
+      <div class="field" data-key="bannerCycle" data-type="range" data-min="2" data-max="60" data-step="1"><span class="lbl">Seconds a page, with more than one (a link's &amp;cycle= wins)</span></div>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Words</h2>
-    <p class="hint">Every word the overlay shows, for another language or your own style. Leave one empty to hide that badge.</p>
+    <p class="hint">Every word the overlay shows, for another language or your own style. Leave one empty to hide that badge, or that column's name.</p>
     <div class="fields">
       <div class="field" data-key="labels.leader" data-type="text" data-max="24"><span class="lbl">Leader's gap</span></div>
       <div class="field" data-key="labels.lap" data-type="text" data-max="24"><span class="lbl">Lap</span></div>
@@ -262,7 +288,31 @@
       <div class="field" data-key="labels.time" data-type="text" data-max="24"><span class="lbl">Banner: time</span></div>
       <div class="field" data-key="labels.start" data-type="text" data-max="24"><span class="lbl">Banner: start countdown</span></div>
       <div class="field" data-key="labels.fastestLap" data-type="text" data-max="24"><span class="lbl">Banner: fastest lap</span></div>
-      <div class="field" data-key="labels.pit" data-type="text" data-max="24"><span class="lbl">Pit badge</span></div>
+      <div class="field" data-key="labels.track" data-type="text" data-max="24"><span class="lbl">Banner: track</span></div>
+      <div class="field" data-key="labels.toGo" data-type="text" data-max="24"><span class="lbl">Banner: laps to go</span></div>
+      <div class="field" data-key="labels.margin" data-type="text" data-max="24"><span class="lbl">Banner: leader's margin</span></div>
+      <div class="field" data-key="labels.order" data-type="text" data-max="24"><span class="lbl">Banner: running order</span></div>
+      <div class="field" data-key="labels.onBoard" data-type="text" data-max="24"><span class="lbl">Banner: on board</span></div>
+      <div class="field" data-key="labels.heat" data-type="text" data-max="24"><span class="lbl">Banner: heat</span></div>
+      <div class="field" data-key="labels.field" data-type="text" data-max="24"><span class="lbl">Banner: drivers in the field</span></div>
+      <div class="field" data-key="labels.latest" data-type="text" data-max="24"><span class="lbl">Banner: what just happened</span></div>
+      <div class="field" data-key="labels.jokers" data-type="text" data-max="24"><span class="lbl">Banner: jokers taken</span></div>
+      <div class="field" data-key="labels.pits" data-type="text" data-max="24"><span class="lbl">Banner: pit stops made</span></div>
+      <div class="field" data-key="labels.pitsDone" data-type="text" data-max="24"><span class="lbl">Banner: all required stops made</span></div>
+      <div class="field" data-key="labels.colGap" data-type="text" data-max="24"><span class="lbl">Tower column: gap</span></div>
+      <div class="field" data-key="labels.colInterval" data-type="text" data-max="24"><span class="lbl">Tower column: interval</span></div>
+      <div class="field" data-key="labels.colLast" data-type="text" data-max="24"><span class="lbl">Tower column: last lap</span></div>
+      <div class="field" data-key="labels.colBest" data-type="text" data-max="24"><span class="lbl">Tower column: best lap</span></div>
+      <div class="field" data-key="labels.colLap" data-type="text" data-max="24"><span class="lbl">Tower column: lap</span></div>
+      <div class="field" data-key="labels.colGained" data-type="text" data-max="24"><span class="lbl">Tower column: places gained</span></div>
+      <div class="field" data-key="labels.colLed" data-type="text" data-max="24"><span class="lbl">Tower column: laps led</span></div>
+      <div class="field" data-key="labels.colPits" data-type="text" data-max="24"><span class="lbl">Tower column: pit stops</span></div>
+      <div class="field" data-key="labels.colJoker" data-type="text" data-max="24"><span class="lbl">Tower column: joker</span></div>
+      <div class="field" data-key="labels.colResets" data-type="text" data-max="24"><span class="lbl">Tower column: resets</span></div>
+      <div class="field" data-key="labels.colStatus" data-type="text" data-max="24"><span class="lbl">Tower column: status</span></div>
+      <div class="field" data-key="labels.colTeam" data-type="text" data-max="24"><span class="lbl">Tower column: team</span></div>
+      <div class="field" data-key="labels.colClass" data-type="text" data-max="24"><span class="lbl">Tower column: class</span></div>
+      <div class="field" data-key="labels.pit" data-type="text" data-max="24"><span class="lbl">Pit badge (PIT 1/2 with stops required)</span></div>
       <div class="field" data-key="labels.fl" data-type="text" data-max="24"><span class="lbl">Fastest lap badge</span></div>
       <div class="field" data-key="labels.joker" data-type="text" data-max="24"><span class="lbl">Joker badge</span></div>
       <div class="field wide" data-key="labels.waiting" data-type="text" data-max="60"><span class="lbl">While the game is not in a session</span></div>
@@ -343,13 +393,21 @@
     bar: 'team', classColors: {}, nameFormat: 'full', numbers: 'chip', teamLogos: true,
     teamLogoOverrides: {},
     badges: true, gained: true, flash: true, flagStripe: true,
+    towerColumns: 'gap,badges',
     logo: '', sponsor: '', title: '', subtitle: '',
+    banner: 'logo,flag,session,lap,time,countdown,fastest,sponsor', bannerCycle: 8,
     labels: {
       leader: 'LEADER', lap: 'LAP', noTime: 'NO TIME', race: 'Race', qualifying: 'Qualifying',
       qualiResult: 'Qualifying result', result: 'Result', standings: 'Standings',
       startingGrid: 'Starting grid', provisionalGrid: 'Provisional grid', noGrid: 'No grid yet',
       session: 'Session', timeLeft: 'Time left', time: 'Time', start: 'Start',
-      fastestLap: 'Fastest lap', waiting: 'Waiting for Phoenix Race Manager…',
+      fastestLap: 'Fastest lap', track: 'Track', toGo: 'To go', margin: 'Margin',
+      order: 'Running order', onBoard: 'On board', heat: 'Heat', field: 'Field', latest: 'Latest',
+      jokers: 'Jokers taken', pits: 'Pit stops', pitsDone: 'All stops made',
+      colGap: 'Gap', colInterval: 'Int.', colLast: 'Last', colBest: 'Best', colLap: 'Lap',
+      colGained: 'Gained', colLed: 'Led', colPits: 'Pits', colJoker: 'Joker', colResets: 'Resets',
+      colStatus: 'Status', colTeam: 'Team', colClass: 'Class',
+      waiting: 'Waiting for Phoenix Race Manager…',
       pit: 'PIT', fl: 'FL', joker: 'J'
     },
     css: ''
@@ -627,9 +685,144 @@
         f.value = v;
       };
     }
+    if (type === 'banner') { return bannerCtl(field, getV, setV); }
+    if (type === 'columns') { return columnsCtl(field, getV, setV); }
     if (type === 'classmap') { return classMap(field); }
     if (type === 'logomap') { return logoMap(field); }
     return function () {};
+  }
+
+  // ------------------------------------------------------------- the banner
+  // The banner's items (feedstyle.lua D.BANNER_ITEMS), each with what it shows.
+  var BANNER_ITEMS = [
+    ['logo', 'The league logo (always first)'], ['flag', 'The flag color stripe (after the logo)'],
+    ['session', 'The session and its phase, or the flag'], ['title', 'Your title, with the line under it'],
+    ['track', 'The layout\'s name'], ['lap', 'Lap 3/10'], ['togo', 'Laps to go'],
+    ['time', 'Time left, else the race clock'], ['clock', 'The race clock'], ['left', 'Time left'],
+    ['countdown', 'The start countdown'], ['fastest', 'The fastest lap: who, and the time'],
+    ['leader', 'The leader'], ['margin', 'The leader\'s margin over second'],
+    ['order', 'The running order, a few drivers at a time'], ['onboard', 'The driver the camera is on'],
+    ['heat', 'Heat 2/3'], ['field', 'Drivers in the session'],
+    ['joker', 'How many of the field have taken the joker: 5/8'],
+    ['pits', 'Pit stops made; with stops required, how many have made them all: 5/8'],
+    ['latest', 'What just happened'],
+    ['sponsor', 'The sponsor (always last)']
+  ];
+  var BANNER_NAMES = BANNER_ITEMS.map(function (x) { return x[0]; });
+  // The text as typed -> { value: what is saved, or '', why: what is wrong, pages }.
+  // The same rule the feed applies (C.banner): known names, at most 8 pages.
+  function bannerRead(raw) {
+    var pages = [], unknown = [];
+    String(raw || '').toLowerCase().replace(/\s+/g, '').split('|').forEach(function (p) {
+      var items = p.split(',').filter(function (it) {
+        if (!it) { return false; }
+        if (BANNER_NAMES.indexOf(it) < 0) { if (unknown.indexOf(it) < 0) { unknown.push(it); } return false; }
+        return true;
+      });
+      if (items.length) { pages.push(items.join(',')); }
+    });
+    var why = unknown.length ? 'Not an item: ' + unknown.join(', ')
+      : (!pages.length ? 'Name at least one item.' : (pages.length > 8 ? '8 pages at most.' : ''));
+    var value = why ? '' : pages.join('|');
+    if (value.length > 200) { why = 'Too long: 200 characters at most.'; value = ''; }
+    return { value: value, why: why, pages: pages.length };
+  }
+  // The tower's columns (feedstyle.lua D.TOWER_COLUMNS), each with what it shows.
+  var TOWER_COLUMNS = [
+    ['gap', 'The gap to the leader (or the car ahead with &gap=interval); LEADER on top'],
+    ['interval', 'The gap to the car ahead'], ['last', 'The last lap time'],
+    ['best', 'The best lap time (in the fastest-lap color for the fastest)'],
+    ['lap', 'The lap each driver is on: 3/10'], ['gained', 'Places gained since the start: +2, -1'],
+    ['led', 'Laps led'], ['pits', 'Pit stops made; 1/2 with stops required'],
+    ['joker', 'The joker lap: L4, or ×2! taken twice'], ['resets', 'Resets used'],
+    ['status', 'Finished, DNF, DSQ... (blank while racing)'], ['team', 'The team\'s name'],
+    ['class', 'The class'], ['badges', 'The badges: fastest lap, joker, pit, penalty, black flag']
+  ];
+  var COLUMN_NAMES = TOWER_COLUMNS.map(function (x) { return x[0]; });
+  // The tower's columns as typed -> { value, why }. As the feed's C.columns:
+  // known names, each once (a repeat is dropped), at least one, no pages.
+  function columnsRead(raw) {
+    var out = [], unknown = [];
+    String(raw || '').toLowerCase().replace(/\s+/g, '').split(/[,|]/).forEach(function (it) {
+      if (!it) { return; }
+      if (COLUMN_NAMES.indexOf(it) < 0) { if (unknown.indexOf(it) < 0) { unknown.push(it); } return; }
+      if (out.indexOf(it) < 0) { out.push(it); }
+    });
+    var why = unknown.length ? 'Not a column: ' + unknown.join(', ')
+      : (!out.length ? 'Name at least one column.' : (/\|/.test(String(raw)) ? 'The tower has no pages: use commas.' : ''));
+    return { value: why ? '' : out.join(','), why: why, count: out.length };
+  }
+
+  // A list of named things as a text field to type in, a chip per name that
+  // adds it at the end, and a line saying what it makes of it. `o`: items
+  // ([name, what]), read (text -> { value, why }), say (that -> a line),
+  // keeps (what to call the field's last good value), pages (offer New page),
+  // last (a name that stays at the end: a chip goes in before it).
+  function itemsCtl(field, getV, setV, o) {
+    var t = h('input', { type: 'text', maxlength: 200, spellcheck: 'false' });
+    var say = h('div', { cls: 'bnhint' });
+    function apply() {
+      var r = o.read(t.value);
+      t.classList.toggle('bad', !!r.why);
+      say.classList.toggle('bad', !!r.why);
+      if (r.why) { say.textContent = r.why + ' ' + o.keeps; return; }
+      say.textContent = o.say(r);
+      if (r.value !== getV()) { setV(r.value); }
+    }
+    // `text` is ',name' or '|', onto the end of what is typed (before o.last).
+    function add(text) {
+      var v = t.value.trim(), tail = '';
+      if (o.last && text !== ',' + o.last) {
+        var m = new RegExp('(^|,)' + o.last + ',?$').exec(v);
+        if (m) { tail = ',' + o.last; v = v.slice(0, m.index); }
+      }
+      if (!v || /[,|]$/.test(v)) { text = text.replace(/^,/, ''); }
+      t.value = v + text + tail;
+      apply();
+    }
+    t.addEventListener('input', apply);
+    var chips = h('div', { cls: 'chips items' });
+    o.items.forEach(function (x) {
+      chips.appendChild(h('button', { type: 'button', cls: 'small', text: x[0], title: x[1],
+        onclick: function () { add(',' + x[0]); } }));
+    });
+    var tools = h('div', { cls: 'chips' });
+    if (o.pages) {
+      tools.appendChild(h('button', { type: 'button', cls: 'small', text: 'New page',
+        title: 'Start another page: the banner turns to it', onclick: function () { add('|'); t.focus(); } }));
+    }
+    tools.appendChild(h('button', { type: 'button', cls: 'small', text: 'As shipped', title: o.shipped,
+      onclick: function () { t.value = o.shipped; apply(); } }));
+    field.appendChild(h('span', { cls: 'ctl' }, [t]));
+    field.appendChild(chips);
+    field.appendChild(tools);
+    field.appendChild(say);
+    return function () {
+      // What was typed stays while it means the same (a page just started).
+      if (o.read(t.value).value !== getV()) { t.value = getV() || ''; }
+      apply();
+    };
+  }
+  function bannerCtl(field, getV, setV) {
+    return itemsCtl(field, getV, setV, {
+      items: BANNER_ITEMS, read: bannerRead, shipped: DEFAULTS.banner, pages: true,
+      keeps: 'The banner keeps what it had.',
+      say: function (r) {
+        return r.pages > 1 ? r.pages + ' pages: the banner turns to the next one every few seconds (below).'
+          : 'One page: it stays put, unless the running order has more drivers to show.';
+      }
+    });
+  }
+  function columnsCtl(field, getV, setV) {
+    return itemsCtl(field, getV, setV, {
+      items: TOWER_COLUMNS, read: columnsRead, shipped: DEFAULTS.towerColumns, pages: false, last: 'badges',
+      keeps: 'The tower keeps what it had.',
+      say: function (r) {
+        return r.count + ' column' + (r.count === 1 ? '' : 's') + ' right of the names, in this order.'
+          + (r.value === 'gap' || r.value === 'gap,badges' || r.value === 'badges' ? ''
+            : ' Their names show above them (Words, below).');
+      }
+    });
   }
 
   function classMap(field) {
@@ -829,9 +1022,10 @@
   $('save').addEventListener('click', save);
   $('revert').addEventListener('click', function () { draft = clone(saved); syncAll(); note('Back to the saved look.', '', 2500); });
   $('defaults').addEventListener('click', function () {
-    var keep = { logo: draft.logo, sponsor: draft.sponsor, title: draft.title, subtitle: draft.subtitle };
+    var keep = { logo: draft.logo, sponsor: draft.sponsor, title: draft.title, subtitle: draft.subtitle,
+      banner: draft.banner, bannerCycle: draft.bannerCycle, towerColumns: draft.towerColumns };
     draft = whole(null);
-    if (confirm('Keep your logo, sponsor and title?')) { Object.keys(keep).forEach(function (k) { draft[k] = keep[k]; }); }
+    if (confirm('Keep your logo, sponsor, title, banner and tower columns?')) { Object.keys(keep).forEach(function (k) { draft[k] = keep[k]; }); }
     syncAll();
     note('Every setting back to the default: not saved yet.', '', 3500);
   });

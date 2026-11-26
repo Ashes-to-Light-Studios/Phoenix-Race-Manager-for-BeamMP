@@ -1583,7 +1583,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.30.0';
+      var APP_BUILD = '0.30.1';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -1944,6 +1944,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           { label: 'Overlay: order', url: u.tower },
           { label: 'Overlay: grid', url: u.grid },
           { label: 'Overlay: banner', url: u.banner },
+          { label: 'Overlay: banner ticker', url: u.bannerTicker },
           { label: 'Data (JSON)', url: u.json },
           { label: 'Live stream', url: u.stream }
         ];
@@ -5305,9 +5306,18 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
         return 'Black flag: stop in a pit stall for ' + (row.blackFlag || 0) + 's by lap '
           + (row.blackBy || '?') + ', or disqualified' + (row.blackWhy ? ' (' + row.blackWhy + ')' : '');
       };
-      // The board's badges. nil on the wire is 0.
+      // The board's badges. nil on the wire is 0. ONE penalty badge: checkpoint
+      // skips and missed mandatory pit stops add up, as in the classification.
       $scope.penaltyLabel = function (row) {
-        return '+' + Number(row.penaltySeconds || 0).toFixed(1) + 's';
+        return '+' + (Number(row.penaltySeconds || 0) + Number(row.pitStopPenalty || 0)).toFixed(1) + 's';
+      };
+      $scope.penaltyTitle = function (row) {
+        var pen = Number(row.penaltySeconds || 0), pit = Number(row.pitStopPenalty || 0);
+        var parts = [];
+        if (pen > 0) { parts.push('+' + pen.toFixed(1) + 's for checkpoint skips and black flags'); }
+        if (pit > 0) { parts.push('+' + pit.toFixed(1) + 's for mandatory pit stops not made'); }
+        return 'Time penalties: ' + parts.join(', ') + '. Added to the race time in the final '
+          + 'classification, not to the order on the road.';
       };
       $scope.cpWarnShown = function (row) {
         return $scope.cpSkipEnabled && $scope.cpSkipWarnings > 0 && (row.checkpointWarningsUsed || 0) > 0;

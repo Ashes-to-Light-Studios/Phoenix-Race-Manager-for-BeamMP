@@ -89,7 +89,7 @@ def server_files():
     )
     found.sort(key=lambda f: (f != SERVER_PLUGIN, f))
     return found
-RELEASE_NAME = 'RaceManager-v0.30.0.zip'
+RELEASE_NAME = 'RaceManager-v0.30.1.zip'
 # What the two halves are called on a server and in a release (0.24.0 on), so
 # an owner can see what is installed. The server half holds the LICENSE too.
 CLIENT_ZIP = 'PhoenixRM Client.zip'

@@ -213,6 +213,43 @@ do
 end
 
 -- ---------------------------------------------------------------------------
+-- 3b. A missed stop's seconds ADD to a checkpoint penalty
+-- ---------------------------------------------------------------------------
+-- Requested: at the end of the race the pit stop penalty goes on top of the
+-- penalties for missed checkpoints, and everything that states a penalty says
+-- the total, not two figures to add up by hand.
+RM_onSetCheckpointSkip(0, '{"enabled":true,"warnings":0,"type":"time","penaltySec":5}')
+resultsText = nil
+chatClear()
+startRace()
+pitStop(1); lap(1); pitStop(1)
+pitStop(3)
+RM_onCheckpointSkip(2, '{"lap":1,"from":2,"to":3,"skipped":1}')
+check(driver(2).penaltySeconds == 5, 'Bob skips a checkpoint: +5 s')
+for _ = 1, 8 do lap(2) end
+check(driver(2).status == 'finished' and driver(2).penaltySeconds == 5
+  and driver(2).pitStopPenalty == 60,
+  'home with no stops: 60 s more, and the checkpoint 5 s are kept')
+check(chatTo(2, '+60.0s on your race time (65.0s of time penalties in all)') ~= nil,
+  'and he is told the total')
+seconds(10)
+for _ = 1, 7 do lap(1) end
+endRace()
+check(lineOf('Bob'):find('(+65.0s pen incl. 60.0s pit)', 1, true) ~= nil,
+  'the results file gives Bob one penalty, the two added up (' .. lineOf('Bob') .. ')')
+check(lineOf('Alice'):match('^P1 ') ~= nil and lineOf('Bob'):match('^P2 ') ~= nil,
+  'and the classification counts all 65 s: Alice, 10 s behind on the road, wins')
+do
+  local post = require('discord').build.race({ file = 'results.txt' })
+  local desc = post and post.embed and post.embed.description or ''
+  local bobRow = desc:match('\n(P%d+ +Bob[^\n]*)') or ''
+  check(bobRow:find('(+65.0s pen incl. 60.0s pit)', 1, true) ~= nil,
+    'the Discord post says the same total (' .. bobRow .. ')')
+end
+-- Back as shipped (off, 1 warning): the suite shares one rules.json.
+RM_onSetCheckpointSkip(0, '{"enabled":false,"warnings":1}')
+
+-- ---------------------------------------------------------------------------
 -- 4. Qualifying ignores it
 -- ---------------------------------------------------------------------------
 chatClear()
