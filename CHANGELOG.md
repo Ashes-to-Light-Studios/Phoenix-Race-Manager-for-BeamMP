@@ -6,7 +6,7 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
-## Unreleased
+## 0.30.2 - Assigned pit stalls, grid on the ground
 
 #### Added
 
