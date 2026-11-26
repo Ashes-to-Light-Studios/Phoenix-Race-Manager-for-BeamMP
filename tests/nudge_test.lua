@@ -184,6 +184,19 @@ local RM = dofile('lua/ge/extensions/raceManager.lua')
 RM.onExtensionLoaded()
 
 local function frame() RM.onUpdate(1 / 60) end
+-- A panel arrow held for `n` frames, as the panel holds one: the press, then a
+-- keep-alive every 0.2 s. Not released: holdArrow does that.
+local function heldFrames(dir, n)
+  for k = 1, n do
+    frame()
+    if k % 12 == 0 then RM.nudgeLiftHold(dir) end
+  end
+end
+local function holdArrow(dir, seconds)
+  RM.nudgeLiftHold(dir)
+  heldFrames(dir, math.floor(seconds * 60 + 0.5))
+  RM.nudgeLiftHold(0)
+end
 local function serverState(t) t.rmProtocol = 2; t.raceTime = 0; handlers['RM_Update'](t) end
 local function gates() return (routeState or {}).waypoints or {} end
 
@@ -534,7 +547,7 @@ veh.x, veh.y, veh.z = 0, 0, 0
 RM.editorAdd()
 clickAt(0, 0)                         -- select it
 local before = gates()[1] and gates()[1].z
-mouse.shift, mouse.wheel = true, 4
+mouse.shift, mouse.wheel = true, 10   -- a meter, clear of the ground floor
 frame()
 mouse.wheel = 0
 local after = gates()[1] and gates()[1].z
@@ -696,8 +709,7 @@ frame()
 -- Raise it first, so the test can tell "kept its height" from "happened to be
 -- near the ground anyway".
 clickAt(0, 0)
-RM.nudgeLift(1)
-RM.nudgeLift(1)
+holdArrow(1, 2.5)
 local raised = gates()[1] and gates()[1].z
 check(raised and raised > 3, 'the gate is lifted well clear of the ground')
 -- A panel press cancels any drag in flight and suppresses world clicks briefly,
@@ -721,19 +733,53 @@ check(gates()[1] and math.abs(gates()[1].z - raised) < 0.01,
     .. 'dropping to the floor (z=' .. tostring(gates()[1] and gates()[1].z) .. ')')
 letGo()
 
--- THE BUTTONS do what shift+scroll does, in bigger steps, and floor the same way.
+-- THE BUTTONS step what shift+scroll steps, and floor the same way. Reported:
+-- "without a scroll wheel the up and down arrows move the grid position too far
+-- up with each click", and the step "should apply to gates as well".
 ceilingAt = function (x, y) return nil end
 clickAt(0, 100)
-local before = gates()[1] and gates()[1].z
+local function gz() return gates()[1] and gates()[1].z or 0 end
+local before = gz()
 RM.nudgeLift(1)
-check(gates()[1] and gates()[1].z > before + 1,
-  'Up raises the picked gate by a useful amount')
-RM.nudgeLift(-1)
-RM.nudgeLift(-1)
-RM.nudgeLift(-1)
-check(gates()[1] and gates()[1].z >= 0.49,
-  'and Down stops at ground clearance rather than burying it (z='
-    .. tostring(gates()[1] and gates()[1].z) .. ')')
+check(math.abs(gz() - before - 0.1) < 1e-6, 'one Up press raises a gate 0.1 m (moved '
+  .. (gz() - before) .. ')')
+before = gz()
+mouse.shift = true
+mouse.wheel = 1; frame(); mouse.wheel = 0
+mouse.shift = false
+check(math.abs(gz() - before - 0.1) < 1e-6, 'and one shift+scroll notch the same')
+
+-- HELD, it keeps going and speeds up: "the longer the hold on the arrow the
+-- faster it moves so its not so tedious".
+before = gz()
+RM.nudgeLiftHold(1)
+check(math.abs(gz() - before - 0.1) < 1e-6, 'a held arrow steps once at once')
+heldFrames(1, 20)                      -- a third of a second: still one step
+check(math.abs(gz() - before - 0.1) < 1e-6, 'and waits a moment before it repeats, so a click is one step')
+local t0 = gz()
+heldFrames(1, 60)
+local firstSecond = gz() - t0
+local t1 = gz()
+heldFrames(1, 60)
+local secondSecond = gz() - t1
+check(firstSecond > 0.3, 'then it keeps rising while held (' .. firstSecond .. ' m)')
+check(secondSecond > firstSecond * 1.5,
+  'and faster the longer it is held (' .. firstSecond .. ' then ' .. secondSecond .. ' m)')
+RM.nudgeLiftHold(0)
+local released = gz()
+for _ = 1, 30 do frame() end
+check(gz() == released, 'and stops dead on release')
+-- A release the panel never sent (focus lost): the keep-alive stops, so does it.
+RM.nudgeLiftHold(1)
+for _ = 1, 120 do frame() end
+local orphan = gz()
+for _ = 1, 30 do frame() end
+check(gz() == orphan, 'a hold the panel stops repeating ends by itself')
+check(orphan - released < 1, 'within the keep-alive timeout (' .. (orphan - released) .. ' m)')
+-- Held down, it floors at ground clearance.
+holdArrow(-1, 10)
+check(gz() >= 0.49 and gz() < 0.51,
+  'and Down stops at ground clearance rather than burying it (z=' .. gz() .. ')')
 letGo()
 
 -- A CLICK PICKS. IT DOES NOT MOVE.
@@ -826,6 +872,10 @@ check(#slots == 6, 'six slots are generated (got ' .. #slots .. ')')
 -- its front end is 0.23 m higher than its centre, and a slot half a meter over
 -- its centre had that end in the hill. Reported as "the start positions go
 -- under the map when the terrain changes angles".
+--
+-- A slot's z is the GROUND the car stands on (the car's own ref-node height is
+-- added when it is placed). Reported as "floating above the track and it
+-- damages some cars when it drops": every slot used to sit half a meter up.
 local HL, HW = 2.3, 1.1   -- TUNE.START_SLOT_LEN / 2, TUNE.START_SLOT_WIDE / 2
 local function footClear(sp)
   local fx, fy = sp.hx or 0, sp.hy or 1
@@ -841,28 +891,29 @@ end
 local ok = true
 for i, sp in ipairs(slots) do
   local least, centre = footClear(sp)
-  if least < 0.49 or centre > 0.5 + 0.23 + 0.01 then
+  if least < -0.01 or centre > 0.23 + 0.01 then
     ok = false
     print(string.format('    slot %d: z=%.2f least clearance=%.2f centre=%.2f',
       i, sp.z, least, centre))
   end
 end
-check(ok, 'every slot clears the ground under its WHOLE footprint by half a '
-  .. 'meter, and floats no higher than the slope makes it, rather than all '
-  .. 'sharing the anchor height')
+check(ok, 'no corner of any slot is under the ground, and none floats higher '
+  .. 'than the slope makes it, rather than all sharing the anchor height')
 
--- The anchor's height above ground is what is preserved, not its absolute z. A
--- grid generated from a car up on a bridge stays on the bridge.
+-- A grid generated from a car up on a bridge stays on the deck, not the ground
+-- under it: the probes start from the car.
 RM.editorClear()
 terrainAt = function (x, y) return 0 end
-veh.x, veh.y, veh.z = 0, 0, 20      -- twenty meters up, on a flyover
+ceilingAt = function (x, y) return 19.6 end   -- the flyover's deck
+veh.x, veh.y, veh.z = 0, 0, 20
 RM.generateStartPositions(3, 10, 4, 0, 1)
 frame()
 slots = (routeState or {}).startPositions or {}
 check(#slots == 3, 'three slots on the flyover')
-check(slots[3] ~= nil and slots[3].z > 15,
-  'a grid generated up on a bridge is not dropped to the ground below it (z='
+check(slots[3] ~= nil and math.abs(slots[3].z - 19.6) < 0.01,
+  'a grid generated up on a bridge stands on the deck, not the ground below it (z='
     .. tostring(slots[3] and slots[3].z) .. ')')
+ceilingAt = function (x, y) return nil end
 
 -- Every slot of the grid on screen, the worst one printed.
 local function allClear(surfaceAt, label)
@@ -871,7 +922,7 @@ local function allClear(surfaceAt, label)
   local good, list = true, (routeState or {}).startPositions or {}
   for i, sp in ipairs(list) do
     local least = footClear(sp)
-    if least < 0.49 then
+    if least < -0.01 then
       good = false
       print(string.format('    %s slot %d: z=%.2f least clearance=%.2f', label, i, sp.z, least))
     end
@@ -928,11 +979,106 @@ for _ = 1, 18 do mouse.wheel = 1; frame() end   -- a quarter turn
 mouse.wheel = 0
 check(allClear(nil, 'turned'), 'a slot turned across a banking is lifted clear of it')
 
--- DOWN stops at the ground under the whole footprint, not under the centre.
+-- DOWN AND UP on one slot. The ground changes under it, so it floats.
+-- Reported: "we cant move them down", and each press of the panel's arrows
+-- moved a slot the gate's two meters.
 terrainAt = function (x, y) return y * 0.3 end
-for _ = 1, 6 do RM.nudgeLift(-1) end
-check(allClear(nil, 'lowered'), 'Down stops a slot with its uphill end still clear')
+local function off()       -- the selected slot's height off its highest ground
+  local sp = ((routeState or {}).startPositions or {})[1]
+  return sp and (footClear(sp)) or math.huge
+end
+check(off() > 0.3, 'the slot floats once the ground under it drops (' .. off() .. ')')
+RM.nudgeLift(-1)
+check(math.abs(off()) < 0.01, 'one Down lands a floating slot on the ground (' .. off() .. ')')
+RM.nudgeLift(-1)
+check(math.abs(off() + 0.1) < 0.01,
+  'the next goes a tenth of a meter under it, not two meters (' .. off() .. ')')
+local hooksBefore = #hooks
+for _ = 1, 30 do RM.nudgeLift(-1) end
+check(math.abs(off() + 1.0) < 0.01, 'and no further than a meter under (' .. off() .. ')')
+local msgs = 0
+for k = hooksBefore + 1, #hooks do
+  if hooks[k].event == 'RaceManagerEditorMsg' then msgs = msgs + 1 end
+end
+check(msgs > 0, 'a Down that cannot go further says so')
+for _ = 1, 3 do RM.nudgeLift(1) end
+check(math.abs(off() + 0.7) < 0.01, 'Up brings it back a tenth at a time (' .. off() .. ')')
+for _ = 1, 30 do RM.nudgeLift(1) end
+check(math.abs(off()) < 0.01, 'and stops on the ground: a slot never floats (' .. off() .. ')')
+-- Shift+scroll is the same fine step.
+mouse.shift = true
+mouse.wheel = -1; frame(); mouse.wheel = 0
+mouse.shift = false
+check(math.abs(off() + 0.1) < 0.01, 'shift+scroll down is one tenth too (' .. off() .. ')')
+-- HELD Down on a floating slot lands it and STAYS on the ground: going under
+-- is a second, deliberate press.
+for _ = 1, 3 do RM.nudgeLift(1) end
+terrainAt = function (x, y) return y * 0.3 - 2 end   -- two meters of float
+holdArrow(-1, 3)
+check(math.abs(off()) < 0.01, 'a held Down lands a floating slot and stops on the ground ('
+  .. off() .. ')')
+hooksBefore = #hooks
+holdArrow(-1, 3)
+check(math.abs(off() + 1.0) < 0.01, 'held again, it goes under, to the meter limit (' .. off() .. ')')
+msgs = 0
+for k = hooksBefore + 1, #hooks do
+  if hooks[k].event == 'RaceManagerEditorMsg' then msgs = msgs + 1 end
+end
+check(msgs == 1, 'and says why it stopped once, not every frame (' .. msgs .. ')')
+holdArrow(1, 3)
+check(math.abs(off()) < 0.01, 'held Up brings it back onto the ground and no higher (' .. off() .. ')')
 RM.setNudgeMode(false)
+
+-- ===========================================================================
+-- WHERE A CAR LANDS ON A SLOT
+-- ===========================================================================
+-- The slot is the ground; the car's ref node (getPosition, setPositionRotation)
+-- goes its own height over that, measured from its spawn box as stock
+-- spawn.lua does, plus a tenth of a meter to drop.
+RM.setEditorTarget('start')
+RM.editorClear()
+terrainAt = function (x, y) return 0 end
+veh.x, veh.y, veh.z = 0, 0, 0.5
+veh.hx, veh.hy = 0, 1
+RM.editorAdd()
+local function landsAt()
+  RM.previewStartPosition(1)
+  return veh.z
+end
+local sp1 = ((routeState or {}).startPositions or {})[1]
+check(sp1 and math.abs(sp1.z) < 0.01, 'a slot added from a car is the ground, not the car (z='
+  .. tostring(sp1 and sp1.z) .. ')')
+-- A car 1.4 m tall whose ref node is 0.4 m over its lowest point.
+veh.getDirectionVectorUp = function () return { x = 0, y = 0, z = 1 } end
+veh.getSpawnWorldOOBB = function (self)
+  local c = { x = self.x, y = self.y, z = self.z + 0.3 }
+  return {
+    getCenter = function () return c end,
+    getHalfExtents = function () return { x = 1, y = 2.3, z = 0.7 } end,
+  }
+end
+check(math.abs(landsAt() - 0.5) < 1e-6,
+  'the car is placed its own ref height plus 0.1 over the slot (z=' .. veh.z .. ')')
+-- A layout saved when slots floated: the car still lands on the ground.
+terrainAt = function (x, y) return -0.5 end
+check(math.abs(landsAt() - 0) < 1e-6,
+  'a floating slot from an old layout drops the car from the ground, not the air (z='
+    .. veh.z .. ')')
+-- Lowered by hand: honored.
+terrainAt = function (x, y) return 0.3 end
+check(math.abs(landsAt() - 0.5) < 1e-6, 'a slot lowered by hand places the car lower (z='
+  .. veh.z .. ')')
+-- Buried by an old bug: no deeper than SLOT_SINK_MAX.
+terrainAt = function (x, y) return 3 end
+check(math.abs(landsAt() - 2.5) < 1e-6, 'a buried slot places the car at most a meter under (z='
+  .. veh.z .. ')')
+-- No measurable box: half a meter, the old fixed lift.
+veh.getSpawnWorldOOBB = function () return nil end
+terrainAt = function (x, y) return 0 end
+check(math.abs(landsAt() - 0.6) < 1e-6, 'an unmeasured car falls back to half a meter (z='
+  .. veh.z .. ')')
+veh.getDirectionVectorUp = nil
+RM.editorClear()
 
 -- ===========================================================================
 -- PICKING SEVERAL GRID SLOTS AND MOVING THEM AS ONE
@@ -1034,12 +1180,14 @@ do
     'P1 and P2, side by side before, are now one behind the other')
 
   -- UP AND DOWN MOVE THE WHOLE GROUP
-  local z1, z5 = list()[1].z, list()[5].z
-  RM.nudgeLift(1)
-  check(list()[1].z > z1 + 1 and list()[2].z > z1 + 1, 'Up raises every picked slot')
+  local z1, z2, z5 = list()[1].z, list()[2].z, list()[5].z
+  for _ = 1, 3 do RM.nudgeLift(-1) end
+  check(math.abs(list()[1].z - (z1 - 0.3)) < 0.01 and math.abs(list()[2].z - (z2 - 0.3)) < 0.01,
+    'Down lowers every picked slot')
   check(list()[5].z == z5, 'and no other')
-  for _ = 1, 4 do RM.nudgeLift(-1) end
-  check(allClear(nil, 'group down'), 'Down stops each of them at its own ground')
+  for _ = 1, 5 do RM.nudgeLift(1) end
+  check(math.abs(list()[1].z - z1) < 0.01 and math.abs(list()[2].z - z2) < 0.01
+    and allClear(nil, 'group up'), 'Up brings each of them back onto its own ground')
   settle()
 
   -- DELETE REMOVES THE GROUP
@@ -1202,6 +1350,17 @@ do
   check(#turns == 1, 'turning one sends it straight away rather than waiting for a release')
   check(turns[1] and turns[1].hx ~= nil and turns[1].hy ~= nil,
     'and carries the heading, which is the thing that was changed')
+  afterButton()
+
+  -- A HELD ARROW IS A DRAG for the server's purposes: one request, on release.
+  sent = {}
+  RM.nudgeLiftHold(1)
+  heldFrames(1, 90)
+  check(#sentOf('RM_DerbyMoveStart') == 0, 'a held arrow sends nothing while held')
+  RM.nudgeLiftHold(0)
+  local lifts = sentOf('RM_DerbyMoveStart')
+  check(#lifts == 1 and lifts[1].z > 0.5,
+    'and one request on release, with where it ended up (z=' .. tostring(lifts[1] and lifts[1].z) .. ')')
   afterButton()
 
   -- THE RECTANGLE'S CENTER. One point standing for the whole arena: dragging it

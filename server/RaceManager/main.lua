@@ -108,6 +108,10 @@ local CFG = {
   pitStopsRequired      = 0,
   pitStopMissed         = 'dsq',
   pitStopPenaltySeconds = 30,
+  -- ASSIGNED PIT STALLS (Teams panel): a driver with a stall of their own who
+  -- stops in another driver's is held this many seconds longer, in a race or
+  -- qualifying. 0 turns it off. A stall nobody has is free for anyone.
+  pitWrongStallSeconds  = 5,
   -- Furthest ahead (gates) a crossing still counts as a skip; further is
   -- ignored, as it always was. config.json only, never the panel.
   checkpointSkipMaxGates        = 2,
@@ -266,6 +270,7 @@ local race = {
   pitStopsRequired      = CFG.pitStopsRequired,
   pitStopMissed         = CFG.pitStopMissed,
   pitStopPenaltySeconds = CFG.pitStopPenaltySeconds,
+  pitWrongStallSeconds  = CFG.pitWrongStallSeconds,
   -- The mandatory pit stop rule as the race started under it (set at GO):
   -- { required, missed, seconds }. required 0 is no rule. Counting, the
   -- ruling at the flag and the results file read this, not the settings.
@@ -378,6 +383,10 @@ local race = {
   -- other session switches are.
   qualiFromPits  = false,
   raceFromPits   = false,
+  -- Which car starts in which stall: 'grid' (stall n is Pn) or 'assigned'
+  -- (each car in its own, race.pitStartPlan). Per session kind.
+  qualiPitOrder  = 'grid',
+  racePitOrder   = 'grid',
   -- Which grid the field was formed on: 'grid' (the start positions) or
   -- 'pits' (the stalls). Decided by formGrid, read by the hold and late calls.
   gridKind       = 'grid',
@@ -1334,8 +1343,9 @@ local DRIVER_WIRE_FIELDS = {
   -- Mandatory pit stops: counted so far, and seconds added at the flag.
   'pitCounted', 'pitStopPenalty',
   -- Teams and car numbers (teams.lua): resolved per record in driverForWire,
-  -- nil when unset, so a league without them sends nothing extra.
-  'team', 'number',
+  -- nil when unset, so a league without them sends nothing extra. pitStall is
+  -- the driver's assigned stall (their own, else their team's).
+  'team', 'number', 'pitStall',
   -- No car, no grid (race.carOut): no car right now, and an admin's Add.
   -- `unlisted` (on no board: left off, or car-less, and never joined) and
   -- `joinable` (has a car now and can press Join) are worked out in
@@ -1659,6 +1669,8 @@ local function broadcastState(targetPid)
     -- Start from the pit stalls: the two switches, and the grid in force.
     qualiFromPits  = race.qualiFromPits,
     raceFromPits   = race.raceFromPits,
+    qualiPitOrder  = race.qualiPitOrder,
+    racePitOrder   = race.racePitOrder,
     gridKind       = race.gridKind,
     -- Mandatory pit stops: the settings, and `active`, the number in force
     -- (the race's own once it is under way, 0 with no stalls or no race).
@@ -1667,6 +1679,8 @@ local function broadcastState(targetPid)
       missed   = race.pitStopMissed,
       seconds  = race.pitStopPenaltySeconds,
       active   = race.pitStopsActive(),
+      -- Assigned stalls: seconds added to a stop in another driver's.
+      wrongStall = race.pitWrongStallSeconds,
     },
     -- Does this session open with an out lap (outLapOwed, races included; the
     -- name is historical). Per-driver owing rides on the rows (`outLap`).
@@ -1764,8 +1778,14 @@ end
 -- The server picks the slot; the client places the car (nil clears).
 -- `order`/`count` stagger the field's placement.
 -- `grid = 'pits'` says the slot is a pit stall (race.gridKind), not a start
--- position; absent, it is the track grid as it always was.
+-- position; absent, it is the track grid as it always was. In the stalls the
+-- slot is the car's own stall (rec.startStall, race.pitStartPlan), which is
+-- its grid position only in grid order.
 local function assignGridSlot(pid, slot, order, count)
+  if slot ~= nil and race.gridKind == 'pits' then
+    local rec = players[pidKey(pid)]
+    slot = rec and rec.startStall or slot
+  end
   MP.TriggerClientEvent(pid, 'RM_GridAssign', Util.JsonEncode({
     slot = slot, order = order, count = count,
     grid = (slot ~= nil and race.gridKind == 'pits') and 'pits' or nil,
@@ -1802,12 +1822,16 @@ race.callLate = function (rec)
   local nextPos = (race.gridSize or 0) + 1
   -- A field in the pits is limited by its stalls, not the start positions.
   local slots = race.gridKind == 'pits' and race.pitStalls() or race.startSlots
-  if slots > 0 and nextPos > slots then
+  -- With assigned stalls: its own if free, else the first free one.
+  local stall = race.lateStall(rec)
+  if (slots > 0 and nextPos > slots)
+      or (race.gridKind == 'pits' and race.pitOrderNow() == 'assigned' and not stall) then
     MP.SendChatMessage(rec.id, '[RaceManager] The grid is full: every start position '
       .. 'is taken. You are in the next one.')
     return false
   end
   race.gridSize = nextPos
+  rec.startStall = stall
   race.callToGrid(rec, nextPos)
   return true
 end
@@ -1821,7 +1845,12 @@ race.joinLate = function (rec, placeNow)
   if race.phase ~= 'grid' or not rec then return false end
   if rec.status == 'called' or rec.status == 'gridded' then return false end
   local nextPos = (race.gridSize or 0) + 1
-  if race.startSlots > 0 and nextPos > race.startSlots then
+  -- In the pits, as callLate: the stalls are the slots, and with assigned
+  -- stalls the car's own if free.
+  local slots = race.gridKind == 'pits' and race.pitStalls() or race.startSlots
+  local stall = race.lateStall(rec)
+  if (slots > 0 and nextPos > slots)
+      or (race.gridKind == 'pits' and race.pitOrderNow() == 'assigned' and not stall) then
     MP.SendChatMessage(rec.id, '[RaceManager] The grid is full: every start position '
       .. 'is taken. You are in the next one.')
     return false
@@ -1830,6 +1859,7 @@ race.joinLate = function (rec, placeNow)
   race.freshSession(rec)
   rec.leftOff = nil
   rec.gridPos = nextPos
+  rec.startStall = stall
   if placeNow then
     race.readyUp(rec)
   else
@@ -3158,24 +3188,30 @@ function RM_onSetNametags(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
--- Start from the pit stalls, for qualifying or the race (`session`). Takes
--- effect at the next grid; locked while a session is under way. Whether the
--- stalls are actually used is decided as the grid forms (race.pitGridProblem).
+-- Start from the pit stalls, for qualifying or the race (`session`): the
+-- switch (`enabled`) and which car goes in which stall (`order`, 'grid' or
+-- 'assigned'), either or both. Takes effect at the next grid; locked while a
+-- session is under way. Whether the stalls are actually used is decided as
+-- the grid forms (race.pitGridProblem).
 function RM_onSetPitStart(pid, rawData)
   local data = adminPayload(pid, rawData, true)
   if not data then return end
-  local on = data.enabled == true or data.enabled == 1
-  if data.session == 'quali' then
-    race.qualiFromPits = on
-  elseif data.session == 'race' then
-    race.raceFromPits = on
-  else
-    return
+  if data.session ~= 'quali' and data.session ~= 'race' then return end
+  local quali = data.session == 'quali'
+  local what = {}
+  if data.enabled ~= nil then
+    local on = data.enabled == true or data.enabled == 1
+    if quali then race.qualiFromPits = on else race.raceFromPits = on end
+    what[#what + 1] = on and 'ENABLED' or 'disabled'
   end
+  if data.order == 'grid' or data.order == 'assigned' then
+    if quali then race.qualiPitOrder = data.order else race.racePitOrder = data.order end
+    what[#what + 1] = data.order == 'assigned' and 'assigned stalls' or 'grid order'
+  end
+  if #what == 0 then return end
   broadcastState()
-  print(string.format('[RaceManager] %s from the pit stalls %s by %s',
-    data.session == 'quali' and 'Qualifying' or 'Race',
-    on and 'ENABLED' or 'disabled', MP.GetPlayerName(pid) or pid))
+  print(string.format('[RaceManager] %s from the pit stalls: %s by %s',
+    quali and 'Qualifying' or 'Race', table.concat(what, ', '), MP.GetPlayerName(pid) or pid))
 end
 
 -- Mandatory pit stops: { required, missed = 'dsq'|'time', seconds }. Locked
@@ -3195,11 +3231,14 @@ function RM_onSetPitStopRule(pid, rawData)
   if data.missed == 'dsq' or data.missed == 'time' then race.pitStopMissed = data.missed end
   n = tonumber(data.seconds)
   if n and n == n then race.pitStopPenaltySeconds = race.halfStep(n, 1, 600) end
+  n = tonumber(data.wrongStall)
+  if n and n == n then race.pitWrongStallSeconds = race.halfStep(n, 0, 60) end
   broadcastState()
-  print(string.format('[RaceManager] Mandatory pit stops set by %s: %d, missed: %s',
-    MP.GetPlayerName(pid) or pid, race.pitStopsRequired,
+  print(string.format('[RaceManager] Mandatory pit stops set by %s: %d, missed: %s; '
+      .. 'wrong stall: %s', MP.GetPlayerName(pid) or pid, race.pitStopsRequired,
     race.pitStopMissed == 'time' and string.format('+%.1fs per stop', race.pitStopPenaltySeconds)
-      or 'disqualified'))
+      or 'disqualified',
+    race.pitWrongStallSeconds > 0 and string.format('+%.1fs', race.pitWrongStallSeconds) or 'off'))
 end
 
 -- Ghost qualifying: enforced client-side; the server holds the switch.
@@ -3532,19 +3571,23 @@ formGrid = function (kind, byName)
   -- before outLapOwed is read for each driver below: a start from the pits
   -- owes an out lap.
   race.gridKind = 'grid'
+  -- Each car's stall, when the field lines up in them (race.pitStartPlan).
+  for _, rec in pairs(players) do rec.startStall = nil end
   -- An if, not `a and b or c`: a quali switch that is OFF must not fall
   -- through to the race's.
   local wantPits
   if race.sessionKind == 'quali' then wantPits = race.qualiFromPits
   else wantPits = race.raceFromPits end
   if wantPits then
-    local problem = race.pitGridProblem(#ordered)
+    local plan = race.pitStartPlan(ordered)
+    local problem = race.pitGridProblem(#ordered, plan)
     if problem then
       MP.SendChatMessage(-1, string.format('[RaceManager] %s from the track grid: %s.',
         race.sessionKind == 'quali' and 'Qualifying' or 'Race', problem))
       print('[RaceManager] Pit start not used: ' .. problem)
     else
       race.gridKind = 'pits'
+      for i, rec in ipairs(ordered) do rec.startStall = plan[i] end
     end
   end
   -- Locks come off BEFORE the slots go out (a client with no car would drop
@@ -3879,17 +3922,23 @@ function RM_onPitStop(pid, rawData)
   if not rec then return end
   if not sessionRunning() then return end
   if not onTrack(rec) then return end
-  local stall = 0
+  local stall, wrong = 0, 0
   if type(rawData) == 'string' and rawData ~= '' then
     local ok, data = pcall(Util.JsonDecode, rawData)
-    if ok and type(data) == 'table' then stall = tonumber(data.stall) or 0 end
+    if ok and type(data) == 'table' then
+      stall = tonumber(data.stall) or 0
+      -- Seconds the client added for another driver's stall (pitWrongStallSeconds).
+      wrong = tonumber(data.wrong) or 0
+    end
   end
   rec.pitStops = (rec.pitStops or 0) + 1
   race.pitStopBegan(rec)
   race.countRequiredStop(rec)
-  print(string.format('[RaceManager] %s pitted (stall %s) on lap %s at race time %.1fs: stop #%d%s',
+  print(string.format('[RaceManager] %s pitted (stall %s) on lap %s at race time %.1fs: stop #%d%s%s',
     rec.name, tostring(stall), tostring(rec.currentLap or '?'), race.time, rec.pitStops,
-    rec.pitServing and string.format(', serving %.1fs', rec.pitServing) or ''))
+    rec.pitServing and string.format(', serving %.1fs', rec.pitServing) or '',
+    wrong > 0 and string.format(', not their stall (PIT %s): +%gs', tostring(race.stallOf(rec) or '?'),
+      wrong) or ''))
   broadcastState()
 end
 
@@ -3926,7 +3975,7 @@ local function slotPosition(rec)
   -- In the pits: the loaded layout's own stall, which is the authority.
   if race.gridKind == 'pits' then
     local pits = race.layout and race.layout.pits
-    return type(pits) == 'table' and pits[rec.gridPos] or nil
+    return type(pits) == 'table' and pits[rec.startStall or rec.gridPos] or nil
   end
   local list = race.startPositions
   if type(list) ~= 'table' then return nil end
@@ -4473,6 +4522,16 @@ local function releaseField(pacing)
   broadcastState()
   if race.pitStopRun.required > 0 then
     MP.SendChatMessage(-1, '[RaceManager] ' .. race.pitStopRuleText() .. '.')
+  end
+  -- Each driver with a stall of their own is told which, and what another
+  -- driver's costs.
+  for _, rec in pairs(players) do
+    local stall = onTrack(rec) and race.stallOf(rec)
+    if stall then
+      MP.SendChatMessage(rec.id, string.format('[RaceManager] Your pit stall: PIT %d%s', stall,
+        race.pitWrongStallSeconds > 0 and string.format(
+          ' (a stop in another driver\'s stall takes %gs longer)', race.pitWrongStallSeconds) or ''))
+    end
   end
   -- The pace lap gets the first word: it is an instruction (both speed units:
   -- drivers on both sides of the Atlantic).
@@ -5799,8 +5858,11 @@ end
 
 -- The first pair of neighbouring stalls in use (1-2, 2-3, ... up to `count`)
 -- that a gate of the pit start's first checkpoint runs between, as
--- (checkpoint, stall), or nil. Main gate and branch gates alike.
-function race.pitStartSplit(count)
+-- (checkpoint, stall), or nil. Main gate and branch gates alike. `from` (1
+-- unless given) is the first stall in use: with assigned stalls the cars may
+-- stand anywhere from `from` to `count`, and the lane is followed through
+-- every stall between, used or not.
+function race.pitStartSplit(count, from)
   local l = race.layout
   if not l or type(l.pits) ~= 'table' or type(l.checkpoints) ~= 'table' then return nil end
   local k = race.pitFirstGate()
@@ -5809,7 +5871,7 @@ function race.pitStartSplit(count)
     if g.slot == k then gates[#gates + 1] = g end
   end
   local n = math.min(count, #l.pits)
-  for i = 1, n - 1 do
+  for i = math.max(from or 1, 1), n - 1 do
     local a, b = l.pits[i], l.pits[i + 1]
     if a and b and a.x and b.x then
       for _, g in ipairs(gates) do
@@ -5820,9 +5882,72 @@ function race.pitStartSplit(count)
   return nil
 end
 
+-- A driver's assigned pit stall (teams.lua: their own, else their team's), or
+-- nil when they have none or it is past the loaded layout's stalls.
+function race.stallOf(rec)
+  if not rec then return nil end
+  if race.teamOf then race.teamOf(rec) end
+  local n = rec.pitStall
+  if type(n) ~= 'number' or n < 1 or n > race.pitStalls() then return nil end
+  return n
+end
+
+-- Which pit start order is in force for the session forming now.
+function race.pitOrderNow()
+  if race.sessionKind == 'quali' then return race.qualiPitOrder end
+  return race.racePitOrder
+end
+
+-- The stall each car of `ordered` (grid order) starts in, as a list beside
+-- it, or nil when there are not enough stalls. 'grid': stall n is Pn.
+-- 'assigned': each car in its own stall, taken in grid order, so of two
+-- teammates sharing one the car ahead on the grid gets it; a car with none,
+-- or whose stall is taken, gets the first stall left free.
+function race.pitStartPlan(ordered)
+  local stalls = race.pitStalls()
+  if #ordered > stalls then return nil end
+  local plan, used = {}, {}
+  if race.pitOrderNow() ~= 'assigned' then
+    for i = 1, #ordered do plan[i] = i end
+    return plan
+  end
+  for i, rec in ipairs(ordered) do
+    local own = race.stallOf(rec)
+    if own and not used[own] then plan[i], used[own] = own, true end
+  end
+  local free = 1
+  for i = 1, #ordered do
+    if not plan[i] then
+      while used[free] do free = free + 1 end
+      plan[i], used[free] = free, true
+    end
+  end
+  return plan
+end
+
+-- A stall for one car joining a field already in the stalls: its own if no
+-- car stands in it, else the first free one. nil when every stall is taken.
+-- Only with assigned stalls: in grid order the next stall is the next slot.
+function race.lateStall(rec)
+  if race.gridKind ~= 'pits' or race.pitOrderNow() ~= 'assigned' then return nil end
+  local used = {}
+  for _, r in pairs(players) do
+    if r ~= rec and r.startStall and (r.status == 'gridded' or r.status == 'called') then
+      used[r.startStall] = true
+    end
+  end
+  local own = race.stallOf(rec)
+  if own and not used[own] then return own end
+  for i = 1, race.pitStalls() do
+    if not used[i] then return i end
+  end
+  return nil
+end
+
 -- Can a field of `count` start from the stalls? nil if so, else the reason,
--- worded for chat.
-function race.pitGridProblem(count)
+-- worded for chat. `plan` (race.pitStartPlan) says which stalls are in use;
+-- without one, stalls 1 to `count`.
+function race.pitGridProblem(count, plan)
   if race.dragStrip then return 'a drag strip starts from its lanes' end
   if not race.layout then return 'no layout is loaded from this server' end
   local stalls = race.pitStalls()
@@ -5830,7 +5955,15 @@ function race.pitGridProblem(count)
   if stalls < count then
     return string.format('%d drivers, %d pit stalls', count, stalls)
   end
-  local k, i = race.pitStartSplit(count)
+  local lo, hi = 1, count
+  if plan and #plan > 0 then
+    lo, hi = math.huge, 0
+    for _, n in ipairs(plan) do
+      if n < lo then lo = n end
+      if n > hi then hi = n end
+    end
+  end
+  local k, i = race.pitStartSplit(hi, lo)
   if k then
     return string.format('CP %d runs between pit stalls %d and %d, so cars '
       .. 'would start on both sides of it. Move that gate or set the pit '
@@ -7028,8 +7161,10 @@ local function applyConfigTable(data)
   num('pitStopsRequired', 0, 10)
   str('pitStopMissed', { dsq = true, time = true })
   num('pitStopPenaltySeconds', 1, 600)
+  num('pitWrongStallSeconds', 0, 60)
   CFG.pitStopsRequired      = math.floor(CFG.pitStopsRequired)
   CFG.pitStopPenaltySeconds = race.halfStep(CFG.pitStopPenaltySeconds, 1, 600)
+  CFG.pitWrongStallSeconds  = race.halfStep(CFG.pitWrongStallSeconds, 0, 60)
   -- Whole numbers where a count is meant, and half seconds where a time is.
   CFG.blackFlagSeconds              = math.floor(CFG.blackFlagSeconds)
   CFG.blackFlagLaps                 = math.floor(CFG.blackFlagLaps)
@@ -7148,6 +7283,7 @@ local function configFileText()
     pitStopsRequired      = CFG.pitStopsRequired,
     pitStopMissed         = CFG.pitStopMissed,
     pitStopPenaltySeconds = CFG.pitStopPenaltySeconds,
+    pitWrongStallSeconds  = CFG.pitWrongStallSeconds,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
     qualiLapLimit  = CFG.qualiLapLimit,
@@ -7212,6 +7348,7 @@ local function applyConfigToRace()
   race.pitStopsRequired      = CFG.pitStopsRequired
   race.pitStopMissed         = CFG.pitStopMissed
   race.pitStopPenaltySeconds = CFG.pitStopPenaltySeconds
+  race.pitWrongStallSeconds  = CFG.pitWrongStallSeconds
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
   race.readyCheck     = CFG.readyCheck
