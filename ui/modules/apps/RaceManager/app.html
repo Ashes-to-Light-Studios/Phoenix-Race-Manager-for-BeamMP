@@ -2871,23 +2871,25 @@
     <div class="rm-nudge-hint" ng-if="nudgeOn">
       <div><b>Click</b> a gate to pick it, <b>drag</b> to move it, <b>scroll</b> to
       turn it, <b>shift+scroll</b> to raise and lower it, or use the buttons below
-      if your mouse has no wheel. <b>Ctrl+click</b> open ground to place a new
-      one, which lands after the picked gate if there is one. Works on whichever
-      tab you are editing.</div>
+      if your mouse has no wheel (hold an arrow to go faster). <b>Ctrl+click</b>
+      open ground to place a new one, which lands after the picked gate if there
+      is one. Works on whichever tab you are editing.</div>
       <div ng-if="editorTarget === 'start'"><b>Shift+click</b> more slots to pick
-      them too. Dragging, turning or raising any picked slot moves them all as one
-      block, and each keeps its height over the ground under it.</div>
+      them too. Dragging, turning or lowering any picked slot moves them all as one
+      block, and each stays on the ground under it.</div>
       <div class="rm-nudge-row">
         <button class="rm-btn rm-btn-mini" ng-click="nudgeTurn(-1)"
                 ng-disabled="!nudgeSel" title="Turn the picked gate anticlockwise">↺</button>
         <button class="rm-btn rm-btn-mini" ng-click="nudgeTurn(1)"
                 ng-disabled="!nudgeSel" title="Turn the picked gate clockwise">↻</button>
-        <button class="rm-btn rm-btn-mini" ng-click="nudgeLift(1)"
+        <button class="rm-btn rm-btn-mini" ng-mousedown="nudgeLiftDown(1, $event)"
+                ng-mouseup="nudgeLiftUp()" ng-mouseleave="nudgeLiftUp()"
                 ng-disabled="!nudgeSel"
-                title="Raise the picked gate. Bigger steps than the wheel, for digging one out of a hillside.">▲ Up</button>
-        <button class="rm-btn rm-btn-mini" ng-click="nudgeLift(-1)"
+                title="Raise 0.1 m. Hold to keep going, faster the longer you hold.">▲ Up</button>
+        <button class="rm-btn rm-btn-mini" ng-mousedown="nudgeLiftDown(-1, $event)"
+                ng-mouseup="nudgeLiftUp()" ng-mouseleave="nudgeLiftUp()"
                 ng-disabled="!nudgeSel"
-                title="Lower the picked gate. It stops at ground level rather than burying it.">▼ Down</button>
+                title="Lower 0.1 m. Hold to keep going, faster the longer you hold. A gate stops at the ground; a start position can go 1 m under it.">▼ Down</button>
         <button class="rm-btn rm-btn-end rm-btn-mini" ng-click="nudgeDelete()"
                 ng-disabled="!nudgeSel" title="Delete the picked gate, or every picked slot">
           ✕ Delete picked
@@ -3757,12 +3759,14 @@
         <button class="rm-btn rm-btn-mini" ng-click="nudgeTurn(1)"
                 ng-disabled="!nudgeSel || editorTarget !== 'derbyStart'"
                 title="Turn the picked start position clockwise">↻</button>
-        <button class="rm-btn rm-btn-mini" ng-click="nudgeLift(1)"
+        <button class="rm-btn rm-btn-mini" ng-mousedown="nudgeLiftDown(1, $event)"
+                ng-mouseup="nudgeLiftUp()" ng-mouseleave="nudgeLiftUp()"
                 ng-disabled="!nudgeSel"
-                title="Raise the picked point. Bigger steps than the wheel, for digging one out of a hillside.">▲ Up</button>
-        <button class="rm-btn rm-btn-mini" ng-click="nudgeLift(-1)"
+                title="Raise 0.1 m. Hold to keep going, faster the longer you hold.">▲ Up</button>
+        <button class="rm-btn rm-btn-mini" ng-mousedown="nudgeLiftDown(-1, $event)"
+                ng-mouseup="nudgeLiftUp()" ng-mouseleave="nudgeLiftUp()"
                 ng-disabled="!nudgeSel"
-                title="Lower the picked point. It stops at ground level rather than burying it.">▼ Down</button>
+                title="Lower 0.1 m. Hold to keep going, faster the longer you hold. It stops at the ground.">▼ Down</button>
         <button class="rm-btn rm-btn-end rm-btn-mini" ng-click="nudgeDelete()"
                 ng-disabled="!nudgeSel || editorTarget === 'derbyCenter'"
                 title="Delete the picked point. The arena center cannot be deleted: switch the boundary mode instead.">

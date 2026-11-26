@@ -33,7 +33,7 @@ D.MAX_WIDTH = 120
 D.HEIGHT = 8
 D.DEPTH = 2
 D.SLOT_BACK = 3     -- meters from the stock start (front edge) back to the slot
-D.SLOT_LIFT = 0.5   -- the stock start sits on the ground; a car's origin does not
+D.SLOT_LIFT = 0     -- a slot's z is the ground, as the stock start's is
 D.MAX_NODES = 2000  -- a malformed graph walks no further than this
 D.MAX_NAME = 40     -- the server's MAX_LAYOUT_NAME
 

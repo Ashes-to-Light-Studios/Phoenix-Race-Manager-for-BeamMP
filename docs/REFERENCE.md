@@ -255,11 +255,16 @@ Open **Track** on the menu bar to open the checkpoint editor (it starts on the
    **Delete picked** removes every picked slot.
 
    **Shift+scroll raises and lowers** the selected gate, and **▲ Up** / **▼ Down**
-   do the same in bigger steps for a mouse with no wheel. This is the only control
+   do the same for a mouse with no wheel: **0.1 m** per notch or click, for gates,
+   props and grid slots alike. **Hold an arrow** to keep going: after a moment it
+   moves on its own and speeds up the longer you hold it, so digging a gate out
+   of a hillside is one long press. This is the only control
    that moves a gate vertically: the gate's **Up** and **Dn** sizes set how far
    it extends *up and down from where it sits*, which is a different thing, so a
    gate that ended up in the terrain could not be recovered with them. It will not let you
-   push a gate below the ground under it.
+   push a gate below the ground under it. A grid slot can go a little under it
+   (see [Building the grid](#building-the-grid)). On the arena, a held arrow is
+   sent to the server once, when you let go.
 
    A placed gate faces the way the route is already traveling, from the previous
    gate toward the point you clicked, so clicking along a road in order gives you
@@ -2843,14 +2848,23 @@ shape. They only ever touch slots the generator laid out; anything placed by han
 is left where you put it, and moving or deleting a slot by hand hands the block
 back so the sliders stop claiming it.
 
-**No slot goes under the map.** A slot is a level box one car long, so on a hill
-or a banking its centre can clear the ground with one end buried. Every slot the
-editor places, generates, respaces, drags, turns or lowers clears the ground
-under its **whole footprint**, centre and corners, and the generator walks the
-ground out from pole a few meters at a time, so a road that climbs or banks away
-from pole is followed. On a slope that leaves a slot a little higher than a car
-sits; the car drops onto the road and settles before the hold starts. A slot
-saved by an earlier version is fixed the next time it is moved or generated.
+**Slots sit on the road, and no slot goes under the map.** A slot is a level box
+one car long, drawn on the ground the car stands on. On a hill or a banking its
+centre can be on the ground with one end buried, so every slot the editor
+places, generates, respaces, drags or turns stands on the highest ground under
+its **whole footprint**, centre and corners, and the generator walks the ground
+out from pole a few meters at a time, so a road that climbs or banks away from
+pole is followed. A car is placed by its own size: its lowest point starts
+0.1 m over the slot, so it barely drops. On a slope the downhill end sits a
+little higher than the road.
+
+**▼ Down** puts a floating slot on the ground in one press, then lowers it
+0.1 m at a time, up to **1 m** under the ground found, for when a kerb, cone or
+barrier under a corner holds a slot up. Held, it stops on the ground; going
+under takes another press. **▲ Up** brings it back, but never off the ground.
+Shift+scroll does the same. A slot saved by an earlier version, when
+slots sat half a meter up, still puts the car on the ground, and is redrawn on
+the road the next time it is moved, lowered or generated.
 
 **Moving several slots at once.** Tick slots in the list (or press **All**), or
 **shift+click** them in Place mode; picked slots draw magenta. In Place mode a

@@ -6,6 +6,26 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Fixed
+
+- **Start positions floated, and dropped cars hard enough to damage them.**
+  Every grid slot sat at least half a meter over the ground and Down would not
+  take it lower. Slots now sit on the road, and a car is placed by its own
+  size, its lowest point 0.1 m over the slot. Down lands a floating slot on the
+  ground, then lowers it up to 1 m under, for a kerb or cone under a corner.
+  Grids saved before this still put cars on the ground. Generating a grid still
+  keeps every corner of every slot out of the map. See
+  [Building the grid](docs/REFERENCE.md#building-the-grid).
+
+#### Changed
+
+- **Up and Down move 0.1 m, and go faster when held.** The Place mode arrows
+  and shift+scroll move gates, props and grid slots 0.1 m a click or notch (a
+  gate's arrow was 2 m). Hold an arrow and it keeps going, faster the longer
+  you hold it.
+
 ## 0.30.0 - Black flags, pit stops and rulesets
 
 #### Added

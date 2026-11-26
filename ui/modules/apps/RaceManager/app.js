@@ -5927,6 +5927,28 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       $scope.nudgeLift = function (dir) {
         bngApi.engineLua('raceManager.nudgeLift(' + (dir >= 0 ? 1 : -1) + ')');
       };
+      // A HELD arrow: Lua steps once, then moves it faster the longer it is held.
+      // The repeat is a keep-alive, so a release this panel never sees (focus
+      // lost) still ends it in Lua. The document mouseup catches a release off
+      // the button.
+      var liftTicker = null;
+      function nudgeLiftStop() {
+        if (!liftTicker) { return; }
+        clearInterval(liftTicker);
+        liftTicker = null;
+        document.removeEventListener('mouseup', nudgeLiftStop, true);
+        bngApi.engineLua('raceManager.nudgeLiftHold(0)');
+      }
+      $scope.nudgeLiftDown = function (dir, ev) {
+        if (ev && ev.button !== 0) { return; }
+        nudgeLiftStop();
+        var call = 'raceManager.nudgeLiftHold(' + (dir >= 0 ? 1 : -1) + ')';
+        bngApi.engineLua(call);
+        liftTicker = setInterval(function () { bngApi.engineLua(call); }, 200);
+        document.addEventListener('mouseup', nudgeLiftStop, true);
+      };
+      $scope.nudgeLiftUp = nudgeLiftStop;
+      $scope.$on('$destroy', nudgeLiftStop);
       $scope.nudgeDelete = function () {
         if (!$scope.nudgeSel) { return; }
         bngApi.engineLua('raceManager.nudgeDelete()');
