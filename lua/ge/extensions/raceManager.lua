@@ -245,7 +245,7 @@ local TUNE = {
 
 -- Build stamp, pushed to the UI. Must match the server plugin and app.js -- see
 -- the note in main.lua for why a mismatch is otherwise invisible.
-local RM_BUILD = '0.30.2'
+local RM_BUILD = '0.30.3'
 
 -- ---------------------------------------------------------------------------
 -- State
@@ -265,6 +265,9 @@ local session = {
   maxResets  = -1,          -- -1 unlimited, 0 none, N per driver per session
   resetMode  = 'inplace',   -- inplace | checkpoint
   jokerEnabled = false,
+  -- What a second joker run costs (the server's rule): 'time' | 'dsq', seconds.
+  jokerExtra = 'time',
+  jokerExtraSeconds = 30,
   -- THE PACE LAP, in two halves (see the server's race.paceLap):
   --   paceLap  the RULE: the race starts behind the pace car, so the final lap
   --            is one crossing further out (effectiveLapTarget).
@@ -1782,7 +1785,8 @@ end
 -- Joker gates, armed in their own order so a driver keeps main-route progress.
 --   * Racing lap 1 (racingLap(), not the raw counter: behind the pace car the
 --     formation lap is localLap 1): any attempt is invalidated.
---   * Once per race: a completed joker is reported once; later runs are not.
+--   * Once per race: a later run is warned at its first gate and reported when
+--     complete, and the server penalises it (jokerExtra).
 local function checkJokerGates(prev, cur)
   if not session.jokerEnabled or #track.jokerRoute == 0 then return end
   if session.phase ~= 'racing' then return end
@@ -1802,8 +1806,22 @@ local function checkJokerGates(prev, cur)
   end
 
   if session.jokerTaken then
-    session.jokerArmed = 1
-    pushNotice('joker', 'Joker Lap already taken: this run does not count')
+    local cost = session.jokerExtra == 'dsq' and 'disqualified at the flag'
+      or (session.jokerExtraSeconds > 0 and string.format('+%gs penalty', session.jokerExtraSeconds))
+    if session.jokerArmed == 1 then
+      pushNotice('joker', 'JOKER ALREADY TAKEN' .. (cost and (': a second run is ' .. cost)
+        or ': this run does not count'))
+    end
+    if session.jokerArmed >= #track.jokerRoute then
+      session.jokerArmed = 1
+      if inMultiplayer() then
+        TriggerServerEvent('RM_JokerLap', jsonEncode({ lap = lapNow, extra = true }))
+      end
+      if cost then pushNotice('joker', 'SECOND JOKER: ' .. cost) end
+      log('W', 'raceManager', 'Joker route taken again on lap ' .. lapNow)
+    else
+      session.jokerArmed = session.jokerArmed + 1
+    end
     pushRouteState()
     return
   end
@@ -6763,7 +6781,7 @@ do
     'feedBoot', 'feedSet', 'feedStatus', 'feedState', 'feedCountdown',
     'feedOffline', 'feedStop', 'feedUpdate',
     'feedNewKey', 'feedOpenStyle', 'feedOpenFolder',
-    'feedSetControl', 'feedNewControlKey', 'feedCopyControl',
+    'feedSetControl', 'feedNewControlKey', 'feedCopyControl', 'feedBanner', 'feedLooks',
   }) do
     M[name] = feed[name]
   end
@@ -9019,6 +9037,8 @@ local function onServerUpdate(rawData)
   end
   if type(data.youSpectating) == 'boolean' then selfSpectating = data.youSpectating end
   session.jokerEnabled = data.jokerEnabled == true
+  if data.jokerExtra == 'time' or data.jokerExtra == 'dsq' then session.jokerExtra = data.jokerExtra end
+  if type(data.jokerExtraSeconds) == 'number' then session.jokerExtraSeconds = data.jokerExtraSeconds end
   -- The pace lap is the racing phase under yellow, so its notice is pushed on
   -- its own edge, after the YELLOW FLAG one, to be the one left on screen.
   local wasPacing = session.pacing
@@ -10224,6 +10244,15 @@ function M.setJokerEnabled(enabled)
   end
 end
 
+-- What a second joker run costs: 'time' (`seconds` each, 0 = none) or 'dsq'.
+function M.setJokerExtra(mode, seconds)
+  if inMultiplayer() then
+    TriggerServerEvent('RM_SetJokerExtra', jsonEncode({
+      mode = (mode == 'time' or mode == 'dsq') and mode or nil, seconds = tonumber(seconds),
+    }))
+  end
+end
+
 -- --- Settings relayed to the server ------------------------------------------
 function M.setNametags(enabled)
   if inMultiplayer() then
@@ -10719,6 +10748,8 @@ local DISPATCH = {
   RM_Maps            = M.onMaps,
   -- Lap records module: one map's boards, asked for or changed.
   RM_Records         = M.onRecords,
+  -- Overlay looks saved on the server, for the style editor (feed.lua).
+  RM_Looks           = M.feedLooks,
 }
 
 local function bindServerHandlers()

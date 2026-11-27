@@ -70,6 +70,8 @@ local SPEC = {
   { 'lapsBack', 'bool' },
   { 'cautionMode', { line = true, call = true } },
   { 'jokerEnabled', 'bool', default = false },
+  { 'jokerExtra', { time = true, dsq = true } },
+  { 'jokerExtraSeconds', 'half', 0, 300 },
   { 'ghostQuali', 'bool', default = false },
   { 'qualiFromPits', 'bool', default = false },
   { 'raceFromPits', 'bool', default = false },

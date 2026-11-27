@@ -1099,21 +1099,45 @@
   }
   // Turning: the next PER of the running order while there are more, else the
   // next page. Nothing turns with one page and no order to step through.
-  setInterval(function () {
-    if (VIEW !== 'banner' || !lastDoc || !(bTurn.cycle > 0)) { return; }
-    var now = Date.now();
-    if (now - bTurn.at < bTurn.cycle * 1000) { return; }
+  // `back` steps the other way. False when there was nowhere to go.
+  function turnBanner(now, back) {
     bTurn.at = now;
-    if (bTurn.more) { bTurn.offset += PER; }
+    if (back ? bTurn.offset > 0 : bTurn.more) { bTurn.offset = Math.max(0, bTurn.offset + (back ? -PER : PER)); }
     else {
-      var next = (bTurn.page + 1) % bTurn.pages;
-      if (next === bTurn.page && bTurn.offset === 0) { return; }
+      var next = (bTurn.page + (back ? bTurn.pages - 1 : 1)) % bTurn.pages;
+      if (next === bTurn.page && bTurn.offset === 0) { return false; }
       bTurn.page = next;
       bTurn.offset = 0;
     }
     bTurn.turnedAt = now;
-    rerender();
+    return true;
+  }
+  setInterval(function () {
+    if (VIEW !== 'banner' || !lastDoc || !(bTurn.cycle > 0)) { return; }
+    var now = Date.now();
+    if (now - bTurn.at < bTurn.cycle * 1000) { return; }
+    if (turnBanner(now, false)) { rerender(); }
   }, 250);
+
+  // A banner key in the game (the feed's `banner`): next, prev or a page. The
+  // first document only says where the count is; a press is a seq not seen.
+  // The page landed on gets a whole cycle. True when the banner moved.
+  var bannerSeq = null;
+  function bannerKey(b) {
+    var seq = isObj(b) && typeof b.seq === 'number' ? b.seq : 0;
+    if (bannerSeq === null || seq === bannerSeq) { bannerSeq = seq; return false; }
+    bannerSeq = seq;
+    if (VIEW !== 'banner') { return false; }
+    var now = Date.now();
+    if (b.go === 'next' || b.go === 'prev') { return turnBanner(now, b.go === 'prev'); }
+    if (typeof b.go === 'number' && b.go >= 1 && b.go <= bTurn.pages) {
+      bTurn.page = b.go - 1;
+      bTurn.offset = 0;
+      bTurn.at = bTurn.turnedAt = now;
+      return true;
+    }
+    return false;
+  }
 
   function results(doc) {
     var s = doc.session;
@@ -1212,7 +1236,9 @@
   function show(doc) {
     if (!doc || typeof doc !== 'object' || doc.feed !== 1) { return; }
     watchStyleSeq(doc.styleSeq);
-    if (DEMO) { return; }          // the sample race draws itself
+    // The sample race draws itself, but obeys the keys.
+    if (bannerKey(doc.banner) && DEMO) { rerender(); }
+    if (DEMO) { return; }
     if (doc.epoch === lastEpoch && doc.seq <= lastSeq) { return; }
     lastEpoch = doc.epoch; lastSeq = doc.seq;
     draw(doc);

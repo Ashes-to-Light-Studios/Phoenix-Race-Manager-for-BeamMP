@@ -1,0 +1,62 @@
+{
+  "raceManager_bannerNext": {
+    "cat": "gameplay", "order": 3000, "ctx": "tlua",
+    "title": "PRM banner: next page",
+    "desc": "Turns the broadcast overlay's banner on now (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner('next') end"
+  },
+  "raceManager_bannerPrev": {
+    "cat": "gameplay", "order": 3001, "ctx": "tlua",
+    "title": "PRM banner: previous page",
+    "desc": "Turns the broadcast overlay's banner back a page (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner('prev') end"
+  },
+  "raceManager_bannerPage1": {
+    "cat": "gameplay", "order": 3011, "ctx": "tlua",
+    "title": "PRM banner: page 1",
+    "desc": "Puts the broadcast overlay's banner on page 1 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(1) end"
+  },
+  "raceManager_bannerPage2": {
+    "cat": "gameplay", "order": 3012, "ctx": "tlua",
+    "title": "PRM banner: page 2",
+    "desc": "Puts the broadcast overlay's banner on page 2 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(2) end"
+  },
+  "raceManager_bannerPage3": {
+    "cat": "gameplay", "order": 3013, "ctx": "tlua",
+    "title": "PRM banner: page 3",
+    "desc": "Puts the broadcast overlay's banner on page 3 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(3) end"
+  },
+  "raceManager_bannerPage4": {
+    "cat": "gameplay", "order": 3014, "ctx": "tlua",
+    "title": "PRM banner: page 4",
+    "desc": "Puts the broadcast overlay's banner on page 4 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(4) end"
+  },
+  "raceManager_bannerPage5": {
+    "cat": "gameplay", "order": 3015, "ctx": "tlua",
+    "title": "PRM banner: page 5",
+    "desc": "Puts the broadcast overlay's banner on page 5 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(5) end"
+  },
+  "raceManager_bannerPage6": {
+    "cat": "gameplay", "order": 3016, "ctx": "tlua",
+    "title": "PRM banner: page 6",
+    "desc": "Puts the broadcast overlay's banner on page 6 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(6) end"
+  },
+  "raceManager_bannerPage7": {
+    "cat": "gameplay", "order": 3017, "ctx": "tlua",
+    "title": "PRM banner: page 7",
+    "desc": "Puts the broadcast overlay's banner on page 7 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(7) end"
+  },
+  "raceManager_bannerPage8": {
+    "cat": "gameplay", "order": 3018, "ctx": "tlua",
+    "title": "PRM banner: page 8",
+    "desc": "Puts the broadcast overlay's banner on page 8 (feed on)",
+    "onDown": "if raceManager and raceManager.feedBanner then raceManager.feedBanner(8) end"
+  }
+}

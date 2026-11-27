@@ -54,17 +54,19 @@ routine housekeeping can destroy is not persistent in any sense that matters.
 
 ## Modules inside the server plugin
 
-Ten parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
+Eleven parts of the plugin are self-contained: **Demo Derby**, **drag racing**,
 **map switching**, **lap records**, **updates**, **Discord**, **teams and car
-numbers**, **race rules and rulesets**, the **driver roster** and the **cup**.
+numbers**, **race rules and rulesets**, **saved overlay looks**, the **driver
+roster** and the **cup**.
 Each has its own state tables, its own `RM_*` event namespace and its own
 broadcast channel (teams and rules excepted: see below), and none of them is
 reachable from the racing state machine except through a handful of named
 functions declared at the top of the file.
 
-The first eight are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
-`records.lua`, `update.lua`, `discord.lua`, `teams.lua`, `rules.lua`) required
-as siblings; the other two are `do ... end` blocks inside `main.lua`.
+The first nine are separate FILES (`derby.lua`, `drag.lua`, `maps.lua`,
+`records.lua`, `update.lua`, `discord.lua`, `teams.lua`, `rules.lua`,
+`looks.lua`) required as siblings; the other two are `do ... end` blocks inside
+`main.lua`.
 Same isolation either way, reached two different ways for the same reason:
 Lua's 200-local ceiling.
 
@@ -75,7 +77,8 @@ win. `maps.lua`, `records.lua`, `rules.lua`, `teams.lua` and `update.lua` sort
 after, so they define nothing global at file scope: their `RM_Map*`,
 `RM_Records*`, `RM_Rules`, `RM_TeamsSet` and `RM_Update*` handlers are installed
 by `init()`, and each one's test checks that loading the file alone defines
-nothing. A new module must do the same unless its name sorts before `main`.
+nothing. A new module must do the same unless its name sorts before `main`;
+`looks.lua` sorts before and does the same anyway (`RM_Looks` from `init()`).
 
 **Race rules are found changed, not reported.** They live in `race`, set by a
 dozen handlers, and every one of those ends in `broadcastState`, which calls

@@ -295,11 +295,34 @@ check(p and p.lap == 2,
     .. tostring(p and p.lap) .. ')')
 
 -- ---------------------------------------------------------------------------
--- Once per race, pace lap or not
+-- A SECOND RUN is reported, and the server rules on it (jokerExtra)
 -- ---------------------------------------------------------------------------
+local function said(text)
+  for _, h in ipairs(hooks) do
+    if type(h.payload) == 'table' and type(h.payload.msg) == 'string'
+        and h.payload.msg:find(text, 1, true) then return true end
+  end
+  return false
+end
 clearLog()
 driveJoker()
-check(jokerSent() == nil, 'a second run of the joker route reports nothing')
+p = jokerSent()
+check(p ~= nil and p.extra == true, 'a second run of the joker route is reported as an extra')
+check(said('+30s penalty'), 'and the driver is told what it costs (+30s as shipped)')
+
+serverState({ phase = 'racing', maxResets = -1, totalLaps = 5, jokerEnabled = true,
+  paceLap = true, pacing = false, jokerExtra = 'dsq', jokerExtraSeconds = 30, drivers = {} })
+clearLog()
+driveJoker()
+check(jokerSent() ~= nil and said('disqualified at the flag'),
+  'under the disqualify rule the driver is told it costs the race')
+
+serverState({ phase = 'racing', maxResets = -1, totalLaps = 5, jokerEnabled = true,
+  paceLap = true, pacing = false, jokerExtra = 'time', jokerExtraSeconds = 0, drivers = {} })
+clearLog()
+driveJoker()
+check(jokerSent() ~= nil and said('this run does not count'),
+  'with 0 seconds it is still reported, and the driver told it does not count')
 RM.setEditorOpen(false)
 
 if fails == 0 then

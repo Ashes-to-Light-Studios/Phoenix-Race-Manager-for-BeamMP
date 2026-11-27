@@ -1357,6 +1357,117 @@ do
   check(copyPushes[#copyPushes].copied == false and opened ~= nil, 'no clipboard call at all: the same')
   setClipboard, openWebBrowser = nil, nil
 end
+
+-- The banner keys: a press is a new seq in the document, and the bindings
+-- file calls only what the extension has.
+do
+  local before = live()
+  check(before.banner == NULL, 'no banner key pressed yet: banner is null')
+  feed.feedBanner('next')
+  local d1 = live()
+  check(d1.banner ~= NULL and d1.banner.go == 'next' and d1.banner.seq == 1 and d1.seq > before.seq,
+    'a banner key is in the document at once, with a new seq')
+  feed.feedBanner(3)
+  check(live().banner.go == 3 and live().banner.seq == 2, 'a page number too')
+  feed.feedBanner(9); feed.feedBanner('sideways'); feed.feedBanner(2.5); feed.feedBanner(nil)
+  check(live().banner.seq == 2, 'anything else is ignored')
+
+  local fh = io.open('lua/ge/extensions/core/input/actions/raceManager.json', 'r')
+  local text = fh and fh:read('*a') or ''
+  if fh then fh:close() end
+  local ok, actions = pcall(parseJson, text)
+  check(ok and type(actions) == 'table', 'the bindings file is plain JSON')
+  local n, pages = 0, {}
+  for name, a in pairs(ok and actions or {}) do
+    n = n + 1
+    local arg = type(a.onDown) == 'string' and a.onDown:match('raceManager%.feedBanner%((.-)%) end$')
+    check(name:match('^raceManager_banner') and a.cat == 'gameplay' and a.ctx == 'tlua'
+      and type(a.title) == 'string' and arg ~= nil, 'binding ' .. name .. ' is a gameplay key calling feedBanner')
+    if arg then pages[#pages + 1] = arg end
+  end
+  check(n == 10, 'ten banner bindings: next, previous and pages 1 to 8 (got ' .. n .. ')')
+  table.sort(pages)
+  check(table.concat(pages, ',') == "'next','prev',1,2,3,4,5,6,7,8", 'each calls its own page')
+  local ext = io.open('lua/ge/extensions/raceManager.lua', 'r')
+  local src = ext and ext:read('*a') or ''
+  if ext then ext:close() end
+  check(src:find("'feedBanner'", 1, true) ~= nil, 'and the extension exposes feedBanner')
+end
+
+-- Saved looks on the race server: asked over RM_Looks, answered by ticket,
+-- checked both ways.
+do
+  local toServer = {}
+  TriggerServerEvent = function (e, p) toServer[#toServer + 1] = { e = e, p = p } end
+  local function lastAsk() return parseJson(toServer[#toServer].p) end
+  local admin, role = false, nil
+  feed.init({ build = '9.9.9', isAdmin = function () return admin end, role = function () return role end })
+  local function looksNow(q) return parseJson(get('/looks.json' .. (q or '')).body) end
+  local function post(t, key)
+    local r = request('POST', '/looks', t, { 'X-PRM-Key: ' .. (key or KEY) })
+    return r, (r.body and r.body:sub(1, 1) == '{') and parseJson(r.body) or nil
+  end
+
+  feed.feedOffline()
+  local j = looksNow()
+  check(j.connected == false and j.looks == NULL and #toServer == 0, 'not connected: no list, and nothing asked')
+  check(post('{"op":"get","name":"Formula"}').code == 503, 'and nothing can be asked')
+  feed.feedState(race())
+  j = looksNow()
+  check(j.looks == NULL and #toServer == 1 and toServer[1].e == 'RM_Looks' and lastAsk().op == 'list',
+    'connected: the list is asked for')
+  looksNow()
+  check(#toServer == 1, 'once, not on every read')
+  feed.feedLooks('{"op":"list","looks":[{"name":"Formula","by":"Admin","at":1700000000}]}')
+  j = looksNow()
+  check(#j.looks == 1 and j.looks[1].name == 'Formula' and j.looks[1].by == 'Admin' and j.looks[1].at == 1700000000,
+    'the server\'s list is served')
+  check(j.canSave == false and j.canDelete == false, 'a game with no login may not save or delete')
+
+  check(post('{"op":"get","name":"Formula"}', 'wrongwrongwrongwrong').code == 403, 'asking takes the style key')
+  check(post('{"op":"rename","name":"Formula"}').code == 400, 'an unknown op is refused')
+  check(post('{"op":"get","name":"   "}').code == 400, 'so is a blank name')
+  local r, res = post('{"op":"get","name":"Formula"}')
+  check(r.code == 200 and res.ok == true and type(res.ticket) == 'number', 'a load is asked, and given a ticket')
+  local ask = lastAsk()
+  check(ask.op == 'get' and ask.name == 'Formula' and ask.ticket == res.ticket,
+    'the server is asked for that look on that ticket')
+  check(looksNow('?ticket=' .. res.ticket).reply == NULL, 'no answer yet: reply is null')
+  feed.feedLooks('{"op":"get","ticket":' .. res.ticket .. ',"name":"Formula",'
+    .. '"style":{"colors":{"accent":"#e10600"},"opacity":7,"evil":"<script>"}}')
+  local rep = looksNow('?ticket=' .. res.ticket).reply
+  check(rep ~= NULL and rep.ok == true and rep.op == 'get' and rep.name == 'Formula',
+    'the answer is served on its ticket')
+  check(rep.style.colors.accent == '#e10600' and rep.style.opacity == 0.86 and rep.style.evil == nil,
+    'its style is checked: a good value kept, a bad one at the default, an unknown key gone')
+  check(table.concat(rep.rejected, ',') == 'evil,opacity', 'and what was left out is named')
+
+  check(post('{"op":"save","name":"Rally","style":{"opacity":0.5}}').code == 403,
+    'saving needs an admin or moderator login in the game')
+  admin, role = true, 'moderator'
+  j = looksNow()
+  check(j.canSave == true and j.canDelete == false, 'a moderator may save, not delete')
+  r, res = post('{"op":"save","name":"  Rally  ","style":{"opacity":0.5,"colors":{"accent":"#zzzzzz"}}}')
+  ask = lastAsk()
+  check(r.code == 200 and ask.op == 'save' and ask.name == 'Rally' and ask.style.opacity == 0.5
+    and ask.style.colors.accent == '#ff7a1a', 'a save sends the look checked, its name trimmed')
+  check(table.concat(res.rejected, ',') == 'colors.accent', 'and says what it left out')
+  feed.feedLooks('{"op":"saved","ticket":' .. res.ticket .. ',"name":"Rally","kept":false}')
+  rep = looksNow('?ticket=' .. res.ticket).reply
+  check(rep.ok == true and type(rep.warn) == 'string', 'a save the server could not write says so')
+  check(post('{"op":"delete","name":"Rally"}').code == 403, 'a moderator cannot delete')
+  role = 'admin'
+  r, res = post('{"op":"delete","name":"Rally"}')
+  check(r.code == 200 and lastAsk().op == 'delete', 'an admin can')
+  feed.feedLooks('{"op":"error","ticket":' .. res.ticket .. ',"msg":"No look is saved as \\"Rally\\"."}')
+  rep = looksNow('?ticket=' .. res.ticket).reply
+  check(rep.ok == false and rep.error == 'No look is saved as "Rally".', 'a refusal is served on its ticket')
+
+  feed.feedOffline()
+  check(looksNow().looks == NULL, 'leaving the server forgets its list')
+  TriggerServerEvent = nil
+  feed.init({ build = '9.9.9' })
+end
 feed.feedStop('unload')
 
 -- ===========================================================================
@@ -1390,7 +1501,7 @@ do
   end
   for _, route in ipairs({ '/live.json', '/drivers.json', '/grid.json', '/session.json',
       '/events.json', '/stream', '/overlay', '/teams.json', '/camera.json', '/style', '/style.json',
-      '/assets.json', '/assets/', 'styleSeq', 'event: style' }) do
+      '/assets.json', '/assets/', 'styleSeq', 'event: style', '/looks.json', '/looks', 'banner' }) do
     check(documented(route), 'the docs name ' .. route)
   end
   -- Every style key, by its path (colors.accent, labels.leader, opacity...).

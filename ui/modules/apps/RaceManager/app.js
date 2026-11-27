@@ -85,7 +85,9 @@ angular.module('beamng.apps')
         pitStopsRequired: 0,
         pitStopSecs: 30,
         // Assigned stalls: the seconds a stop in another driver's adds.
-        pitWrongSecs: 5
+        pitWrongSecs: 5,
+        // A second joker run: the seconds it costs under 'time'.
+        jokerExtraSecs: 30
       };
 
       // ----------------------------------------------------------------
@@ -169,6 +171,7 @@ angular.module('beamng.apps')
       // Rallycross joker lap.
       $scope.jokerEnabled = false;
       $scope.jokerGates = 0;      // joker gates the LOADED TRACK has (server's count)
+      $scope.jokerExtra = { mode: 'time', seconds: 30 };   // what a second run costs
       $scope.jokerRoute = [];     // joker gates placed/loaded on this client
       // The pit lane, as this client has it. Declared rather than left to the
       // first route state: the editor tabs read .length before a track has
@@ -1590,7 +1593,7 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Three separately deployed pieces, and BeamNG caches UI files: a stale
       // app.js just ignores a call, silently. Bump with main.lua, raceManager.lua
       // and app.json's "version" (wiring_test).
-      var APP_BUILD = '0.30.2';
+      var APP_BUILD = '0.30.3';
       $scope.appBuild    = APP_BUILD;
       $scope.clientBuild = null;   // from the client bridge (RaceManagerRoute)
       $scope.serverBuild = null;   // from the server broadcast (RaceManagerUpdate)
@@ -2560,6 +2563,12 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
           }
           $scope.myBlack = data.myBlack || null;
           $scope.jokerEnabled = !!data.jokerEnabled;
+          if (data.jokerExtra === 'time' || data.jokerExtra === 'dsq') {
+            var jxs = typeof data.jokerExtraSeconds === 'number' ? data.jokerExtraSeconds : 30;
+            // The box follows the server only when its value moved.
+            if ($scope.jokerExtra.seconds !== jxs) { $scope.settingsUi.jokerExtraSecs = jxs; }
+            $scope.jokerExtra = { mode: data.jokerExtra, seconds: jxs };
+          }
           $scope.paceLap = !!data.paceLap;
           $scope.pacing = !!data.pacing;
           $scope.greenReady = !!data.greenReady;
@@ -5515,6 +5524,17 @@ var rectSeen = { width: null, length: null, rot: null, wall: null, wallDepth: nu
       // Module 2: arm/disarm the joker lap requirement.
       $scope.toggleJoker = function () {
         bngApi.engineLua('raceManager.setJokerEnabled(' + (!$scope.jokerEnabled) + ')');
+      };
+      // What a second joker run costs. A blank box is mid-edit: nothing is sent.
+      $scope.setJokerExtra = function (mode) {
+        var s = parseFloat($scope.settingsUi.jokerExtraSecs);
+        if (isNaN(s)) { s = $scope.jokerExtra.seconds; }
+        if (mode !== 'time' && mode !== 'dsq') { mode = $scope.jokerExtra.mode; }
+        bngApi.engineLua('raceManager.setJokerExtra(' + luaStr(mode) + ', ' + s + ')');
+      };
+      $scope.applyJokerExtra = function () {
+        if (isNaN(parseFloat($scope.settingsUi.jokerExtraSecs))) { return; }
+        $scope.setJokerExtra();
       };
 
       // The game's own vehicle selector, from either Garage view.
