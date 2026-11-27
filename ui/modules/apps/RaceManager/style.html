@@ -177,6 +177,17 @@
   </section>
 
   <section class="card">
+    <h2>Saved looks</h2>
+    <p class="hint">Kept on the race server by name (Formula, Rallycross...) for every streamer on it. Load one, look it over, then Save. Logos and fonts it names are files on each PC: copy those into the overlay folder too.</p>
+    <p class="hint" id="looksState">Asking the server…</p>
+    <div class="maprows" id="looksList"></div>
+    <div class="addrow">
+      <input type="text" id="lookName" maxlength="32" placeholder="Name, e.g. Rallycross" aria-label="Name to save this look as">
+      <button type="button" id="lookSave">Save to server</button>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>Colors</h2>
     <div class="fields">
       <div class="field" data-key="colors.bg" data-type="color"><span class="lbl">Panel</span></div>
@@ -913,6 +924,113 @@
     });
   }
 
+  // ------------------------------------------- looks on the race server
+  // The feed asks the server and the answer comes later: each ask returns a
+  // ticket, and /looks.json?ticket= carries the answer once it is in.
+  var looks = { list: null, connected: false, canSave: false, canDelete: false, broken: null };
+  var lookBusy = false;
+  function lookDate(at) {
+    if (!(at > 0)) { return ''; }
+    var d = new Date(at * 1000);
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  function renderLooks() {
+    var list = $('looksList'), st = $('looksState');
+    clear(list);
+    var msg = '';
+    if (!looks.connected) { msg = 'Not connected to a server: looks are kept there.'; }
+    else if (looks.broken) { msg = looks.broken; }
+    else if (looks.list === null) { msg = 'Asking the server…'; }
+    else if (!looks.list.length) { msg = 'None saved yet.'; }
+    else if (!looks.canSave) { msg = 'Saving needs an admin or moderator login in the game.'; }
+    st.textContent = msg;
+    st.hidden = msg === '';
+    (looks.list || []).forEach(function (l) {
+      var sub = [l.by ? 'by ' + l.by : '', lookDate(l.at)].filter(Boolean).join(', ');
+      list.appendChild(h('div', { cls: 'maprow' }, [
+        h('span', { cls: 'mapname', text: l.name, title: l.name }),
+        h('small', { text: sub, style: 'flex:1' }),
+        h('button', { type: 'button', cls: 'small', text: 'Load', disabled: !key || lookBusy,
+          onclick: function () { loadLook(l.name); } }),
+        looks.canDelete ? h('button', { type: 'button', cls: 'small danger', text: 'Delete', disabled: !key || lookBusy,
+          onclick: function () { deleteLook(l.name); } }) : null
+      ]));
+    });
+    $('lookSave').disabled = !key || lookBusy || !looks.connected || !looks.canSave || !!looks.broken;
+    $('lookSave').title = !looks.canSave ? 'Saving needs an admin or moderator login in the game' : '';
+  }
+  function takeLooks(j) {
+    if (!isObj(j)) { return; }
+    looks.connected = j.connected === true;
+    looks.canSave = j.canSave === true;
+    looks.canDelete = j.canDelete === true;
+    looks.broken = typeof j.broken === 'string' ? j.broken : null;
+    looks.list = Array.isArray(j.looks) ? j.looks.filter(function (l) { return isObj(l) && typeof l.name === 'string'; }) : null;
+  }
+  var looksTries = 0;
+  function refreshLooks() {
+    return getJSON('/looks.json').then(function (j) {
+      takeLooks(j);
+      renderLooks();
+      // The first answer is on its way from the server.
+      if (looks.connected && looks.list === null && looksTries < 10) { looksTries += 1; setTimeout(refreshLooks, 1000); }
+    }).catch(function () { looks.connected = false; renderLooks(); });
+  }
+  // One ask, then its answer: resolves to the reply, or null after 10 s.
+  function lookAsk(body) {
+    return api('POST', '/looks', JSON.stringify(body)).then(function (res) {
+      if (!(res.ok && res.json && res.json.ok)) { note(failed(res, 'The server was not asked'), 'bad', 9000); return null; }
+      var ticket = res.json.ticket, until = Date.now() + 10000;
+      return new Promise(function (done) {
+        (function wait() {
+          getJSON('/looks.json?ticket=' + ticket).then(function (j) {
+            takeLooks(j);
+            if (isObj(j.reply)) { done(j.reply); return; }
+            if (Date.now() > until) { note('The server did not answer. Is the game still connected?', 'bad', 9000); done(null); return; }
+            setTimeout(wait, 300);
+          }).catch(function () { done(null); });
+        })();
+      });
+    });
+  }
+  function lookTask(body, onReply) {
+    if (!key || lookBusy) { return; }
+    lookBusy = true;
+    renderLooks();
+    lookAsk(body).then(function (r) {
+      lookBusy = false;
+      if (r && !r.ok) { note(r.error || 'The server refused it.', 'bad', 9000); }
+      else if (r) { onReply(r); }
+      renderLooks();
+    });
+  }
+  function loadLook(name) {
+    lookTask({ op: 'get', name: name }, function (r) {
+      if (!isObj(r.style)) { return; }
+      draft = whole(bodyOf(r.style));
+      syncAll();
+      var rej = Array.isArray(r.rejected) ? r.rejected : [];
+      note('Loaded "' + r.name + '": look it over, then Save.' + (rej.length ? ' Left out: ' + rej.join(', ') + '.' : ''), 'ok', 6000);
+    });
+  }
+  function deleteLook(name) {
+    if (!confirm('Delete "' + name + '" from the server? Nothing puts it back.')) { return; }
+    lookTask({ op: 'delete', name: name }, function (r) { note('Deleted "' + r.name + '" from the server.', 'ok', 4000); });
+  }
+  function saveLook() {
+    var name = $('lookName').value.replace(/\s+/g, ' ').trim();
+    if (!name) { note('Name the look first.', 'warn', 4000); $('lookName').focus(); return; }
+    var same = (looks.list || []).filter(function (l) { return l.name.toLowerCase() === name.toLowerCase(); })[0];
+    if (same && !confirm('Replace "' + same.name + '" on the server with this look?')) { return; }
+    lookTask({ op: 'save', name: name, style: bodyOf(draft) }, function (r) {
+      $('lookName').value = '';
+      note((same ? 'Updated "' : 'Saved "') + r.name + '" on the server, as this editor shows it now.', 'ok', 5000);
+      if (r.warn) { note(r.warn, 'warn', 12000); }
+    });
+  }
+  $('lookSave').addEventListener('click', saveLook);
+  $('lookName').addEventListener('keydown', function (e) { if (e.key === 'Enter') { saveLook(); } });
+
   // -------------------------------------------------------------- files
   function cleanName(n) {
     n = String(n || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9._-]/g, '')
@@ -1211,6 +1329,8 @@
       renderFiles();
       syncAll();
       listen();
+      refreshLooks();
+      setInterval(function () { if (!lookBusy) { refreshLooks(); } }, 10000);
     });
 
     var drop = $('drop');

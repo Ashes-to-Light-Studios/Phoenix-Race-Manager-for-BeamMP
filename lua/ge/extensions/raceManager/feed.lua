@@ -48,6 +48,8 @@ local STYLE_PAGE_FILE = '/ui/modules/apps/RaceManager/style.html'
 local CONTROL_PAGE_FILE = '/ui/modules/apps/RaceManager/control.html'
 -- Race control: declared here, filled in after the write path it shares.
 local Ctl = { MAX_BODY = 512 }
+-- Saved looks on the race server, the same way (server/RaceManager/looks.lua).
+local Looks = { MAX_BYTES = 16384, MAX_NAME = 32 }
 local DEFAULT_PORT = 8128
 local PORT_MIN, PORT_MAX = 1024, 65535
 local SCHEMA = 1
@@ -96,6 +98,7 @@ local S = {
   badKeys = {},          -- clock times of wrong keys, for the lockout
   lockUntil = 0,
   teams = nil,           -- { list, byId }: the league's teams, from RM_Update
+  banner = nil,          -- { seq, go }: the last banner key pressed (feedBanner)
   -- The race.
   last = nil,            -- the last RM_Update payload, kept while off too
   connected = false,
@@ -827,8 +830,11 @@ local function publish(model)
   local teams = encode(model.teams or {})
   local camera = encode(model.camera)
   local serverBuild = model.serverBuild and jsonString(model.serverBuild) or 'null'
+  local b = S.banner
+  local banner = b and ('{"seq":' .. jsonNumber(b.seq) .. ',"go":'
+    .. (type(b.go) == 'number' and jsonNumber(b.go) or jsonString(b.go)) .. '}') or 'null'
   local key = table.concat({ tostring(model.connected), serverBuild, session, drivers, grid, events,
-    teams, camera, S.styleSeq }, '\1')
+    teams, camera, S.styleSeq, banner }, '\1')
   if key == S.bodyKey then return false end
   S.bodyKey = key
   S.seq = S.seq + 1
@@ -842,6 +848,7 @@ local function publish(model)
     ',"ts":', jsonNumber(os.time()),
     ',"connected":', model.connected and 'true' or 'false',
     ',"styleSeq":', jsonNumber(S.styleSeq),
+    ',"banner":', banner,
     ',"session":', session,
     ',"drivers":', drivers,
     ',"grid":', grid,
@@ -1261,6 +1268,7 @@ local function indexPage()
     { '/style', 'Style editor (open it from the Feed panel: it needs the key)' },
     { '/style.json', 'style.json: the overlay\'s look' },
     { '/assets.json', 'assets.json: the overlay folder' },
+    { '/looks.json', 'looks.json: the looks saved on the race server' },
   }
   local items = {}
   for _, l in ipairs(links) do
@@ -1373,6 +1381,9 @@ local function writeRoute(method, path)
   if method == 'POST' and path == '/control' then
     return { kind = 'control', max = Ctl.MAX_BODY }
   end
+  if method == 'POST' and path == '/looks' then
+    return { kind = 'looks', max = Style.MAX_STYLE_BODY }
+  end
   local name = path:match('^/assets/(.+)$')
   if name and (method == 'POST' or method == 'DELETE') then
     return { kind = method == 'POST' and 'upload' or 'delete', name = name,
@@ -1394,6 +1405,7 @@ local function finishWrite(cl)
       if code then return refuse(code, why) end
       return jsonReply(200, { { 'ok', 'true' }, { 'action', jsonString(input.action) } })
     end
+    if route.kind == 'looks' then return Looks.write(body) end
     if route.kind == 'style' then
       if type(jsonDecode) ~= 'function' then return refuse(500, 'No JSON reader in this game build') end
       local okJ, input = pcall(jsonDecode, body)
@@ -1435,6 +1447,107 @@ local function badKey()
   kept[#kept + 1] = now
   S.badKeys = kept
   if #kept >= BAD_KEYS then S.lockUntil = now + LOCKOUT end
+end
+
+-- ---------------------------------------------------------------------------
+-- Saved looks: kept on the race server by name (server/RaceManager/looks.lua)
+-- ---------------------------------------------------------------------------
+-- The style editor asks through this feed and the feed asks the server over
+-- RM_Looks. The answer comes later, so each ask gets a ticket the editor waits
+-- on (GET /looks.json?ticket=N). A look is checked like any style write, both
+-- ways, and a loaded one only fills the editor's draft.
+Looks.state = { list = nil, broken = nil, askedAt = -math.huge, ticket = 0, replies = {} }
+
+function Looks.role()
+  if type(host.role) ~= 'function' then return nil end
+  local ok, r = pcall(host.role)
+  return ok and r or nil
+end
+
+-- An encode()-able table to the server. false and why when it cannot go.
+function Looks.send(t)
+  if not S.connected or type(TriggerServerEvent) ~= 'function' then return false, 'offline' end
+  local body = encode(t)
+  if #body > Looks.MAX_BYTES then return false, 'too big' end
+  return (pcall(TriggerServerEvent, 'RM_Looks', body)), 'offline'
+end
+
+-- The list, at most every 5 s. The server pushes it again on every change.
+function Looks.askList()
+  local L = Looks.state
+  if S.clock - L.askedAt < 5 then return end
+  L.askedAt = S.clock
+  Looks.send({ _k = { 'op' }, op = 'list' })
+end
+
+-- GET /looks.json: the list, who may change it, and the answer to `ticket`.
+function Looks.get(query)
+  local L = Looks.state
+  if L.list == nil and S.connected then Looks.askList() end
+  local ticket = tonumber((query or ''):match('ticket=(%d+)'))
+  local r = ticket and L.replies[ticket]
+  local admin = Ctl.isAdmin()
+  local reply = 'null'
+  if r then
+    reply = '{"ticket":' .. jsonNumber(ticket) .. ',"op":' .. jsonString(r.op)
+      .. ',"ok":' .. (r.op ~= 'error' and 'true' or 'false')
+      .. ',"name":' .. (r.name and jsonString(r.name) or 'null')
+      .. ',"error":' .. (r.error and jsonString(r.error) or 'null')
+      .. ',"warn":' .. (r.warn and jsonString(r.warn) or 'null')
+      .. ',"style":' .. (r.style or 'null')
+      .. ',"rejected":' .. jsonList(r.rejected or {}) .. '}'
+  end
+  return '{"connected":' .. (S.connected and 'true' or 'false')
+    .. ',"canSave":' .. (admin and 'true' or 'false')
+    .. ',"canDelete":' .. ((admin and Looks.role() == 'admin') and 'true' or 'false')
+    .. ',"broken":' .. (L.broken and jsonString(L.broken) or 'null')
+    .. ',"looks":' .. (L.list and encode(L.list) or 'null')
+    .. ',"reply":' .. reply .. '}'
+end
+
+-- POST /looks (the style key): { op = list | get | save | delete, name, style }.
+function Looks.write(body)
+  if type(jsonDecode) ~= 'function' then return refuse(500, 'No JSON reader in this game build') end
+  local okJ, input = pcall(jsonDecode, body)
+  if not okJ or type(input) ~= 'table' then return refuse(400, 'Not a JSON object') end
+  local op = input.op
+  if op ~= 'list' and op ~= 'get' and op ~= 'save' and op ~= 'delete' then
+    return refuse(400, 'Unknown op: ' .. tostring(op):sub(1, 20))
+  end
+  if not S.connected then return refuse(503, 'Not connected to a server: looks are kept there') end
+  local L = Looks.state
+  if op == 'list' then
+    L.askedAt = -math.huge
+    Looks.askList()
+    return jsonReply(200, { { 'ok', 'true' } })
+  end
+  local name = type(input.name) == 'string' and input.name:gsub('%c', ''):gsub('^%s+', ''):gsub('%s+$', '') or ''
+  if name == '' or #name > Looks.MAX_NAME then
+    return refuse(400, 'A look\'s name is 1 to ' .. Looks.MAX_NAME .. ' characters')
+  end
+  if op == 'save' and not Ctl.isAdmin() then
+    return refuse(403, 'Saving a look on the server takes an admin or moderator login in the game')
+  end
+  if op == 'delete' and not (Ctl.isAdmin() and Looks.role() == 'admin') then
+    return refuse(403, 'Deleting a look takes the admin login in the game')
+  end
+  local msg = { _k = { 'op', 'name', 'ticket' }, op = op, name = name, ticket = L.ticket + 1 }
+  local rejected = {}
+  if op == 'save' then
+    if type(input.style) ~= 'table' then return refuse(400, 'No style to save') end
+    local style
+    style, rejected = Style.clean(input.style, Style.defaults())
+    msg._k[4] = 'style'
+    msg.style = Style.toWire(style, 0, 0)
+  end
+  local sent, why = Looks.send(msg)
+  if not sent then
+    if why == 'too big' then return refuse(413, 'That look is too big to keep on the server') end
+    return refuse(503, 'Could not reach the server')
+  end
+  L.ticket = L.ticket + 1
+  return jsonReply(200, { { 'ok', 'true' }, { 'ticket', jsonNumber(L.ticket) },
+    { 'rejected', jsonList(rejected) } })
 end
 
 -- ---------------------------------------------------------------------------
@@ -1674,6 +1787,7 @@ local function handle(cl, head, rest)
   elseif path == '/camera.json' then body, ctype = parts.camera or 'null', JSON
   elseif path == '/style.json' then body, ctype = S.styleBody or '{}', JSON
   elseif path == '/assets.json' then body, ctype = assetsBody(), JSON
+  elseif path == '/looks.json' then body, ctype = Looks.get(query), JSON
   elseif path == '/style' or path == '/style.html' then body, ctype = stylePage(), HTML
   elseif path == '/overlay' or path == '/overlay.html' then body, ctype = overlayPage(), HTML
   elseif path == '/' or path == '/index.html' then body, ctype = indexPage(), HTML
@@ -1878,6 +1992,7 @@ end
 -- Left the server: readers see "not connected" rather than a frozen race.
 function D.feedOffline()
   S.last, S.connected, S.countdown, S.teams = nil, false, nil, nil
+  Looks.state.list, Looks.state.broken = nil, nil
   if S.running then refreshSafely() end
 end
 
@@ -1906,6 +2021,54 @@ function D.feedUpdate(dt)
     S.cameraAt = S.clock + CAMERA_EVERY
     cameraCheck()
   end
+end
+
+-- A banner key (lua/ge/extensions/core/input/actions/raceManager.json): 'next',
+-- 'prev' or a page, 1 to 8. It rides the document as `banner`, so pollers get it
+-- too, and each overlay acts on a seq it has not seen.
+function D.feedBanner(go)
+  local n = tonumber(go)
+  if go ~= 'next' and go ~= 'prev' then
+    if not n or n ~= math.floor(n) or n < 1 or n > 8 then return end
+    go = n
+  end
+  S.banner = { seq = (S.banner and S.banner.seq or 0) + 1, go = go }
+  if S.running then refreshSafely() else say('I', 'banner key ignored: the feed is off') end
+end
+
+-- RM_Looks from the server: the list, or the answer to one ticket. A look
+-- loaded is checked here as a style write is, before the editor sees it.
+function D.feedLooks(raw)
+  local ok, d = pcall(jsonDecode, raw)
+  if not ok or type(d) ~= 'table' then return end
+  local L = Looks.state
+  if d.op == 'list' then
+    local list = {}
+    for _, l in ipairs(type(d.looks) == 'table' and d.looks or {}) do
+      if type(l) == 'table' and type(l.name) == 'string' and #l.name <= Looks.MAX_NAME then
+        list[#list + 1] = { _k = { 'name', 'by', 'at' }, name = l.name,
+          by = type(l.by) == 'string' and l.by:sub(1, 64) or '', at = num(l.at) or 0 }
+      end
+    end
+    L.list = list
+    L.broken = type(d.broken) == 'string' and d.broken or nil
+    return
+  end
+  local t = num(d.ticket)
+  if not t then return end
+  local r = { op = d.op, name = type(d.name) == 'string' and d.name or nil }
+  if d.op == 'get' then
+    local style, rejected = Style.clean(type(d.style) == 'table' and d.style or {}, Style.defaults())
+    r.style, r.rejected = encode(Style.toWire(style, 0, 0)), rejected
+  elseif d.op == 'error' then
+    r.error = type(d.msg) == 'string' and d.msg or 'The server refused it'
+  elseif d.op == 'saved' then
+    if d.kept == false then r.warn = 'The server could not write Data/looks.json: this look is gone after a restart.' end
+  elseif d.op ~= 'deleted' then
+    return
+  end
+  L.replies[t] = r
+  L.replies[t - 8] = nil
 end
 
 -- The panel's New key: the old link stops working.

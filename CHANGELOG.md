@@ -6,6 +6,25 @@ tag, the packaged zip, and the build stamp the app shows - see the note in
 
 [← Back to the README](README.md)
 
+## Unreleased
+
+#### Added
+
+- **Banner keys.** Bind **PRM banner: next page**, **previous page** and
+  **page 1** to **page 8** in the game's Controls (Gameplay) to turn every
+  overlay banner the feed serves, each through its own pages. The page landed
+  on stays up a whole cycle. See [the banner](docs/REFERENCE.md#the-banner).
+- **Saved looks on the server.** The style editor's new **Saved looks** card
+  keeps overlay looks on the race server by name (Formula, Rallycross...), for
+  every streamer on it. Anyone loads one into their editor; saving takes an
+  admin or moderator login in the game, deleting the admin login. See
+  [Saved looks on the server](docs/REFERENCE.md#saved-looks-on-the-server).
+- **A second joker run is penalised.** **Extra joker** under the Joker lap
+  switch: **Time** (30 s on the race time per extra run as shipped, 0 for none)
+  or **Disqualify** at the flag. The driver is warned at the joker's first gate.
+  A second run used to be ignored. See
+  [Rallycross joker laps](docs/REFERENCE.md#rallycross-joker-laps).
+
 ## 0.30.2 - Assigned pit stalls, grid on the ground
 
 #### Added

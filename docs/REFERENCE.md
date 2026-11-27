@@ -1381,6 +1381,8 @@ crossed, so it is not left stuck, and the skip costs a **warning**, then the
 | If missed | `pitStopMissed` | `"dsq"` | `"dsq"` (disqualified at the flag) or `"time"` |
 | + s per stop | `pitStopPenaltySeconds` | `30` | 1-600, in steps of 0.5, per missing stop under `"time"` |
 | Wrong stall | `pitWrongStallSeconds` | `5` | 0-60, in steps of 0.5: added to a stop in another driver's [assigned stall](#assigned-pit-stalls), 0 off |
+| Extra joker | `jokerExtra` | `"time"` | `"time"` or `"dsq"`: what a second [joker](#rallycross-joker-laps) run costs |
+| + s each | `jokerExtraSeconds` | `30` | 0-300, in steps of 0.5, per extra run under `"time"`, 0 none |
 
 The `config.json` values are what the server starts with; the panel changes
 them for the night. Like every regulation they are locked once a countdown or
@@ -2711,12 +2713,22 @@ enforced:
 - The joker route must be completed **exactly once per race**.
 - **Lap 1 is closed**: any joker attempt on the opening lap is invalidated by
   the client on the spot - the progress is thrown away and nothing is reported.
-- Repeat runs after a valid one are ignored and flagged to the driver.
-- At the flag the **server rules on every finisher**. Anyone who did not take
-  the joker exactly once is reclassified as
-  **`Disqualified - Missed Joker`** (or `Disqualified - Extra Joker`), which
-  goes straight into the results `.txt` alongside a `Joker` column showing the
-  lap each driver used.
+- **A second run is penalised.** The driver is warned at its first gate
+  (`JOKER ALREADY TAKEN: a second run is +30s penalty`), and **Extra joker**
+  under the Joker lap switch decides what completing it costs:
+
+  | Extra joker | What a second run costs |
+  |-------------|-------------------------|
+  | **Time** (default) | The seconds you set (30 as shipped) on the race time **at once**, for each run after the first, like a [checkpoint-skip](#checkpoint-skips-track-cuts) penalty: on the board's penalty badge, in the final classification, and servable in the pits when [Serve in pits](#serving-penalty-seconds-in-the-pits) is on. `0` is no penalty |
+  | **Disqualify** | `Disqualified - Extra Joker` at the flag |
+
+  `jokerExtra` (`"time"` or `"dsq"`) and `jokerExtraSeconds` (0-300, in steps
+  of 0.5) in `config.json`. Kept in [rulesets](#rulesets), and locked while a
+  session runs.
+- At the flag the **server rules on every finisher**. Anyone who never took
+  the joker is reclassified as **`Disqualified - Missed Joker`**, which goes
+  straight into the results `.txt` alongside a `Joker` column showing the lap
+  each driver used (`lap 4`, or `lap 4 x2` for a driver who took it twice).
 
 #### Seeing the checkpoints
 
@@ -3536,13 +3548,15 @@ above exist; anything else is refused.
 | `/style.json` | The overlay's look, as last saved. |
 | `/assets.json` | The files in the overlay folder (logos, fonts, a stylesheet), with the limits. |
 | `/assets/<name>` | One of those files. |
+| `/looks.json` | The [looks saved on the race server](#saved-looks-on-the-server), by name. |
 | `/` | A page with all of these as links. |
 
 Every answer carries `Access-Control-Allow-Origin: *` and `Cache-Control:
 no-store`, so a page from anywhere can read it and nothing caches it. Nothing
 here changes anything in the game. The one thing that can be written is the
 overlay's own look ([Styling the overlay](#styling-the-overlay)), and only with
-the style key.
+the style key; with the key and the game's admin or moderator login, a look can
+also be [kept on the race server](#saved-looks-on-the-server).
 
 ### OBS, vMix and your own graphics
 
@@ -3682,6 +3696,21 @@ field. The words beside each value are in the style editor's **Words** card.
 For a stylesheet of your own, the banner has `data-page` (1, 2...), each of its
 cells `data-item` (`lap`, `order`...), and the part that turns is `.page`.
 
+**Turning it by key.** Bind the keys in the game's **Options → Controls →
+Bindings**, under **Gameplay**:
+
+| Binding | What it does |
+|---|---|
+| **PRM banner: next page** | Turns now, as the timer would: the next drivers of the running order while there are more, else the next page |
+| **PRM banner: previous page** | Back: the drivers before while there are, else the page before |
+| **PRM banner: page 1** to **page 8** | Straight to that page. A banner with fewer pages ignores it |
+
+Every banner the feed serves turns at once, each through its own pages (a link's
+`&show=` included), and the page it lands on stays up for a whole cycle before
+the timer moves on. The keys work in the game the feed runs in, while the feed is
+on; the banner keeps its own timer either way. For pages that only turn by key,
+give the link a long `&cycle=` (`&cycle=600`).
+
 ### Styling the overlay
 
 **The style editor.** On the Feed panel, **Copy editor link**, then paste it
@@ -3696,7 +3725,34 @@ without a refresh (they get `event: style` on the stream; one that polls sees
 `styleSeq` move and fetches `/style.json` again). **Revert** goes back to what
 is saved, **Start over** to the defaults. **Export** and **Import** pass a look
 between streamers as a file, to keep a league's broadcasts alike; send the logos
-and fonts it uses along with it.
+and fonts it uses along with it. Or keep it on the race server, next.
+
+#### Saved looks on the server
+
+The **Saved looks** card keeps looks on the race server by name, **Formula**,
+**Rallycross**, for every streamer who joins it:
+
+- **Save to server** keeps the look the editor shows now (saved or not) under
+  the name you type. A name already kept (in any case) asks, then replaces it.
+  It takes an **admin or moderator login in the game**.
+- **Load** puts a saved look in the editor, checked like any save: nothing
+  changes on stream until you press **Save**. Anyone connected may load one.
+- **Delete** is **admin only**, like a ruleset: nothing puts it back.
+- Up to 30 looks, each at most 16 KB (a whole look is about 4 KB). They are in
+  `Data/looks.json` on the server and come back after a restart.
+
+A look names its logos and fonts (`asset:logo.png`), and those files stay on
+each PC: copy them into each streamer's overlay folder too. The card needs the
+editor's key and the game connected to the server; the list refreshes by
+itself.
+
+From a script: `GET /looks.json` is the list (`looks`: `name`, `by`, `at`),
+`canSave`, `canDelete`, `connected` and `broken` (why the server's file cannot be
+written, or `null`). A `POST` to `/looks` with the style key, `{"op": "get",
+"name": "Formula"}` (or `"save"` with a `style`, or `"delete"`), answers with a
+`ticket`; the server's answer then arrives on `GET /looks.json?ticket=N` as
+`reply`: `ok`, `op`, `name`, `error`, and for a load the checked `style` and the
+`rejected` keys.
 
 **The style key.** Saving and uploading take a key. The Feed panel's editor link
 carries it after `#key=`, a part of an address no browser ever sends anywhere,
@@ -3815,8 +3871,10 @@ the app shows it (`1:23.456`, `+1.2`, `+1:02.3`, `+1 LAP`, `+2 LAPS`, `3/10`,
 server's. `seq` goes up by one with every change, and `epoch` is when the feed
 started (a new `epoch` means `seq` started again). `ts` is when this copy was
 made. `connected` is `false` until the race arrives and after leaving the
-server. `styleSeq` goes up whenever the overlay's look changes. Then `session`,
-`drivers`, `grid`, `teams`, `camera` and `events`.
+server. `styleSeq` goes up whenever the overlay's look changes. `banner` is the
+last [banner key](#the-banner) pressed in the game, `{"seq": 3, "go": "next"}`
+(`go` is `"next"`, `"prev"` or a page number), or `null`: act on a `seq` you have
+not seen. Then `session`, `drivers`, `grid`, `teams`, `camera` and `events`.
 
 **`session`**
 

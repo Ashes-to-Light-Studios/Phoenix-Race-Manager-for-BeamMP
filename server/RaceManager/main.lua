@@ -108,6 +108,10 @@ local CFG = {
   pitStopsRequired      = 0,
   pitStopMissed         = 'dsq',
   pitStopPenaltySeconds = 30,
+  -- A JOKER RUN AFTER THE FIRST in a race: 'time' (jokerExtraSeconds on the
+  -- race time for each one, 0 = no penalty) or 'dsq' (disqualified at the flag).
+  jokerExtra            = 'time',
+  jokerExtraSeconds     = 30,
   -- ASSIGNED PIT STALLS (Teams panel): a driver with a stall of their own who
   -- stops in another driver's is held this many seconds longer, in a race or
   -- qualifying. 0 turns it off. A stall nobody has is free for anyone.
@@ -200,6 +204,8 @@ local race = {
   maxResets    = CFG.unlimitedResets,  -- vehicle resets allowed per driver per session
   resetMode    = 'inplace',  -- what a legal reset does: 'inplace' | 'checkpoint'
   jokerEnabled = false,      -- rallycross joker lap required exactly once per race
+  jokerExtra        = CFG.jokerExtra,         -- a second run: 'time' | 'dsq'
+  jokerExtraSeconds = CFG.jokerExtraSeconds,  -- per extra run under 'time'
   -- ---------------------------------------------------------------------
   -- THE PACE LAP
   -- ---------------------------------------------------------------------
@@ -1580,6 +1586,8 @@ local function broadcastState(targetPid)
     maxResets    = race.maxResets,
     resetMode    = race.resetMode,
     jokerEnabled = race.jokerEnabled,
+    jokerExtra        = race.jokerExtra,
+    jokerExtraSeconds = race.jokerExtraSeconds,
     -- Race entry and the grid. youSpectating: targeted sends only.
     youSpectating = selfSpectating,
     entrants     = entrantCount(),
@@ -2406,7 +2414,8 @@ local function buildResultsText(cupRound)
   add(string.format(' Regulations: resets %s | joker lap %s',
     race.maxResets < 0 and 'unlimited'
       or (race.maxResets == 0 and 'not allowed' or tostring(race.maxResets) .. ' per driver'),
-    race.jokerEnabled and 'required exactly once' or 'disabled'))
+    race.jokerEnabled and ('required exactly once, a second run ' .. race.jokerExtraText())
+      or 'disabled'))
   -- Mandatory pit stops, as the race ran them (race.pitStopRun, set at GO).
   local pitRule = race.pitStopRun
   if (pitRule.required or 0) > 0 then
@@ -2463,7 +2472,15 @@ local function buildResultsText(cupRound)
   add('')
   add('--- RACE RESULTS ---')
   -- Regulation columns only when armed, so a plain race exports as always.
-  local jokerCol  = race.jokerEnabled and string.format(' %-7s', 'Joker') or ''
+  -- "lap 4", or "lap 4 x2" for a car that took it twice: as wide as the widest.
+  local function jokerCell(rec)
+    local n = rec.jokerTaken or 0
+    if n == 0 then return 'missed' end
+    return 'lap ' .. tostring(rec.jokerLap or '?') .. (n > 1 and (' x' .. n) or '')
+  end
+  local jokerW = 7
+  for _, rec in ipairs(final) do jokerW = math.max(jokerW, #jokerCell(rec)) end
+  local jokerCol  = race.jokerEnabled and string.format(' %-' .. jokerW .. 's', 'Joker') or ''
   local resetCol  = race.maxResets >= 0 and string.format(' %-6s', 'Resets') or ''
   -- The class column, only when one was run, read off the classification (what
   -- was RUN; a retag after the flag must not rewrite it).
@@ -2499,9 +2516,7 @@ local function buildResultsText(cupRound)
         .. (rec.heldPos and (' (was P' .. rec.heldPos .. ')') or '')
     end
     local tag = (i == 1 and classified) and '  << RACE WINNER' or ''
-    local jokerVal = race.jokerEnabled
-      and string.format(' %-7s', (rec.jokerTaken or 0) == 0 and 'missed'
-        or ('lap ' .. tostring(rec.jokerLap or '?'))) or ''
+    local jokerVal = race.jokerEnabled and string.format(' %-' .. jokerW .. 's', jokerCell(rec)) or ''
     -- Blocked attempts appended ("3/3+2").
     local resetVal = race.maxResets >= 0
       and string.format(' %-6s', string.format('%d/%d%s', rec.resets or 0, race.maxResets,
@@ -2682,9 +2697,9 @@ end
 -- ---------------------------------------------------------------------------
 -- Joker lap ruling (Module 2)
 -- ---------------------------------------------------------------------------
--- Clients police the joker live (once per race, never on lap 1) and report each
--- completion. At the flag every finisher must have taken it exactly once, or the
--- result becomes a disqualification in the results file.
+-- Clients police the joker live (never on lap 1) and report each completion. At
+-- the flag a finisher who never took it is disqualified, and so is one who took
+-- it twice under jokerExtra 'dsq'; under 'time' the extra runs were timed already.
 local function applyJokerRuling()
   if not race.jokerEnabled then return 0 end
   -- Never on a track with no joker gates (it would disqualify every finisher);
@@ -2695,7 +2710,8 @@ local function applyJokerRuling()
   end
   local excluded = 0
   for _, rec in pairs(players) do
-    if rec.status == 'finished' and (rec.jokerTaken or 0) ~= 1 then
+    local taken = rec.jokerTaken or 0
+    if rec.status == 'finished' and (taken == 0 or (taken > 1 and race.jokerExtra == 'dsq')) then
       rec.status = 'dsq'
       rec.outReason = (rec.jokerTaken or 0) == 0
         and 'Disqualified - Missed Joker'
@@ -3002,7 +3018,8 @@ local function finishSession(reason)
   broadcastState()
   if excluded > 0 then
     MP.SendChatMessage(-1, string.format(
-      '[RaceManager] Joker lap ruling: %d driver%s disqualified for not taking the Joker Route exactly once.',
+      '[RaceManager] Joker lap ruling: %d driver%s disqualified for not taking the Joker Route '
+        .. (race.jokerExtra == 'dsq' and 'exactly once.' or 'at all.'),
       excluded, excluded == 1 and '' or 's'))
   end
   if unserved > 0 then
@@ -4317,6 +4334,25 @@ function RM_onSetJokerEnabled(pid, rawData)
     .. ' by ' .. (MP.GetPlayerName(pid) or pid))
 end
 
+-- What a second joker run costs: { mode = 'time'|'dsq', seconds }. Locked mid-race.
+function RM_onSetJokerExtra(pid, rawData)
+  local data = adminPayload(pid, rawData, true)
+  if not data then return end
+  if data.mode == 'time' or data.mode == 'dsq' then race.jokerExtra = data.mode end
+  local n = tonumber(data.seconds)
+  if n and n == n then race.jokerExtraSeconds = race.halfStep(n, 0, 300) end
+  broadcastState()
+  print('[RaceManager] Extra joker set by ' .. tostring(MP.GetPlayerName(pid) or pid) .. ': '
+    .. race.jokerExtraText())
+end
+
+-- "disqualified", "+30.0s each", "no penalty": the results header and the log.
+function race.jokerExtraText()
+  if race.jokerExtra == 'dsq' then return 'disqualified' end
+  if (race.jokerExtraSeconds or 0) <= 0 then return 'no penalty' end
+  return string.format('+%.1fs each', race.jokerExtraSeconds)
+end
+
 -- The pace lap for the next race. Idle-locked (it changes sessionLapTarget).
 -- Refused out loud on a sprint stage, where there is no lap to form up on.
 function RM_onSetPaceLap(pid, rawData)
@@ -4381,14 +4417,41 @@ function RM_onSetCautionMode(pid, rawData)
     or 'race back to the line') .. ' (set by ' .. tostring(MP.GetPlayerName(pid) or pid) .. ')')
 end
 
--- A client completed the joker route (it enforced lap 1 and once); the server
--- records it and rules at the flag.
+-- A second joker run or later. Time goes on at once, as a checkpoint penalty's
+-- does; a disqualification waits for the flag (applyJokerRuling).
+function race.jokerExtraRun(rec)
+  local what = rec.jokerTaken == 2 and 'joker taken twice'
+    or string.format('joker taken %d times', rec.jokerTaken)
+  if race.jokerExtra == 'dsq' then
+    MP.SendChatMessage(rec.id, '[RaceManager] Joker already taken: disqualified at the flag')
+    race.tellRaceControl(string.format('[RaceManager] Race control: %s %s: disqualified at the flag',
+      displayName(rec), what))
+    race.stewardNote(rec, what .. ': disqualified at the flag')
+    return
+  end
+  local add = race.jokerExtraSeconds or 0
+  if add <= 0 then
+    print(string.format('[RaceManager] %s: %s, no penalty set', rec.name, what))
+    return
+  end
+  rec.penaltySeconds = (rec.penaltySeconds or 0) + add
+  race.owePitTime(rec)
+  MP.SendChatMessage(rec.id, string.format('[RaceManager] Joker already taken: +%.1fs penalty%s',
+    add, race.pitServeHint()))
+  race.tellRaceControl(string.format('[RaceManager] Race control: %s %s: +%.1fs',
+    displayName(rec), what, add))
+  race.stewardNote(rec, string.format('%s: +%.1fs', what, add))
+end
+
+-- A client completed the joker route (it enforced lap 1); the server records
+-- each run and rules on the extras.
 function RM_onJokerLap(pid, rawData)
   -- Race only: no joker in qualifying.
   if race.phase ~= 'racing' or isQualiSession() then return end
   local rec = players[pidKey(pid) or -1]
   if not rec or rec.status ~= 'racing' then return end
   rec.jokerTaken = (rec.jokerTaken or 0) + 1
+  if rec.jokerTaken > 1 then race.jokerExtraRun(rec) end
   local lap = decodeNumber(rawData, 'lap')
   -- The fallback must agree with the client, which reports the RACING lap
   -- (currentLap counts crossings, one more behind the pace car).
@@ -7162,6 +7225,9 @@ local function applyConfigTable(data)
   str('pitStopMissed', { dsq = true, time = true })
   num('pitStopPenaltySeconds', 1, 600)
   num('pitWrongStallSeconds', 0, 60)
+  str('jokerExtra', { dsq = true, time = true })
+  num('jokerExtraSeconds', 0, 300)
+  CFG.jokerExtraSeconds     = race.halfStep(CFG.jokerExtraSeconds, 0, 300)
   CFG.pitStopsRequired      = math.floor(CFG.pitStopsRequired)
   CFG.pitStopPenaltySeconds = race.halfStep(CFG.pitStopPenaltySeconds, 1, 600)
   CFG.pitWrongStallSeconds  = race.halfStep(CFG.pitWrongStallSeconds, 0, 60)
@@ -7284,6 +7350,8 @@ local function configFileText()
     pitStopMissed         = CFG.pitStopMissed,
     pitStopPenaltySeconds = CFG.pitStopPenaltySeconds,
     pitWrongStallSeconds  = CFG.pitWrongStallSeconds,
+    jokerExtra            = CFG.jokerExtra,
+    jokerExtraSeconds     = CFG.jokerExtraSeconds,
     blueFlagWithin = CFG.blueFlagWithin,
     blueFlagClear  = CFG.blueFlagClear,
     qualiLapLimit  = CFG.qualiLapLimit,
@@ -7349,6 +7417,8 @@ local function applyConfigToRace()
   race.pitStopMissed         = CFG.pitStopMissed
   race.pitStopPenaltySeconds = CFG.pitStopPenaltySeconds
   race.pitWrongStallSeconds  = CFG.pitWrongStallSeconds
+  race.jokerExtra            = CFG.jokerExtra
+  race.jokerExtraSeconds     = CFG.jokerExtraSeconds
   race.qualiLapLimit  = CFG.qualiLapLimit
   race.qualiTimeLimit = CFG.qualiTimeLimit
   race.readyCheck     = CFG.readyCheck
@@ -9627,6 +9697,27 @@ end)()
 end)()
 
 -- ===========================================================================
+-- SAVED OVERLAY LOOKS: the style editor's looks kept by name, for every
+-- streamer on the server (looks.lua). onInit reads Data/looks.json.
+-- ===========================================================================
+;(function ()
+  local ok, mod = pcall(require, 'looks')
+  if not (ok and type(mod) == 'table') then
+    print('[RaceManager] looks.lua did not load, so overlay looks cannot be kept on '
+      .. 'the server: ' .. tostring(mod))
+    return
+  end
+  mod.init({
+    DATA_DIR = DATA_DIR,
+    isAuthed = function (pid) return authenticatedPlayers[pid] ~= nil end,
+    isFull = auth.isFull,
+    jsonParse = jsonParse, jsonStringify = jsonStringify, writeFile = writeLayoutFile,
+    ensureDir = ensureLayoutsDir,
+  })
+  race.looksWarm = mod.warm
+end)()
+
+-- ===========================================================================
 -- DRIVER ROSTER (persistent display names)
 -- ===========================================================================
 -- A cup needs points to follow a driver across races and restarts. The anchor
@@ -11604,6 +11695,7 @@ function onInit()
   -- And the rules the server was last running, over config.json's (rules.lua).
   -- Before anything broadcasts, or the defaults would be written over them.
   if race.rulesWarm then race.rulesWarm() end
+  if race.looksWarm then race.looksWarm() end
   MP.RegisterEvent('RM_Login',            'RM_onLogin')
   MP.RegisterEvent('RM_Logout',           'RM_onLogout')
   MP.RegisterEvent('RM_ChangePassword',   'RM_onChangePassword')
@@ -11648,6 +11740,7 @@ function onInit()
   MP.RegisterEvent('RM_GhostBlocked',     'RM_onGhostBlocked')
   -- Module 2: rallycross joker lap
   MP.RegisterEvent('RM_SetJokerEnabled',  'RM_onSetJokerEnabled')
+  MP.RegisterEvent('RM_SetJokerExtra',    'RM_onSetJokerExtra')
   MP.RegisterEvent('RM_JokerLap',         'RM_onJokerLap')
   -- Module 4: garage list (vehicle & setup locking)
   MP.RegisterEvent('RM_WhitelistVehicle', 'RM_onWhitelistVehicle')
@@ -11787,6 +11880,8 @@ function onInit()
   MP.RegisterEvent('RM_TeamsSet',         'RM_onTeamsSet')
   -- Saved rulesets (rules.lua).
   MP.RegisterEvent('RM_Rules',            'RM_onRules')
+  -- Saved overlay looks (looks.lua).
+  MP.RegisterEvent('RM_Looks',            'RM_onLooks')
   -- Cup / series points (see the CUP section).
   MP.RegisterEvent('RM_CupSetEnabled',    'RM_onCupSetEnabled')
   MP.RegisterEvent('RM_CupStart',         'RM_onCupStart')

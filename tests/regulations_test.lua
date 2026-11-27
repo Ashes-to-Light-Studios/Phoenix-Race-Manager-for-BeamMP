@@ -207,9 +207,19 @@ RM_onStartPositionCount(1, '{"count":0,"positions":[],"jokerGates":3}')
 RM_onSetJokerEnabled(1, '{"enabled":true}')
 check(lastState.jokerEnabled == true, 'and it can be armed again once gates are back')
 
+-- A second run is time as shipped; this race runs the disqualify rule.
+check(lastState.jokerExtra == 'time' and lastState.jokerExtraSeconds == 30,
+  'a second joker run costs +30s as shipped')
+RM_onSetJokerExtra(1, '{"mode":"dsq"}')
+check(lastState.jokerExtra == 'dsq', 'the admin makes a second run a disqualification')
+RM_onSetJokerExtra(1, '{"mode":"sideways"}')
+check(lastState.jokerExtra == 'dsq', 'an unknown extra-joker rule is rejected')
+
 startRace(3)
 RM_onSetJokerEnabled(1, '{"enabled":false}')
 check(lastState.jokerEnabled == true, 'joker rule locked once the race is under way')
+RM_onSetJokerExtra(1, '{"mode":"time"}')
+check(lastState.jokerExtra == 'dsq', 'and so is what a second run costs')
 
 -- Alice takes the joker on lap 2 (legal), Bob takes it twice, Cara never does.
 RM_onLap(1, '{"lapTime":60}')   -- everyone completes lap 1
@@ -258,6 +268,37 @@ if text then
   check(raceSec:find('Joker', 1, true), 'results table gains a Joker column when the rule is armed')
 end
 if path then os.remove(path) end
+
+-- AS SHIPPED, A SECOND RUN IS TIME: on at once, and the car stays classified.
+RM_onResetLeaderboard(1)
+RM_onSetJokerEnabled(1, '{"enabled":true}')
+RM_onSetJokerExtra(1, '{"mode":"time","seconds":30}')
+check(lastState.jokerExtra == 'time' and lastState.jokerExtraSeconds == 30, 'back to +30s a second run')
+startRace(3)
+RM_onLap(1, '{"lapTime":60}'); RM_onLap(2, '{"lapTime":61}'); RM_onLap(3, '{"lapTime":62}')
+RM_onJokerLap(1, '{"lap":2}'); RM_onJokerLap(2, '{"lap":2}'); RM_onJokerLap(3, '{"lap":2}')
+lastChat = nil
+RM_onJokerLap(2, '{"lap":3}')
+check(driver('Bob').jokerTaken == 2 and driver('Bob').penaltySeconds == 30,
+  'the second run puts 30s on the race time at once')
+check(lastChat and lastChat:find('+30.0s', 1, true), 'and race control is told')
+RM_onLap(1, '{"lapTime":60}'); RM_onLap(2, '{"lapTime":61}'); RM_onLap(3, '{"lapTime":62}')
+lastChat = nil
+RM_onLap(2, '{"lapTime":55}')   -- Bob home first on the road
+RM_onLap(1, '{"lapTime":60}')
+RM_onLap(3, '{"lapTime":61}')
+for _ = 1, 70 do RM_Tick() end
+check(driver('Bob').status == 'finished', 'a driver who took it twice is classified under the time rule')
+check(lastState.drivers[1].name ~= 'Bob', 'and loses the win to the 30s')
+local timed, timedPath = readResults()
+check(timed ~= nil, 'the time-rule race wrote a results file')
+if timed then
+  local sec = timed:sub(timed:find('--- RACE RESULTS ---', 1, true) or 1)
+  check(sec:match('P%d%s+%S+%s+Bob%s[^\n]*lap 2 x2'), 'the Joker column says Bob took it twice')
+  check(sec:match('Bob%s[^\n]*%(%+30%.0s pen%)'), 'and his race time carries the 30s')
+  check(timed:find('a second run +30.0s each', 1, true), 'the header states the extra-joker rule')
+end
+if timedPath then os.remove(timedPath) end
 
 -- With the rule disarmed the ruling never fires.
 RM_onResetLeaderboard(1)

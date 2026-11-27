@@ -140,6 +140,7 @@ RM_onSetCheckpointSkip(0, '{"enabled":true,"warnings":2,"type":"lift","penaltySe
   .. '"liftSec":4,"liftWindow":40,"pitServe":"optional","pitLaps":4,"liftUnserved":"black"}')
 RM_onSetBlackFlag(0, '{"seconds":25,"laps":5}')
 RM_onSetPitStopRule(0, '{"required":2,"missed":"time","seconds":45}')
+RM_onSetJokerExtra(0, '{"mode":"dsq","seconds":12.5}')
 RM_onSetPitStart(0, '{"session":"quali","enabled":true}')
 RM_onSetPitStart(0, '{"session":"race","enabled":true}')
 RM_onSetPaceLap(0, '{"enabled":true}')
@@ -176,6 +177,7 @@ local function sameRules(s, what)
   check(s.heatCount == 3 and s.heatTransfer == 4 and s.heatLaps == 6 and s.heatDraw == 'random',
     what .. ': heat program')
   check(s.gridMode == 'reverse' and s.readyCheck == false, what .. ': grid order and ready check')
+  check(s.jokerExtra == 'dsq' and s.jokerExtraSeconds == 12.5, what .. ': what a second joker run costs')
 end
 sameRules(state(), 'set live')
 

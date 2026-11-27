@@ -1585,7 +1585,7 @@
       </span>
     </span>
     <!-- Module 2: rallycross joker lap -->
-    <span class="rm-setting" title="Every finisher must take the Joker Route once, never on lap 1, or they are disqualified.">
+    <span class="rm-setting" title="Every finisher must take the Joker Route, never on lap 1, or they are disqualified.">
       <label>Joker lap</label>
       <!-- Never armable on a track with no joker gates. The rule disqualifies
            anyone who did not complete the route, so with no route that is every
@@ -1601,6 +1601,24 @@
       <span class="rm-setting-warn" ng-if="!jokerGates">
         No Joker Route on this track: place joker gates in the editor first.
       </span>
+    </span>
+    <!-- A SECOND JOKER RUN: time on the race time at once, or out at the flag. -->
+    <span class="rm-setting" ng-if="jokerEnabled" title="What a driver who takes the Joker Route a second time gets.">
+      <label>Extra joker</label>
+      <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': jokerExtra.mode === 'time'}"
+              ng-click="setJokerExtra('time')" ng-disabled="!canSetRules()"
+              title="Each run after the first adds the seconds below to the race time.">Time</button>
+      <button class="rm-btn rm-btn-mini" ng-class="{'rm-btn-toggle-on': jokerExtra.mode === 'dsq'}"
+              ng-click="setJokerExtra('dsq')" ng-disabled="!canSetRules()"
+              title="A driver who takes it twice is disqualified at the flag.">Disqualify</button>
+      <span ng-if="jokerExtra.mode === 'time'">
+        <label>+ s each</label>
+        <input type="number" class="rm-width-num" min="0" max="300" step="0.5" ng-model="settingsUi.jokerExtraSecs"
+               ng-model-options="{ debounce: { default: 500, blur: 0 } }"
+               ng-change="applyJokerExtra()"
+               ng-disabled="!canSetRules()">
+      </span>
+      <span class="rm-setting-val" ng-if="jokerExtra.mode === 'time' &amp;&amp; !(jokerExtra.seconds > 0)">0: a second run is not penalised</span>
     </span>
   </div>
 
